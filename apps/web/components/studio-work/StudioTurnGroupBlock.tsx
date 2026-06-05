@@ -8,20 +8,26 @@ export default function StudioTurnGroupBlock({
   assistantTurns,
   stickyUser,
   userAnchor,
-  streamingPhase
+  streamingPhase,
+  canEdit,
+  onEditUserTurn
 }: {
   userTurn: StudioAgentTurn;
   assistantTurns: StudioAgentTurn[];
   stickyUser?: boolean;
   userAnchor?: "active" | "history";
   streamingPhase?: string;
+  canEdit?: boolean;
+  onEditUserTurn?: (turnId: string, newText: string) => void;
 }) {
   return (
-    <div className="space-y-2" data-studio-turn-group={userTurn.id}>
+    <div className="space-y-1" data-studio-turn-group={userTurn.id}>
       <StudioAgentMessage
         turn={userTurn}
         stickyUser={stickyUser}
         userAnchor={userAnchor}
+        canEdit={canEdit}
+        onEditUserTurn={onEditUserTurn}
       />
       {assistantTurns.map((turn) => (
         <StudioAgentMessage

@@ -1,3 +1,4 @@
+import { hasTaskContext } from "./studioWorkTask";
 import type { StudioWork } from "./studioWorkTypes";
 
 /** Studio 对话区 ask：Cursor 式结构化收尾（仅 JSON，无自由附言） */
@@ -19,15 +20,16 @@ export function buildStudioStructuredOutputPrompt(work: StudioWork): string {
     '结构：',
     '{"kind":"silent"} — 无需再对用户说任何话（任务已完成、用户未提出新问题、或信息已足够可执行）。',
     '{"kind":"reply","text":"..."} — 直接回答用户当前问题（Markdown 写在 text 内）。',
-    '{"kind":"ask_user","question":"..."} — 仅缺 blocking 信息、必须先问清才能继续时；question 为一句具体追问。',
+    '{"kind":"ask_user","question":"..."} — 仅完全无法开工的 blocking 缺口（如无主题且无形式）；question 为一句具体追问。',
     "",
     "规则：",
-    "- 一次最多一个 ask_user 问题，禁止连环追问。",
+    "- 默认 silent：用户已描述想写什么、形式或受众任一项时，勿 ask_user 追问细节，由写稿自行合理假设。",
+    "- 一次最多一个 ask_user，禁止连环追问；禁止问语气/篇幅/钩子等非 blocking 项。",
     "- 禁止「刚看完你这篇」「最好的一点是」等旁观者点评口吻。",
     "- text / question 内勿重复粘贴完整稿件全文。",
     ready
       ? "- 稿件已在产物区：用户未明确提问时用 silent；不要主动点评或建议下一步。"
-      : "- 任务要点已清楚、可确认写稿时：用 reply 简短提示用户回复「确认任务」，勿长篇追问。"
+      : "- 信息已够开工时优先 silent；仅当用户明确提问时用 reply 简答，勿提示「确认任务」式流程话术。"
   ].join("\n");
 }
 
@@ -79,4 +81,15 @@ export function studioStructuredToDisplayText(res: StudioAgentStructuredResponse
 
 export function studioStructuredAddsAssistantTurn(res: StudioAgentStructuredResponse): boolean {
   return res.kind !== "silent";
+}
+
+/** briefing 且已有任务上下文时，将非 blocking 的 ask_user 降为 silent */
+export function resolveStudioStructuredResponse(
+  work: StudioWork,
+  structured: StudioAgentStructuredResponse
+): StudioAgentStructuredResponse {
+  if (structured.kind !== "ask_user") return structured;
+  if (work.status !== "briefing" || work.plan) return structured;
+  if (!hasTaskContext(work)) return structured;
+  return { kind: "silent" };
 }

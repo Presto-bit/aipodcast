@@ -6,6 +6,7 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionLabel } from "../../lib/studioDeliverable";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
+import { finalizeExpertIntake, inferIntakePreselection } from "../../lib/composerExpertIntake";
 import { buildPlanForWork } from "../../lib/studioWorkPlan";
 import { getComposerPrefsFeatureCore, getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import {
@@ -66,10 +67,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   }
 
   const runConfirmGenerate = useCallback(async () => {
-    const latest = getStudioWork(workId) ?? work;
-    if (!latest || !isLoggedIn) return;
-    const taskSentence = taskSentenceFromWork(latest) || latest.plan?.goal || "";
+    const cur = getStudioWork(workId) ?? work;
+    if (!cur || !isLoggedIn) return;
+    const taskSentence = taskSentenceFromWork(cur) || cur.plan?.goal || "";
     if (!taskSentence.trim()) return;
+
+    let intake = { ...cur.intake };
+    if (!intake.contentAngle && !intake.noteType) {
+      const inferred = inferIntakePreselection("xhs_ops", taskSentence);
+      intake = finalizeExpertIntake("xhs_ops", { ...intake, ...inferred.intake }, taskSentence);
+    }
+    const latest = { ...cur, intake };
 
     const { work: withRun, runId } = appendStudioRun(latest, "generate", "排队中…");
     persist(
@@ -127,7 +135,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         label: nextVersionLabel(cur.versions),
         createdAt: Date.now(),
         blocks,
-        jobId: result.jobId
+        jobId: result.jobId,
+        primaryTitleIndex: 0
       };
       persist(
         finishStudioRun(
@@ -337,6 +346,16 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               return next;
             });
           }}
+          onTitleIndexChange={(index) => {
+            if (!work || !activeVersion) return;
+            persist({
+              ...work,
+              versions: work.versions.map((v) =>
+                v.id === activeVersion.id ? { ...v, primaryTitleIndex: index } : v
+              )
+            });
+          }}
+          onWowRevise={(opinion) => void onReviseFromChat(opinion)}
         />
       </div>
     </main>

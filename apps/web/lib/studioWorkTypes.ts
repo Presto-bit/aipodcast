@@ -40,6 +40,8 @@ export type ManuscriptVersion = {
   createdAt: number;
   blocks: ManuscriptBlock[];
   jobId?: string;
+  /** 多标题备选时，预览/复制使用的下标（默认 0） */
+  primaryTitleIndex?: number;
 };
 
 export type StudioPlan = {

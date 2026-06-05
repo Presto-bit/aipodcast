@@ -36,6 +36,7 @@ import { streamHomeComposerAsk } from "../../lib/homeComposerAskStream";
 import { streamStudioAgentAsk } from "../../lib/studioAgentAskStream";
 import {
   STUDIO_STRUCTURED_OUTPUT_ENABLED,
+  resolveStudioStructuredResponse,
   studioStructuredAddsAssistantTurn
 } from "../../lib/studioAgentStructured";
 import type { ManuscriptVersion, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
@@ -74,6 +75,21 @@ function studioDockHasArtifact(work: StudioWork, activeVersion: ManuscriptVersio
   return false;
 }
 
+function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]): StudioWork {
+  let next: StudioWork = {
+    ...work,
+    agentTurns: prefixTurns,
+    error: undefined,
+    pendingPatch: undefined
+  };
+  if (prefixTurns.length === 0) {
+    next = { ...next, plan: undefined, status: "briefing" };
+  } else if (work.status === "planned" || work.status === "briefing") {
+    next = { ...next, plan: undefined, status: "briefing" };
+  }
+  return syncWorkTitleFromTurns(next, prefixTurns);
+}
+
 function agentPlaceholder(status: WorkStatus): string {
   if (status === "generating") return "生成中…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
@@ -98,7 +114,9 @@ export default function StudioAgentDock({
   changedKeys,
   onTogglePatchKey,
   showFeatureNudge,
-  onDismissFeatureNudge
+  onDismissFeatureNudge,
+  onTitleIndexChange,
+  onWowRevise
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
@@ -117,6 +135,8 @@ export default function StudioAgentDock({
   onTogglePatchKey: (key: string) => void;
   showFeatureNudge: boolean;
   onDismissFeatureNudge: () => void;
+  onTitleIndexChange?: (index: number) => void;
+  onWowRevise?: (opinion: string) => void;
 }) {
   const router = useRouter();
   const [input, setInput] = useState("");
@@ -148,6 +168,7 @@ export default function StudioAgentDock({
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
   const showQuickPrompts = turns.length === 0 && work.status === "briefing";
+  const canEditTurns = canChat && !agentBusy;
   const hasArtifact = studioDockHasArtifact(work, activeVersion);
 
   const scrollToActiveUser = useCallback(() => {
@@ -363,10 +384,9 @@ export default function StudioAgentDock({
             if (role === "reasoning") return;
             if (section === "supplement") supplementBuf += text;
             else answerBuf += text;
-            const preview = STUDIO_STRUCTURED_OUTPUT_ENABLED
-              ? phaseRef.current || "正在生成回答…"
-              : answerBuf.trim() || supplementBuf.trim();
-            flushStreamOverlayFrame(assistantId, preview, baseTurns, intent);
+            if (STUDIO_STRUCTURED_OUTPUT_ENABLED) return;
+            const preview = answerBuf.trim() || supplementBuf.trim();
+            if (preview) flushStreamOverlayFrame(assistantId, preview, baseTurns, intent);
           }
         }
       });
@@ -376,9 +396,11 @@ export default function StudioAgentDock({
         streamRafRef.current = 0;
       }
 
+      const resolvedStructured = resolveStudioStructuredResponse(workBase, done.structured);
+
       if (
         STUDIO_STRUCTURED_OUTPUT_ENABLED &&
-        !studioStructuredAddsAssistantTurn(done.structured)
+        !studioStructuredAddsAssistantTurn(resolvedStructured)
       ) {
         setStreamOverlay(null);
         applyDialogExtract(prefixTurns, done.sessionState, workBase);
@@ -387,6 +409,11 @@ export default function StudioAgentDock({
       }
 
       const finalContent =
+        (resolvedStructured.kind === "reply"
+          ? resolvedStructured.text
+          : resolvedStructured.kind === "ask_user"
+            ? resolvedStructured.question
+            : "") ||
         done.displayText.trim() ||
         done.answer.trim() ||
         supplementBuf.trim() ||
@@ -572,6 +599,45 @@ export default function StudioAgentDock({
     await runAgentTurn(prefixWithUser, q, base, route);
   }
 
+  async function handleEditUserTurn(turnId: string, newText: string) {
+    abortBackgroundStreams();
+    const idx = turns.findIndex((t) => t.id === turnId);
+    if (idx < 0 || turns[idx]?.role !== "user") return;
+    const prefix = turns.slice(0, idx);
+    const truncated = workAfterTruncateTurns(work, prefix);
+    onPersist(truncated);
+
+    const route = routeStudioAction(truncated, newText, prefix);
+    const userTurn: StudioAgentTurn = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: newText.trim(),
+      createdAt: Date.now()
+    };
+    const prefixWithUser = [...prefix, userTurn];
+    const base = syncWorkTitleFromTurns(
+      { ...truncated, agentTurns: prefixWithUser, lastOrchestratorNote: route.note, error: undefined },
+      prefixWithUser
+    );
+    onPersist(base);
+
+    if (route.tool === "plan" && onGeneratePlan) {
+      setEphemeralHint("已确认范围，正在整理并写稿…");
+      await onGeneratePlan();
+      return;
+    }
+    if (route.tool === "generate" && onConfirmGenerate) {
+      await onConfirmGenerate();
+      return;
+    }
+    if (route.tool === "revise" && onReviseFromChat) {
+      await onReviseFromChat(newText.trim());
+      return;
+    }
+
+    await runAgentTurn(prefixWithUser, newText, base, route);
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-3">
@@ -590,6 +656,8 @@ export default function StudioAgentDock({
                 work.status === "generating" ? work.runPhase || "处理中…" : undefined
               }
               scrollRef={dialogueScrollRef}
+              canEdit={canEditTurns}
+              onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
             />
           </div>
         ) : null}
@@ -617,6 +685,8 @@ export default function StudioAgentDock({
               router.push(WORKBENCH_CHAT_PATH);
             }}
             onDismissFeatureNudge={onDismissFeatureNudge}
+            onTitleIndexChange={onTitleIndexChange}
+            onWowRevise={onWowRevise}
           />
         </div>
       </div>

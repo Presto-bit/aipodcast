@@ -13,7 +13,17 @@ export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): M
     if (text) blocks.push({ id: `title-${i}`, kind: "title", text, evidence: "model" });
   });
   const body = xhsBodyPlainText(c.body);
-  if (body) blocks.push({ id: "body", kind: "body", text: body, evidence: "model" });
+  const corpusEvidence =
+    deliverable.meta?.provenance?.corpusCoverage === "full" ||
+    deliverable.meta?.provenance?.corpusCoverage === "partial";
+  if (body) {
+    blocks.push({
+      id: "body",
+      kind: "body",
+      text: body,
+      evidence: corpusEvidence ? "corpus" : "model"
+    });
+  }
   const tags = (c.hashtags || []).map((t) => String(t).replace(/^#/, "").trim()).filter(Boolean);
   if (tags.length) blocks.push({ id: "hashtags", kind: "hashtags", tags });
   const cover = c.cover?.headline?.trim() || c.cover?.subline?.trim();

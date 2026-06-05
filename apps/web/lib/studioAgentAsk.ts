@@ -85,7 +85,8 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
         ? "围绕已生成稿件回答澄清类问题；勿再提示「确认任务」或生成计划。"
         : [
             "你帮助澄清用户想创作的内容（形式、受众、结构、语气、资料怎么用）。",
-            "缺 blocking 信息时用 ask_user 问一句；信息已够时用 reply 一句提示可回复「确认」开始写稿，勿连环确认。",
+            "Cursor 式少打扰：用户首句已含主题/形式/受众任一项时默认 silent，勿追问细节。",
+            "ask_user 仅用于完全无主题且无法推断的 blocking 缺口；禁止连环确认。",
             "不要输出可直接发布的完整成稿。"
           ].join("\n");
     case "manuscript_coach":

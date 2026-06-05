@@ -4,8 +4,10 @@ import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { STUDIO_ARTIFACT_HEADING } from "../../lib/studioOutputTypography";
 import { STUDIO_POST_DONE_COACH_ENABLED } from "../../lib/studioPostDoneFollowUp";
+import { resolvePrimaryTitleIndex } from "../../lib/studioManuscriptView";
 import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
+import StudioXhsPhonePreview from "./StudioXhsPhonePreview";
 
 const NotesAskAnswerMarkdownBody = dynamic(
   () => import("../notes/NotesAskAnswerMarkdownBody").then((m) => ({ default: m.default })),
@@ -23,7 +25,7 @@ function outputHeading(work: StudioWork, compareMode: boolean): string | null {
   return null;
 }
 
-/** 输出区：单标题 + 稿件一体展示；成稿附言在稿件后 */
+/** 输出区：稿件编辑视图 + 附言；手机预览置底 */
 export default function StudioAgentOutputCards({
   work,
   busy,
@@ -35,7 +37,9 @@ export default function StudioAgentOutputCards({
   onTogglePatchKey,
   showFeatureNudge,
   onFillFeature,
-  onDismissFeatureNudge
+  onDismissFeatureNudge,
+  onTitleIndexChange,
+  onWowRevise
 }: {
   work: StudioWork;
   busy: boolean;
@@ -48,6 +52,8 @@ export default function StudioAgentOutputCards({
   showFeatureNudge: boolean;
   onFillFeature: () => void;
   onDismissFeatureNudge: () => void;
+  onTitleIndexChange?: (index: number) => void;
+  onWowRevise?: (opinion: string) => void;
 }) {
   const compareMode = Boolean(work.pendingPatch);
   const manuscriptBlocks =
@@ -61,6 +67,10 @@ export default function StudioAgentOutputCards({
   const showCoach =
     STUDIO_POST_DONE_COACH_ENABLED && Boolean(coachText || work.postDoneCoachStreaming);
   const heading = outputHeading(work, compareMode);
+  const titleIndex = resolvePrimaryTitleIndex(
+    compareMode ? null : activeVersion,
+    manuscriptBlocks.filter((b) => b.kind === "title").length
+  );
 
   const body: ReactNode[] = [];
   const footnotes: ReactNode[] = [];
@@ -83,6 +93,9 @@ export default function StudioAgentOutputCards({
         selectedKeys={selectedPatchKeys}
         changedKeys={changedKeys}
         onToggleKey={onTogglePatchKey}
+        onTitleIndexChange={compareMode ? undefined : onTitleIndexChange}
+        onWowRevise={compareMode || work.status !== "ready" ? undefined : onWowRevise}
+        wowReviseBusy={busy}
       />
     );
   }
@@ -96,6 +109,17 @@ export default function StudioAgentOutputCards({
           <span className="inline-block h-3 w-12 animate-pulse rounded bg-fill" aria-hidden />
         )}
       </div>
+    );
+  }
+
+  if (showManuscript && !compareMode) {
+    body.push(
+      <StudioXhsPhonePreview
+        key="preview"
+        version={activeVersion}
+        blocks={manuscriptBlocks}
+        titleIndex={titleIndex}
+      />
     );
   }
 

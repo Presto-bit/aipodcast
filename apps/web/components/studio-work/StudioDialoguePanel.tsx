@@ -17,12 +17,16 @@ export default function StudioDialoguePanel({
   turns,
   streamingPhase,
   statusLine,
-  scrollRef
+  scrollRef,
+  canEdit,
+  onEditUserTurn
 }: {
   turns: StudioAgentTurn[];
   streamingPhase?: string;
   statusLine?: string;
   scrollRef: RefObject<HTMLDivElement>;
+  canEdit?: boolean;
+  onEditUserTurn?: (turnId: string, newText: string) => void;
 }) {
   const groups = buildStudioDialogueTurnGroups(turns);
   const { history, active } = splitActiveDialogueGroups(groups);
@@ -57,11 +61,13 @@ export default function StudioDialoguePanel({
                   className="absolute left-0 top-0 w-full pb-3"
                   style={{ transform: `translateY(${row.start}px)` }}
                 >
-                  <StudioTurnGroupBlock
-                    userTurn={group.userTurn}
-                    assistantTurns={group.assistantTurns}
-                    userAnchor="history"
-                  />
+                    <StudioTurnGroupBlock
+                      userTurn={group.userTurn}
+                      assistantTurns={group.assistantTurns}
+                      userAnchor="history"
+                      canEdit={canEdit}
+                      onEditUserTurn={onEditUserTurn}
+                    />
                 </div>
               );
             })}
@@ -74,6 +80,8 @@ export default function StudioDialoguePanel({
                 userTurn={group.userTurn}
                 assistantTurns={group.assistantTurns}
                 userAnchor="history"
+                canEdit={canEdit}
+                onEditUserTurn={onEditUserTurn}
               />
             ))}
           </div>
@@ -87,6 +95,8 @@ export default function StudioDialoguePanel({
               stickyUser
               userAnchor="active"
               streamingPhase={streamingPhase}
+              canEdit={canEdit}
+              onEditUserTurn={onEditUserTurn}
             />
           </div>
         ) : null}

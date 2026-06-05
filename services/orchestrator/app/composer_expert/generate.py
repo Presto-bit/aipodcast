@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from ..social_llm_utils import invoke_and_parse_social_json
 from ..social_publish_draft import generate_social_publish_draft, resolve_social_publish_material
+from .intake import _infer_xhs
 from .schema import validate_expert_deliverable
 
 logger = logging.getLogger(__name__)
@@ -115,16 +116,80 @@ def _intake_human_summary(intake: dict[str, Any]) -> str:
     return "；".join(lines)
 
 
-def _compose_expert_writer_instructions(*, task_sentence: str, intake: dict[str, Any]) -> str:
+def _ensure_intake_from_task(intake: dict[str, Any], task_sentence: str) -> dict[str, Any]:
+    """成稿前隐式结构档位：任务句推断 intake，用户无感。"""
+    merged = dict(intake or {})
+    if not str(merged.get("contentAngle") or "").strip() and not str(merged.get("noteType") or "").strip():
+        inferred, _, _ = _infer_xhs(task_sentence)
+        for key, val in inferred.items():
+            merged.setdefault(key, val)
+    merged.setdefault("titleCount", "3")
+    merged.setdefault("withHashtags", "yes")
+    return merged
+
+
+_OPENING_HOOK_MARKERS = (
+    "你是不是",
+    "别再",
+    "原来",
+    "说实话",
+    "千万别",
+    "为什么",
+    "？",
+    "！",
+    "打工人",
+    "宝妈",
+    "深夜",
+    "终于",
+    "我",
+)
+
+
+def _xhs_opening_hook_errors(content: dict[str, Any]) -> list[str]:
+    body = str(content.get("body") or "").strip()
+    if not body:
+        return []
+    opening = body[:120].replace("\n", " ")
+    if len(opening) < 12:
+        return ["开头前两行过短，须有具体场景、痛点问句或反常识钩子"]
+    weak_open = ("很多人", "大家都知道", "近年来", "随着", "在当今", "众所周知")
+    if opening.startswith(weak_open) and "？" not in opening[:40]:
+        return ["开头禁止空泛铺垫（如「很多人/近年来」），前两行须有痛点问句或具体场景"]
+    if any(m in opening for m in _OPENING_HOOK_MARKERS):
+        return []
+    if re.search(r"\d+", opening[:60]):
+        return []
+    return ["开头前两行须有具体场景、痛点问句、数字结果或反常识钩子，禁止温吞开场"]
+
+
+def _xhs_corpus_anchor_errors(content: dict[str, Any], *, used_rag: bool) -> list[str]:
+    if not used_rag:
+        return []
+    body = str(content.get("body") or "")
+    markers = ("[资料", "资料中提到", "根据所选资料", "笔记里提到", "摘录中", "你勾选的")
+    if any(m in body for m in markers):
+        return []
+    return ["正文须含 1～2 处来自勾选资料的可核查细节，可用「资料中提到…」或 [资料1] 标注"]
+
+
+def _compose_expert_writer_instructions(
+    *, task_sentence: str, intake: dict[str, Any], used_rag: bool = False
+) -> str:
     hints = [
         "你是小红书种草/推广笔记写手。根据用户任务与偏好，撰写完整、可直接发布的笔记 JSON。",
         "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
+        "titles 数组须恰好 3 个备选标题（痛点型/好奇型/数字型各一，每个≤20字）。",
+        "开头前两行须有强钩子：具体场景、痛点问句、数字结果或反常识，禁止「很多人/近年来」式空泛开场。",
         "优先用 sections 数组（小标题+短段），或 body 内用 \\n\\n 分段。",
         f"任务核心：{task_sentence.strip()[:300]}",
     ]
+    if used_rag:
+        hints.append(
+            "正文至少 1～2 处引用勾选资料的可核查细节，用「资料中提到…」或 [资料1] 标注，禁止编造资料未提及的数据。"
+        )
     human = _intake_human_summary(intake)
     if human:
         hints.append(f"用户偏好：{human}")
@@ -869,6 +934,12 @@ def generate_xhs_expert_deliverable(
     count_errors = _xhs_title_body_count_errors(content)
     if count_errors:
         raise ValueError("validation_failed:" + "|".join(count_errors[:4]))
+    hook_errors = _xhs_opening_hook_errors(content)
+    if hook_errors:
+        raise ValueError("validation_failed:" + "|".join(hook_errors[:2]))
+    anchor_errors = _xhs_corpus_anchor_errors(content, used_rag=used_rag)
+    if anchor_errors:
+        raise ValueError("validation_failed:" + "|".join(anchor_errors[:2]))
     return deliverable
 
 
@@ -886,7 +957,8 @@ def run_composer_expert_deliverable_job(
     if not task_sentence:
         raise RuntimeError("task_sentence_required")
 
-    intake = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
+    intake_raw = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
+    intake = _ensure_intake_from_task(intake_raw, task_sentence)
     notebook = str(payload.get("notes_notebook") or payload.get("notebook") or "").strip()
     nids = [
         str(x).strip()
@@ -908,7 +980,9 @@ def run_composer_expert_deliverable_job(
         if str(feature_core.get(k) or "").strip()
     )[:80]
     options = _intake_to_social_options(intake, task_sentence)
-    writer_instructions = _compose_expert_writer_instructions(task_sentence=task_sentence, intake=intake)
+    writer_instructions = _compose_expert_writer_instructions(
+        task_sentence=task_sentence, intake=intake, used_rag=used_rag
+    )
     other_req = "\n\n".join(
         x
         for x in [writer_instructions, *style_bits, _intake_human_summary(intake)]
@@ -1005,6 +1079,37 @@ def run_composer_expert_deliverable_job(
                 options["persona"] = persona
                 if on_progress:
                     on_progress("标题与正文条数不一致，正在重写…", 72.0)
+                continue
+            titles = content.get("titles") if isinstance(content.get("titles"), list) else []
+            title_count = len([str(t).strip() for t in titles if str(t).strip()])
+            if title_count < 3 and attempt < max_attempts - 1:
+                last_errors = [f"titles 须恰好 3 个备选，当前 {title_count} 个"]
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】titles 数组须恰好 3 个备选标题（痛点/好奇/数字型）。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                if on_progress:
+                    on_progress("标题备选不足，正在补全…", 73.0)
+                continue
+            hook_errors = _xhs_opening_hook_errors(content)
+            if hook_errors and attempt < max_attempts - 1:
+                last_errors = hook_errors
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】开头前两行须有痛点问句/具体场景/数字结果，禁止空泛铺垫。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                if on_progress:
+                    on_progress("开头钩子偏弱，正在强化…", 74.0)
+                continue
+            anchor_errors = _xhs_corpus_anchor_errors(content, used_rag=used_rag)
+            if anchor_errors and attempt < max_attempts - 1:
+                last_errors = anchor_errors
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】正文须含 1～2 处资料细节，用「资料中提到」或 [资料1] 标注。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                if on_progress:
+                    on_progress("资料锚点不足，正在补强…", 76.0)
                 continue
             if on_progress:
                 on_progress("内容成品就绪", 100.0)

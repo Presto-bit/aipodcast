@@ -1,8 +1,10 @@
 import {
   parseStudioAgentStructuredResponse,
+  resolveStudioStructuredResponse,
   studioStructuredAddsAssistantTurn,
   studioStructuredToDisplayText
 } from "../studioAgentStructured";
+import type { StudioWork } from "../studioWorkTypes";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(msg);
@@ -26,5 +28,15 @@ for (const c of cases) {
 
 assert(!studioStructuredAddsAssistantTurn({ kind: "silent" }), "silent should not add turn");
 assert(studioStructuredAddsAssistantTurn({ kind: "reply", text: "x" }), "reply should add turn");
+
+const briefingWork = {
+  status: "briefing",
+  agentTurns: [{ id: "u1", role: "user", content: "写一篇清单体小红书", createdAt: 1 }]
+} as StudioWork;
+const suppressed = resolveStudioStructuredResponse(briefingWork, {
+  kind: "ask_user",
+  question: "受众是谁？"
+});
+assert(suppressed.kind === "silent", "ask_user should suppress when task context exists");
 
 console.log("studioAgentStructured.test.ts: ok");
