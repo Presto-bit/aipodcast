@@ -29,11 +29,11 @@ for (const c of cases) {
 assert(!studioStructuredAddsAssistantTurn({ kind: "silent" }), "silent should not add turn");
 assert(studioStructuredAddsAssistantTurn({ kind: "reply", text: "x" }), "reply should add turn");
 
-const briefingWork = {
-  status: "briefing",
+const draftWork = {
+  status: "draft",
   agentTurns: [{ id: "u1", role: "user", content: "写一篇清单体小红书", createdAt: 1 }]
 } as StudioWork;
-const suppressed = resolveStudioStructuredResponse(briefingWork, {
+const suppressed = resolveStudioStructuredResponse(draftWork, {
   kind: "ask_user",
   question: "受众是谁？"
 });

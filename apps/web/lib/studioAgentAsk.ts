@@ -138,7 +138,6 @@ export function buildStudioAskContext(
     `任务状态：${work.status}`,
     task ? `任务要点：${task}` : "任务：用户尚未描述清楚",
     corpusBindingLine(work),
-    work.status === "planned" && work.plan?.goal ? `计划目标：${work.plan.goal}` : "",
     manuscript
   ].filter(Boolean);
 

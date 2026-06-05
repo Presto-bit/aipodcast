@@ -7,7 +7,7 @@ import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionL
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { finalizeExpertIntake, inferIntakePreselection } from "../../lib/composerExpertIntake";
-import { buildPlanForWork } from "../../lib/studioWorkPlan";
+import { buildBlockPatchOpinion } from "../../lib/studioBlockPatch";
 import { getComposerPrefsFeatureCore, getStudioWork, patchStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import {
   appendStudioRun,
@@ -69,7 +69,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const runConfirmGenerate = useCallback(async () => {
     const cur = getStudioWork(workId) ?? work;
     if (!cur || !isLoggedIn) return;
-    const taskSentence = taskSentenceFromWork(cur) || cur.plan?.goal || "";
+    const taskSentence = taskSentenceFromWork(cur);
     if (!taskSentence.trim()) return;
 
     let intake = { ...cur.intake };
@@ -119,7 +119,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       if (result.status !== "done") {
         persist(
           finishStudioRun(
-            { ...cur, status: "planned", error: result.error, runPhase: undefined },
+            { ...cur, status: "draft", error: result.error, runPhase: undefined },
             runId,
             "error",
             result.error ?? "生成失败"
@@ -150,7 +150,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             pendingPatch: undefined,
             runPhase: undefined,
             error: undefined,
-            postDoneFollowUpPending: false,
             lastOrchestratorNote: undefined
           },
           runId,
@@ -164,7 +163,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       if (cur) {
         persist(
           finishStudioRun(
-            { ...cur, status: "planned", error: msg, runPhase: undefined },
+            { ...cur, status: "draft", error: msg, runPhase: undefined },
             runId,
             "error",
             msg
@@ -174,30 +173,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     }
   }, [work, workId, isLoggedIn, getAuthHeaders, user?.phone]);
 
-  async function onGeneratePlan() {
-    if (!work || !isLoggedIn) return;
-    const task = taskSentenceFromWork(work);
-    if (!task.trim()) return;
-    setBusy(true);
-    const { work: withRun, runId } = appendStudioRun(work, "plan", "整理计划中…");
-    persist(withRun);
-    try {
-      const { work: planned } = await buildPlanForWork(
-        { ...withRun, allowModelFallback: true },
-        getAuthHeaders()
-      );
-      persist(finishStudioRun(planned, runId, "done", "开始写稿…"));
-      await runConfirmGenerate();
-    } catch (err) {
-      persist(
-        finishStudioRun(withRun, runId, "error", String(err instanceof Error ? err.message : err))
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onConfirmGenerate() {
+  async function onGenerate() {
     setBusy(true);
     try {
       await runConfirmGenerate();
@@ -213,8 +189,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     if (!base) return;
 
     setBusy(true);
-    const baseTask = taskSentenceFromWork(latest) || latest.plan?.goal || "";
-    const taskSentence = `${baseTask}\n\n改版意见：${opinion.trim()}`;
+    const baseTask = taskSentenceFromWork(latest);
+    const taskSentence = `${baseTask}\n\n改版意见：${buildBlockPatchOpinion(opinion)}`;
     const { work: withRun, runId } = appendStudioRun(latest, "revise", "改版中…");
     persist(
       patchStudioGeneratePhase(
@@ -328,8 +304,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           parentBusy={busy}
           getAuthHeaders={getAuthHeaders}
           onPersist={persist}
-          onGeneratePlan={() => onGeneratePlan()}
-          onConfirmGenerate={() => void onConfirmGenerate()}
+          onGenerate={() => void onGenerate()}
           onReviseFromChat={(opinion) => void onReviseFromChat(opinion)}
           activeVersion={activeVersion ?? null}
           showFeatureNudge={showFeatureNudge}

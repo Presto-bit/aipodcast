@@ -24,7 +24,14 @@ export type StudioAgentTurn = {
 
 export type StudioChannel = "xhs";
 
-export type WorkStatus = "briefing" | "planned" | "generating" | "ready" | "shipped";
+/** draft 为 v3 主状态；briefing / planned 仅兼容旧数据，读盘会迁为 draft */
+export type WorkStatus =
+  | "draft"
+  | "generating"
+  | "ready"
+  | "shipped"
+  | "briefing"
+  | "planned";
 
 export type BlockEvidence = "corpus" | "model" | "verify";
 
@@ -102,12 +109,16 @@ export type StudioWork = {
   agentRuns?: StudioRun[];
   /** 最近一次编排说明 */
   lastOrchestratorNote?: string;
-  /** 成稿后触发一次对话区解读追问 */
+  /** @deprecated v3 已移除，读盘 migrate 会清空 */
   postDoneFollowUpPending?: boolean;
+  /** @deprecated v3 已移除 */
   postDoneFollowUpDone?: boolean;
-  /** 成稿后附在稿件下方的温和说明（不在对话区） */
+  /** @deprecated v3 已移除 */
   postDoneCoach?: string;
+  /** @deprecated v3 已移除 */
   postDoneCoachStreaming?: boolean;
+  /** 本地 schema 版本，读盘时 migrate */
+  schemaVersion?: number;
   updatedAt: number;
   createdAt: number;
 };
@@ -124,10 +135,10 @@ export const XHS_SHIP_STEPS: { id: string; title: string; copyHint: string }[] =
 
 export function workStatusLabel(status: WorkStatus): string {
   switch (status) {
+    case "draft":
     case "briefing":
-      return "撰写需求";
     case "planned":
-      return "准备写稿";
+      return "撰写需求";
     case "generating":
       return "生成中";
     case "ready":

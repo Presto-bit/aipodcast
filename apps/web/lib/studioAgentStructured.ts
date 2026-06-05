@@ -1,3 +1,4 @@
+import { isDraftLikeStatus } from "./studioWorkMigrate";
 import { hasTaskContext } from "./studioWorkTask";
 import type { StudioWork } from "./studioWorkTypes";
 
@@ -83,13 +84,13 @@ export function studioStructuredAddsAssistantTurn(res: StudioAgentStructuredResp
   return res.kind !== "silent";
 }
 
-/** briefing 且已有任务上下文时，将非 blocking 的 ask_user 降为 silent */
+/** 草稿态且已有任务上下文时，将非 blocking 的 ask_user 降为 silent */
 export function resolveStudioStructuredResponse(
   work: StudioWork,
   structured: StudioAgentStructuredResponse
 ): StudioAgentStructuredResponse {
   if (structured.kind !== "ask_user") return structured;
-  if (work.status !== "briefing" || work.plan) return structured;
+  if (!isDraftLikeStatus(work.status)) return structured;
   if (!hasTaskContext(work)) return structured;
   return { kind: "silent" };
 }

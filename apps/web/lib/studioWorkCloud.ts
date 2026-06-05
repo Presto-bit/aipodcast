@@ -4,17 +4,19 @@
 
 import { scheduleCloudPreferencesPush } from "./cloudPreferences";
 import { readLocalStorageScoped, writeLocalStorageScoped } from "./userScopedStorage";
+import { migrateStudioWorkToV3 } from "./studioWorkMigrate";
 import type { StudioWork } from "./studioWorkTypes";
 
 export const STUDIO_WORKS_STORAGE_KEY = "fym_studio_works_v1";
 
 function normalizeStudioWork(w: StudioWork): StudioWork {
-  return {
+  const base = migrateStudioWorkToV3({
     ...w,
     agentTurns: Array.isArray(w.agentTurns) ? w.agentTurns : [],
     agentSessionState: w.agentSessionState ?? null,
     allowModelFallback: w.allowModelFallback !== false
-  };
+  });
+  return base;
 }
 
 export function readStudioWorksBlob(): StudioWork[] {

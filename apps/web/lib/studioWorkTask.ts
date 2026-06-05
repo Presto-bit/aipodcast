@@ -1,9 +1,10 @@
+import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type { StudioAgentTurn, StudioWork } from "./studioWorkTypes";
 import { fallbackStudioWorkTitle } from "./studioWorkTitleSuggest";
 
-/** 未开始计划/成稿的空任务（全局只允许一个） */
+/** 未成稿的空任务（全局只允许一个） */
 export function isStudioWorkDraft(work: StudioWork): boolean {
-  return work.status === "briefing" && !work.plan && work.versions.length === 0;
+  return isDraftLikeStatus(work.status) && work.versions.length === 0;
 }
 
 /** 从对话用户消息拼任务句（不再维护会话 Brief 字段） */

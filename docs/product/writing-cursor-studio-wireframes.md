@@ -54,7 +54,7 @@ flowchart LR
   B --> C[确认任务 plan]
   C --> D[自动成稿 generate]
   D --> E[产物区稿件]
-  E --> F[postDoneCoach]
+  E --> F[画布预览 v3]
   E --> G[输入改版 revise]
   G --> H[Compare 采纳]
 ```

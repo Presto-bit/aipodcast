@@ -1,9 +1,9 @@
 # 写作 Cursor · Studio 产品规格（Agent-first，已落地对齐）
 
-> **状态**：**v2.0 — 与工程主路径对齐**（2026-06-04）  
+> **状态**：**v3.0 — 画布优先 / 去 Plan**（2026-06-04）  
 > **品类**：写作创作类型的 Cursor — 以 **稿件 + 版本 diff** 为中枢；**对话仅承载解释**，不以聊天气泡承载主成品  
 > **关联**：[composer-first-product-architecture.md](./composer-first-product-architecture.md)（侧栏/四支柱，部分 supersede）· [home-composer-experts.md](./home-composer-experts.md)（专家 intake 流 **非** Studio 路径，Job 可复用）· 线框 **[writing-cursor-studio-wireframes.md](./writing-cursor-studio-wireframes.md)**（历史参考，见文首说明）  
-> **工程锚点**：`StudioWorkEditor` · `StudioAgentDock` · `studioOrchestrator` · `studioWorkPlan` · `homeComposerExpertJob`
+> **工程锚点**：`StudioWorkEditor` · `StudioAgentDock` · `StudioDraftCanvas` · `studioOrchestrator` · `studioWorkMigrate` · `homeComposerExpertJob`
 
 ---
 
@@ -17,15 +17,16 @@
 | **4** | 改动单位 | **块级 Patch + Apply** 为默认 | ✅ 改版 Job → `pendingPatch` → 勾选采纳 |
 | **5** | 导航 | 侧栏 **「创作」** → `/studio`；`/works` 为资产库 | ✅ `AppShell` · `WORKBENCH_STUDIO_PATH` |
 
-**实现载体（v2，取代原「三栏 IDE」线框）**
+**实现载体（v3，取代 v2「对话在上」布局）**
 
 ```
 任务侧栏（Works / New Agent）
         │
         ▼
-单 Work 页：对话·解释（上）→ 产物·稿件（中）→ 输入框+资料（下）
+单 Work 页：预览画布（主，~70%）→ 指令轨·对话（窄）→ 输入框+资料（底）
         │
-        ├─ 主编排：ask | plan | generate | revise
+        ├─ 主编排：ask | generate | revise（无 plan 门禁）
+        ├─ 画布 Tab：预览 / 文档 / 对比（pendingPatch）
         └─ Rules 分层注入（无输入框 Rules 芯片）
 ```
 
@@ -45,7 +46,7 @@
 | 是 | 不是 |
 |----|------|
 | 编排驱动的创作台（解释 / 计划 / 成稿 / 改版） | 第二个 ChatGPT |
-| Plan → 自动成稿 → 块级 diff | 先选专家再填表 |
+| 回车即写稿 → 块级 diff | 先选专家再填表 |
 | 一个 Work 一个渠道 | 同屏多格式勾选 |
 
 ---
@@ -57,21 +58,20 @@
 | 对象 | 用户可见名 | 职责 |
 |------|------------|------|
 | **Work** | 创作任务 | 一次「要发出去」的事；状态、资料绑定、Rules |
-| **Brief** | 需求 | 用户对话 + `brief` / `workRules` / `plan.goal` |
+| **Brief** | 需求 | 用户对话 + `brief` / `workRules` |
 | **Binding** | 资料 | 笔记本 + 笔记 id 列表（输入框内「资料」下拉，**非 `@` 菜单**） |
 | **Manuscript** | 稿件 | 版本 `v1, v2…`；块：标题、正文、话题、封面说明 |
 | **Patch** | 改版提议 | Job 产出 → 对比勾选 → 合并新版本 |
-| **Run** | 子任务轨迹 | `agentRuns[]`：plan / generate / revise（产物区轻量展示） |
-| **agentTurns** | 对话·解释 | 澄清、运营建议、成稿后附言；**不**替代稿件正文 |
+| **Run** | 子任务轨迹 | `agentRuns[]`：generate / revise（画布区轻量展示） |
+| **agentTurns** | 对话·解释 | 澄清、运营建议；**不**替代稿件正文 |
 
 ### 2.2 Work 状态（用户可见）
 
 | 状态 | 含义 | 主界面 |
 |------|------|--------|
-| `briefing` | 澄清需求，未出计划 | 对话 + 输入；无稿件 |
-| `planned` | 计划已出（瞬态） | 计划摘要；**随即自动成稿** |
-| `generating` | 成稿/改版 Job 中 | 产物区进度文案（`runPhase`） |
-| `ready` | 有可编辑稿件版本 | 产物区稿件 + 可选改版对比 |
+| `draft` | 澄清需求，未成稿 | 画布占位 + 输入；**够信息即自动 generate** |
+| `generating` | 成稿/改版 Job 中 | 画布进度文案（`runPhase`） |
+| `ready` | 有可编辑稿件版本 | 画布预览/文档 + 可选对比 Tab |
 | `shipped` | 归档态（保留字段） | **无「标记已发布」入口** |
 
 ### 2.3 与「会话」的关系
@@ -101,18 +101,18 @@
 | 作品 | `/works` |
 | 创作工具 ▾ | 播客等（不变） |
 
-### 3.3 单 Work 页布局（已落地，非三栏线框）
+### 3.3 单 Work 页布局（v3 画布优先）
 
 ```
-┌ 任务侧栏 ────┬─ 主栏（max-w-3xl 居中）────────────────────────┐
-│ New Agent    │  【对话 · 解释】用户/助手气泡，可编辑用户句    │
-│ 任务列表     │  【产物】标题「稿件」+ 一体正文块 + 成稿附言    │
+┌ 任务侧栏 ────┬─ 主栏（max-w-4xl 居中）────────────────────────┐
+│ New Agent    │  【画布】预览 / 文档 / 对比 Tab + 手机预览      │
+│ 任务列表     │  【指令轨】对话·解释（窄，max ~24vh）           │
 │              │  【输入】Composer + 资料下拉 + 发送              │
 └──────────────┴──────────────────────────────────────────────────┘
 ```
 
-- **对话区**：需求澄清、运营类问答、成稿后温和附言（`postDoneCoach`，在稿件下方，无「亮点解读」等小标题）。  
-- **产物区**：计划摘要（briefing/planned 瞬态）、生成进度、稿件、改版对比与采纳。  
+- **画布区**：主视觉；默认预览 Tab；有 `pendingPatch` 时默认对比 Tab。  
+- **指令轨**：需求澄清、运营问答；用户句可编辑回滚。  
 - **输入区**：所有后续指令（含改版意见）**仅在此发送**。
 
 ---
@@ -140,20 +140,18 @@
 ### 6.1 标准环
 
 1. 用户在 **输入框** 描述需求；可绑 **资料**（笔记本 + 载入篇目）。  
-2. 对话澄清（`ask`）；任务清楚后用户说 **「确认任务」** 等 → **`plan`**（`buildPlanForWork`）。  
-3. 计划完成后 **自动 `generate`**（无需再点「确认执行」）。  
-4. Job 完成 → 产物区 **稿件**（单块展示标题/正文/话题）。  
-5. 可选：**成稿附言**（`postDoneCoach`，自然口吻，跟在稿件后）。  
-6. 用户在输入框说改版 → **`revise`** Job → **Compare** → 采纳所选 / 全部 / 放弃 → 新版本。
+2. 咨询类问题走 `ask`；**够信息即自动 `generate`**（无「确认任务」/ Plan 门禁）。  
+3. Job 完成 → 画布 **预览 Tab** 展示稿件（文档 Tab 可编辑块）。  
+4. 惊艳重写 / 输入框改版 → **`revise`** Job（块级前缀）→ **对比 Tab** → 采纳所选 / 全部 / 放弃 → 新版本。
 
 ### 6.2 主编排路由（`routeStudioAction`）
 
 | 用户意图（示例） | 工具 | 说明 |
 |------------------|------|------|
-| 确认任务 / 生成计划… | `plan` | 仅 `briefing` 且无 plan |
-| 确认 / 确认执行…（已有 plan） | `generate` | 亦可在自动链后省略 |
-| 改版 / 改标题…（`ready`） | `revise` | 走 Job，非长文冒充已改完 |
-| 其余 | `ask` | 流式解释；`question` ≤800 字，Rules/记忆走 prompt |
+| 描述写稿需求（`draft`，无成稿） | `generate` | 自动触发，无需确认 |
+| 钩子/结构/运营咨询（带 `?` 等） | `ask` | 不触发生成 |
+| 改版 / 改标题…（`ready`） | `revise` | 走 Job + `pendingPatch` |
+| 其余 | `ask` | 流式解释；结构化 JSON 收尾 |
 
 ### 6.3 Rules（分层，无 UI 芯片）
 
@@ -161,19 +159,19 @@
 |----|------|
 | 平台 | `studioPlatformRules` |
 | 用户 | 对话页「我的特色」（只读引用） |
-| 任务 | `workRules` / `plan.goal` |
+| 任务 | `workRules` / 对话任务句 |
 
 ### 6.4 验收（产品层）
 
 | ID | 场景 | 状态 |
 |----|------|------|
 | A1 | 只采纳部分标题块，正文不变 | ✅ |
-| A2 | 确认任务后自动成稿，无二次确认卡片 | ✅（取代旧「未 Confirm 不可 Run」） |
+| A2 | 够信息即自动成稿，无 Plan / 二次确认 | ✅ |
 | A3 | 绑资料后 Plan/生成可使用篇目 | ✅ |
 | A4 | 未绑资料时允许通识兜底（`allowModelFallback`） | ✅ 默认允许 |
 | A5 | 列表可见 generating / ready | ✅ |
 | A6 | 侧栏「创作」、默认 `/studio` | ✅ |
-| A7 | Plan/产物区可见资料与特色状态 | ✅ 文案「我的特色」 |
+| A7 | 画布/输入区可见资料与特色状态 | ✅ 文案「我的特色」 |
 
 ---
 
@@ -264,9 +262,9 @@
 |------|------|-------------|
 | Cursor | 主编排 / 子任务 | `studioOrchestrator` · `agentRuns` |
 | Cursor | Rules 分层 | 平台 + 用户 + 任务 prompt |
-| Cursor | Plan | `buildPlanForWork` → 自动 generate |
-| Cursor | Diff / Apply | `pendingPatch` + 勾选采纳 |
-| Claude | 成稿后短评 | `postDoneCoach`（非对话区小标题） |
+| Cursor | 去 Plan / 直接写 | `draft` + `routeStudioAction` → `generate` |
+| Cursor | Diff / Apply | `StudioDraftCanvas` 对比 Tab + `pendingPatch` |
+| Cursor | 画布优先 | 预览主屏 + 窄指令轨 |
 
 ### 13.2  backlog（未做，可排 V1+）
 
@@ -290,13 +288,13 @@
 ## 16. UI 规格（Agent-first，已实现）
 
 > **目标**：第一眼是 **产物·稿件**；解释在对话轨；指令在底栏。  
-> **Token**：`HomeComposerShell` / `COMPOSER_CONTENT_MAX_W`（`max-w-3xl`）。
+> **Token**：`HomeComposerShell` / 画布 `max-w-4xl`、输入 `max-w-3xl`。
 
 ### 16.1 原则
 
 | # | 原则 |
 |---|------|
-| 1 | 产物居中偏上，输入固定底部 |
+| 1 | 画布占主屏，指令轨收窄，输入固定底部 |
 | 2 | 稿件 **单标题「稿件」**，正文一体块（非多块卡片墙） |
 | 3 | 改版 = 产物区 Compare + 输入框发指令 |
 | 4 | 对话区仅解释；**禁止**把成稿全文塞进助手气泡 |
@@ -313,8 +311,8 @@
 | 区 | 内容 |
 |----|------|
 | 侧栏 | New Agent、任务列表、删除 |
-| 对话 | 用户/助手；用户句悬停 **编辑/回滚** |
-| 产物 | 错误、生成进度、计划（瞬态）、**稿件**、`postDoneCoach`、改版采纳条 |
+| 画布 | 预览/文档/对比 Tab、手机预览、改版采纳条 |
+| 指令轨 | 用户/助手；用户句悬停 **编辑/回滚** |
 | 输入 | `StudioAgentComposer`；快捷提示（空任务） |
 
 ### 16.4 稿件与复制
@@ -328,7 +326,7 @@
 | ID | 检查 |
 |----|------|
 | U1 | 成稿后主视觉为产物区稿件，非长助手文 |
-| U2 | 确认任务后自动进入生成，无二次确认大卡 |
+| U2 | 够信息即自动进入生成，无 Plan / 二次确认 |
 | U3 | 改版后 Compare，可只勾标题 |
 | U4 | 生成中 `runPhase` 随 Job 更新，非永久「生成稿件中…」 |
 
@@ -341,17 +339,17 @@
 | 列表 | `StudioWorksListClient` |
 | 任务页 | `StudioWorkEditor` · `StudioAgentDock` |
 | 编排 | `studioOrchestrator.ts` |
-| 计划 | `studioWorkPlan.ts` |
+| 迁移 | `studioWorkMigrate.ts` |
 | 成稿/改版 Job | `homeComposerExpertJob.ts` |
+| 块级改版 | `studioBlockPatch.ts` |
+| 画布 | `StudioDraftCanvas.tsx` |
 | 稿件/Patch | `studioDeliverable.ts` · `StudioOutputManuscript.tsx` |
-| 产物区 | `StudioAgentOutputCards.tsx` |
-| 成稿附言 | `studioPostDoneFollowUp.ts` |
-| 存储/同步 | `studioWorkStorage.ts` |
+| 存储/同步 | `studioWorkStorage.ts` · `studioWorkCloud.ts` |
 | 导航 | `navPaths.ts` · `AppShell` |
 
 **未接线遗留**：`StudioArtifactPanel` / `StudioManuscriptPanel`（含发布包 UI）— **不属当前 MVP**。
 
-**手测**：创作 → 新建任务 → 对话澄清 → 确认任务 → 见进度 → 见稿件与附言 → 输入框改版 → 采纳所选。
+**手测**：创作 → 新建任务 → 输入需求 → 自动写稿 → 预览 Tab → 惊艳重写 → 对比 Tab 采纳 → 侧栏导航回归。
 
 ---
 
@@ -359,7 +357,8 @@
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| **v2.0** | 2026-06-04 | **按 Agent-first 已落地功能重写**：删三栏/@/发布包/二次确认/标记已发布/产物区改版框；补编排、自动成稿、postDoneCoach、用户句编辑 |
+| **v3.0** | 2026-06-04 | **画布优先激进重构**：`draft` 状态机、去 Plan/postDone、`StudioDraftCanvas`、自动 generate、块级 patch + 对比 Tab |
+| **v2.0** | 2026-06-04 | Agent-first：编排、自动成稿、用户句编辑 |
 | v1.4 | 2026-06-04 | 云端同步、默认 Studio（部分 UI 描述已被 v2 取代） |
 | v1.3 | 2026-06-04 | 首版工程落地 |
 | v1.0 | 2026-06-04 | 五决策冻结 |

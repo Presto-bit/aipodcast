@@ -1,6 +1,6 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
-import { isConfirmPlanMessage } from "./studioWorkConfirm";
 import { hasTaskContext } from "./studioWorkTask";
+import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type {
   StudioAgentIntent,
   StudioAgentTurn,
@@ -25,12 +25,21 @@ export type StudioRouteDecision = {
   askContext: StudioAskContextFlags;
 };
 
-const CONFIRM_GENERATE_RE =
-  /^(确认执行|开始成稿|生成稿件|确认生成|确认|就按这个|就这样|可以了)$/;
-
 const MAX_RUNS = 12;
 
-/** 主编排：决定走对话(ask) 还是子任务工具(plan/generate) */
+/** 纯问答（无写稿意图）时不触发自动 generate */
+function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
+  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇/.test(q);
+  if (intent === "manuscript_coach") return true;
+  if (intent === "ops_strategy" && !hasWriteIntent) return true;
+  if (hasWriteIntent) return false;
+  if (/[?？]$/.test(q.trim())) return true;
+  if (/怎么(写|改|搭)|如何(写|改)|钩子|开头|结构/.test(q)) return true;
+  if (/^(帮我)?(分析|解读|看看|讲讲)/.test(q)) return true;
+  return false;
+}
+
+/** 主编排：决定走对话(ask) 还是子任务工具(generate/revise) */
 export function routeStudioAction(
   work: StudioWork,
   userMessage: string,
@@ -63,28 +72,15 @@ export function routeStudioAction(
   }
 
   if (
-    work.status === "planned" &&
-    work.plan &&
-    CONFIRM_GENERATE_RE.test(q)
+    isDraftLikeStatus(work.status) &&
+    taskReady &&
+    work.versions.length === 0 &&
+    !isAskOnlyMessage(q, intent)
   ) {
     return {
       tool: "generate",
       intent,
       note: "开始生成稿件",
-      askContext: { includeManuscript: false, includeMemory: false }
-    };
-  }
-
-  if (
-    work.status === "briefing" &&
-    !work.plan &&
-    taskReady &&
-    isConfirmPlanMessage(q)
-  ) {
-    return {
-      tool: "plan",
-      intent,
-      note: "将生成结构化计划（产物区）",
       askContext: { includeManuscript: false, includeMemory: false }
     };
   }
