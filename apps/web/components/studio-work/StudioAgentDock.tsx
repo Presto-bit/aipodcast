@@ -7,7 +7,7 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
-import { shouldShowStudioCanvas } from "../../lib/studioDockLayout";
+import { shouldShowStudioManuscriptSection } from "../../lib/studioDockLayout";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
 import { formatStudioAskError } from "../../lib/studioAskError";
@@ -35,7 +35,13 @@ import {
   resolveStudioStructuredResponse,
   studioStructuredAddsAssistantTurn
 } from "../../lib/studioAgentStructured";
-import type { ManuscriptVersion, StudioAgentTurn, StudioWork, WorkStatus } from "../../lib/studioWorkTypes";
+import type {
+  ManuscriptBlock,
+  ManuscriptVersion,
+  StudioAgentTurn,
+  StudioWork,
+  WorkStatus
+} from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioDraftCanvas from "./StudioDraftCanvas";
 import StudioDialoguePanel from "./StudioDialoguePanel";
@@ -63,7 +69,7 @@ function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]
 }
 
 function agentPlaceholder(status: WorkStatus): string {
-  if (status === "generating") return "生成中…";
+  if (status === "generating") return "写稿进行中，仍可提问或描述下一步改版…";
   if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
   return "描述你想创作的内容与目标…";
 }
@@ -88,12 +94,14 @@ export default function StudioAgentDock({
   work,
   isLoggedIn,
   ready,
-  parentBusy,
+  jobBusy,
   getAuthHeaders,
   onPersist,
   onGenerate,
   onReviseFromChat,
+  onQueueRevise,
   activeVersion,
+  versions = [],
   onApplyPatch,
   onDiscardPatch,
   selectedPatchKeys,
@@ -102,17 +110,22 @@ export default function StudioAgentDock({
   showFeatureNudge,
   onDismissFeatureNudge,
   onTitleIndexChange,
+  onVersionChange,
+  onBlocksChange,
+  onSelectionRevise,
   onWowRevise
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
   ready: boolean;
-  parentBusy: boolean;
+  jobBusy: boolean;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
   onGenerate?: () => void | Promise<void>;
   onReviseFromChat?: (opinion: string) => void | Promise<void>;
+  onQueueRevise?: (opinion: string) => void;
   activeVersion: ManuscriptVersion | null;
+  versions?: ManuscriptVersion[];
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
   selectedPatchKeys: Set<string>;
@@ -121,6 +134,9 @@ export default function StudioAgentDock({
   showFeatureNudge: boolean;
   onDismissFeatureNudge: () => void;
   onTitleIndexChange?: (index: number) => void;
+  onVersionChange?: (versionId: string) => void;
+  onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
+  onSelectionRevise?: (selectedText: string, opinion: string) => void;
   onWowRevise?: (opinion: string) => void;
 }) {
   const router = useRouter();
@@ -148,11 +164,13 @@ export default function StudioAgentDock({
 
   const turns = work.agentTurns ?? [];
   const dialogueTurns = streamOverlay ?? turns;
-  const readOnly = work.status === "generating" || parentBusy;
-  const canChat = isLoggedIn && ready && !readOnly;
-  const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status);
+  const jobRunning = work.status === "generating" || jobBusy;
+  const canChat = isLoggedIn && ready;
+  const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const canEditTurns = canChat && !agentBusy;
-  const showCanvas = shouldShowStudioCanvas(work, activeVersion, { showFeatureNudge });
+  const showManuscriptSection = shouldShowStudioManuscriptSection(work, activeVersion, {
+    showFeatureNudge
+  });
   const dialogueEmptyHint =
     turns.length === 0 && isDraftLikeStatus(work.status) && work.status !== "generating"
       ? "描述你想创作的内容，够信息后会自动开始写稿"
@@ -285,7 +303,7 @@ export default function StudioAgentDock({
   ) {
     const q = userText.trim();
     if (!q || agentBusyRef.current) return;
-    if (!options?.authorIpExtra && !canChat) return;
+    if (!options?.authorIpExtra && !isLoggedIn) return;
 
     const intent = route.intent;
 
@@ -456,6 +474,51 @@ export default function StudioAgentDock({
     setPhase("");
   }
 
+  async function dispatchRoutedSend(
+    prefixWithUser: StudioAgentTurn[],
+    q: string,
+    route: StudioRouteDecision,
+    base: StudioWork
+  ) {
+    if (jobRunning && route.tool === "generate") {
+      setEphemeralHint("当前写稿/改版进行中，请稍候…");
+      return;
+    }
+    if (jobRunning && route.tool === "revise") {
+      onQueueRevise?.(q);
+      setEphemeralHint("已加入改版队列，当前任务完成后执行");
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
+      return;
+    }
+
+    if (route.tool === "generate") {
+      setEphemeralHint("正在写稿…");
+    } else if (route.tool === "revise") {
+      setEphemeralHint("正在按你的意见改版…");
+    }
+
+    if (route.tool === "generate" && onGenerate) {
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
+      try {
+        await onGenerate();
+      } finally {
+        setEphemeralHint("");
+      }
+      return;
+    }
+    if (route.tool === "revise" && onReviseFromChat) {
+      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
+      try {
+        await onReviseFromChat(q);
+      } finally {
+        setEphemeralHint("");
+      }
+      return;
+    }
+
+    await runAgentTurn(prefixWithUser, q, base, route);
+  }
+
   async function handleSend(overrideText?: string) {
     const q = (overrideText ?? input).trim();
     if (!q || !canChat) return;
@@ -485,29 +548,7 @@ export default function StudioAgentDock({
       prefixWithUser
     );
     onPersist(base);
-
-    if (route.tool === "generate") {
-      setEphemeralHint("正在写稿…");
-    } else if (route.tool === "revise") {
-      setEphemeralHint("正在按你的意见改版…");
-    }
-
-    if (route.tool === "generate" && onGenerate) {
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
-      try {
-        await onGenerate();
-      } finally {
-        setEphemeralHint("");
-      }
-      return;
-    }
-    if (route.tool === "revise" && onReviseFromChat) {
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
-      await onReviseFromChat(q);
-      return;
-    }
-
-    await runAgentTurn(prefixWithUser, q, base, route);
+    await dispatchRoutedSend(prefixWithUser, q, route, base);
   }
 
   async function handleEditUserTurn(turnId: string, newText: string) {
@@ -536,19 +577,7 @@ export default function StudioAgentDock({
     );
     onPersist(base);
 
-    if (route.tool === "generate" && onGenerate) {
-      setEphemeralHint("正在写稿…");
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
-      await onGenerate();
-      return;
-    }
-    if (route.tool === "revise" && onReviseFromChat) {
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
-      await onReviseFromChat(newText.trim());
-      return;
-    }
-
-    await runAgentTurn(prefixWithUser, newText, base, route);
+    await dispatchRoutedSend(prefixWithUser, newText.trim(), route, base);
   }
 
   return (
@@ -566,12 +595,14 @@ export default function StudioAgentDock({
             onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
             emptyHint={dialogueEmptyHint}
           />
-          {showCanvas ? (
+          {showManuscriptSection ? (
             <StudioDraftCanvas
               embedded
               work={work}
-              busy={agentBusy || parentBusy}
+              busy={agentBusy || jobBusy}
               activeVersion={activeVersion}
+              versions={versions}
+              onVersionChange={onVersionChange}
               onApplyPatch={onApplyPatch}
               onDiscardPatch={onDiscardPatch}
               selectedPatchKeys={selectedPatchKeys}
@@ -584,6 +615,8 @@ export default function StudioAgentDock({
               }}
               onDismissFeatureNudge={onDismissFeatureNudge}
               onTitleIndexChange={onTitleIndexChange}
+              onBlocksChange={onBlocksChange}
+              onSelectionRevise={onSelectionRevise}
               onWowRevise={onWowRevise}
             />
           ) : null}
@@ -624,7 +657,7 @@ export default function StudioAgentDock({
             value={input}
             onChange={setInput}
             onSend={() => void handleSend()}
-            busy={agentBusy}
+            busy={agentBusy || (jobRunning && Boolean(input.trim()))}
             disabled={!canChat}
             placeholder={agentPlaceholder(work.status)}
             menuOpen={corpusMenuOpen}

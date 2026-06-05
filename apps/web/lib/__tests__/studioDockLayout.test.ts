@@ -1,4 +1,7 @@
-import { shouldShowStudioCanvas } from "../studioDockLayout";
+import {
+  shouldShowStudioManuscriptSection,
+  studioGeneratingUiMode
+} from "../studioDockLayout";
 import type { StudioWork } from "../studioWorkTypes";
 
 function assert(cond: boolean, msg: string) {
@@ -26,17 +29,26 @@ function baseWork(overrides: Partial<StudioWork> = {}): StudioWork {
   };
 }
 
-assert(!shouldShowStudioCanvas(baseWork(), null), "empty draft hides canvas");
+const version = {
+  id: "v1",
+  label: "v1",
+  createdAt: 1,
+  blocks: [{ id: "b1", kind: "body" as const, text: "x" }]
+};
+
+assert(!shouldShowStudioManuscriptSection(baseWork(), null), "empty draft hides manuscript");
 assert(
-  shouldShowStudioCanvas(baseWork({ status: "generating" }), null),
-  "generating shows canvas"
+  shouldShowStudioManuscriptSection(baseWork({ status: "generating" }), null),
+  "generating shows manuscript progress section"
 );
 assert(
-  shouldShowStudioCanvas(
-    baseWork({ status: "ready" }),
-    { id: "v1", label: "v1", createdAt: 1, blocks: [{ id: "b1", kind: "body", text: "x" }] }
-  ),
-  "ready with blocks shows canvas"
+  shouldShowStudioManuscriptSection(baseWork({ status: "ready" }), version),
+  "ready with blocks shows manuscript"
+);
+assert(studioGeneratingUiMode(baseWork({ status: "generating" }), null) === "progress", "first generate progress");
+assert(
+  studioGeneratingUiMode(baseWork({ status: "generating" }), version) === "hold-existing",
+  "revise holds existing"
 );
 
 console.log("studioDockLayout.test.ts: ok");

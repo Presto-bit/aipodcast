@@ -11,3 +11,12 @@ export function buildBlockPatchOpinion(opinion: string): string {
   if (trimmed.startsWith("【块级改版】")) return trimmed;
   return `${BLOCK_PATCH_PREFIX}${trimmed}`;
 }
+
+/** 选中正文片段的局部改版前缀 */
+export function buildSelectionPatchOpinion(selectedText: string, opinion: string): string {
+  const snippet = selectedText.trim().slice(0, 400);
+  const note = opinion.trim() || "更口语、信息密度更高";
+  return buildBlockPatchOpinion(
+    `【块级改版·局部】仅修改 body 块中以下片段，其余段落保持原样：「${snippet}」。要求：${note}`
+  );
+}

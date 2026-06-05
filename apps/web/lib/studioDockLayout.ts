@@ -1,7 +1,9 @@
 import type { ManuscriptVersion, StudioWork } from "./studioWorkTypes";
 
-/** 画布仅在成稿、生成中、改版对比、错误或特色引导时出现 */
-export function shouldShowStudioCanvas(
+export type StudioGeneratingUiMode = "progress" | "hold-existing" | null;
+
+/** 稿件区：生成中展示进度/保留旧稿，成稿后展示成品 */
+export function shouldShowStudioManuscriptSection(
   work: StudioWork,
   activeVersion: ManuscriptVersion | null,
   options?: { showFeatureNudge?: boolean }
@@ -14,4 +16,22 @@ export function shouldShowStudioCanvas(
     return (activeVersion?.blocks.length ?? 0) > 0;
   }
   return false;
+}
+
+/** 生成中 UI：无旧稿仅进度；有旧稿保留文档视图 */
+export function studioGeneratingUiMode(
+  work: StudioWork,
+  activeVersion: ManuscriptVersion | null
+): StudioGeneratingUiMode {
+  if (work.status !== "generating") return null;
+  return (activeVersion?.blocks.length ?? 0) > 0 ? "hold-existing" : "progress";
+}
+
+/** @deprecated 使用 shouldShowStudioManuscriptSection */
+export function shouldShowStudioCanvas(
+  work: StudioWork,
+  activeVersion: ManuscriptVersion | null,
+  options?: { showFeatureNudge?: boolean }
+): boolean {
+  return shouldShowStudioManuscriptSection(work, activeVersion, options);
 }

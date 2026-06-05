@@ -1,14 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
-import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, nextVersionLabel } from "../../lib/studioDeliverable";
+import { deliverableToManuscriptBlocks, diffBlockKeys, mergeBlocks, manuscriptCopyAll, nextVersionLabel } from "../../lib/studioDeliverable";
 import { deliverableBodyLooksLikeIntakeEcho } from "../../lib/studioDeliverableQuality";
 import { runComposerExpertDeliverableJob } from "../../lib/homeComposerExpertJob";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
-import { buildBlockPatchOpinion } from "../../lib/studioBlockPatch";
-import { buildStudioAuthorPrompt, buildStudioJobIntake } from "../../lib/studioWorkIntake";
+import { buildBlockPatchOpinion, buildSelectionPatchOpinion } from "../../lib/studioBlockPatch";
+import {
+  buildStudioAuthorPrompt,
+  buildStudioJobIntake,
+  buildStudioReviseTaskSentence
+} from "../../lib/studioWorkIntake";
 import { getComposerPrefsFeatureCore, getStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
 import {
   appendStudioRun,
@@ -16,7 +20,7 @@ import {
   patchStudioGeneratePhase
 } from "../../lib/studioOrchestrator";
 import { taskSentenceFromWork } from "../../lib/studioWorkTask";
-import type { StudioWork } from "../../lib/studioWorkTypes";
+import type { ManuscriptBlock, StudioWork } from "../../lib/studioWorkTypes";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import StudioAgentDock from "./StudioAgentDock";
 import StudioSessionRail from "./StudioSessionRail";
@@ -26,8 +30,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const isLoggedIn = isLoggedInAccountUser(user);
   const [work, setWork] = useState<StudioWork | null>(null);
   const [selectedPatchKeys, setSelectedPatchKeys] = useState<Set<string>>(new Set());
-  const [busy, setBusy] = useState(false);
+  const [jobBusy, setJobBusy] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const reviseQueueRef = useRef<string[]>([]);
+  const jobRunningRef = useRef(false);
 
   const load = useCallback(() => {
     const w = getStudioWork(workId);
@@ -133,7 +139,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             {
               ...after,
               status: "draft",
-              error: "成稿内容异常（疑似偏好标签回显），请重试或补充产品卖点",
+              error: "成稿内容异常（疑似模板或偏好回显），请补充产品卖点后重试",
               runPhase: undefined
             },
             runId,
@@ -189,84 +195,144 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     }
   }, [workId, isLoggedIn, getAuthHeaders, user?.phone]);
 
+  const runReviseJob = useCallback(
+    async (opinion: string) => {
+      const latest = getStudioWork(workId) ?? work;
+      if (!latest || !isLoggedIn) return;
+      const base =
+        latest.versions.find((v) => v.id === latest.activeVersionId) ?? latest.versions.at(-1);
+      if (!base) return;
+
+      const baseTask = taskSentenceFromWork(latest);
+      const patchOpinion = buildBlockPatchOpinion(opinion);
+      const manuscriptPlain = manuscriptCopyAll(base.blocks, base.primaryTitleIndex ?? 0);
+      const taskSentence = buildStudioReviseTaskSentence(baseTask, manuscriptPlain, patchOpinion);
+      const authorPrompt = buildStudioAuthorPrompt(baseTask);
+      const intake = buildStudioJobIntake(baseTask, latest.intake);
+
+      const { work: withRun, runId } = appendStudioRun(latest, "revise", "改版中…");
+      persist(
+        patchStudioGeneratePhase(
+          { ...withRun, status: "generating", error: undefined, pendingPatch: undefined },
+          runId,
+          "改版中…"
+        )
+      );
+
+      try {
+        const result = await runComposerExpertDeliverableJob({
+          expertId: "xhs_ops",
+          taskSentence,
+          intake,
+          notebook: latest.binding.notebook,
+          noteIds: latest.binding.noteIds,
+          featureCore: getComposerPrefsFeatureCore(),
+          authorPrompt,
+          authHeaders: getAuthHeaders(),
+          createdBy: user?.phone,
+          onProgress: (msg) => {
+            const live = getStudioWork(workId);
+            if (!live) return;
+            persist(patchStudioGeneratePhase(live, runId, msg));
+          }
+        });
+
+        const cur = getStudioWork(workId);
+        if (!cur || result.status !== "done") {
+          if (cur) {
+            const err = result.status === "error" ? result.error : "改版失败";
+            persist(
+              finishStudioRun({ ...cur, status: "ready", error: err, runPhase: undefined }, runId, "error", err)
+            );
+          }
+          return;
+        }
+
+        const proposed = deliverableToManuscriptBlocks(result.deliverable);
+        const bodyText = proposed.find((b) => b.kind === "body")?.text ?? "";
+        if (!proposed.length || deliverableBodyLooksLikeIntakeEcho(bodyText)) {
+          persist(
+            finishStudioRun(
+              {
+                ...cur,
+                status: "ready",
+                error: "改版结果异常（疑似模板回显），请换种说法重试",
+                runPhase: undefined
+              },
+              runId,
+              "error",
+              "改版校验失败"
+            )
+          );
+          return;
+        }
+
+        const keys = diffBlockKeys(base.blocks, proposed);
+        persist(
+          finishStudioRun(
+            {
+              ...cur,
+              status: "ready",
+              pendingPatch: {
+                fromVersionId: base.id,
+                proposedBlocks: proposed,
+                summary: `${keys.size} 处块有变更`
+              },
+              runPhase: undefined,
+              error: undefined,
+              lastOrchestratorNote: undefined
+            },
+            runId,
+            "done",
+            `改版提议 · ${keys.size} 处变更`
+          )
+        );
+      } catch (err) {
+        const cur = getStudioWork(workId);
+        const msg = String(err instanceof Error ? err.message : err);
+        if (cur) {
+          persist(
+            finishStudioRun({ ...cur, status: "ready", error: msg, runPhase: undefined }, runId, "error", msg)
+          );
+        }
+      }
+    },
+    [workId, work, isLoggedIn, getAuthHeaders, user?.phone]
+  );
+
+  const runJobExclusive = useCallback(
+    async (fn: () => Promise<void>) => {
+      if (jobRunningRef.current) return false;
+      jobRunningRef.current = true;
+      setJobBusy(true);
+      try {
+        await fn();
+      } finally {
+        jobRunningRef.current = false;
+        setJobBusy(false);
+        load();
+        const queued = reviseQueueRef.current.shift();
+        if (queued) {
+          void runJobExclusive(() => runReviseJob(queued));
+        }
+      }
+      return true;
+    },
+    [load, runReviseJob]
+  );
+
   async function onGenerate() {
-    setBusy(true);
-    try {
-      await runConfirmGenerate();
-    } finally {
-      setBusy(false);
-      load();
-    }
+    await runJobExclusive(runConfirmGenerate);
   }
 
   async function onReviseFromChat(opinion: string) {
-    const latest = getStudioWork(workId) ?? work;
-    if (!latest || !isLoggedIn) return;
-    const base = latest.versions.find((v) => v.id === latest.activeVersionId) ?? latest.versions.at(-1);
-    if (!base) return;
+    await runJobExclusive(() => runReviseJob(opinion));
+  }
 
-    setBusy(true);
-    const baseTask = taskSentenceFromWork(latest);
-    const taskSentence = `${baseTask}\n\n改版意见：${buildBlockPatchOpinion(opinion)}`;
-    const { work: withRun, runId } = appendStudioRun(latest, "revise", "改版中…");
-    persist(
-      patchStudioGeneratePhase(
-        { ...withRun, status: "generating", error: undefined },
-        runId,
-        "改版中…"
-      )
-    );
-
-    try {
-      const result = await runComposerExpertDeliverableJob({
-        expertId: "xhs_ops",
-        taskSentence,
-        intake: latest.intake,
-        notebook: latest.binding.notebook,
-        noteIds: latest.binding.noteIds,
-        featureCore: getComposerPrefsFeatureCore(),
-        authHeaders: getAuthHeaders(),
-        createdBy: user?.phone,
-        onProgress: (msg) => {
-          const live = getStudioWork(workId);
-          if (!live) return;
-          persist(patchStudioGeneratePhase(live, runId, msg));
-        }
-      });
-
-      const cur = getStudioWork(workId);
-      if (!cur || result.status !== "done") {
-        if (cur) {
-          const err = result.status === "error" ? result.error : "改版失败";
-          persist(finishStudioRun({ ...cur, status: "ready", error: err }, runId, "error", err));
-        }
-        return;
-      }
-
-      const proposed = deliverableToManuscriptBlocks(result.deliverable);
-      const keys = diffBlockKeys(base.blocks, proposed);
-      persist(
-        finishStudioRun(
-          {
-            ...cur,
-            status: "ready",
-            pendingPatch: {
-              fromVersionId: base.id,
-              proposedBlocks: proposed,
-              summary: `${keys.size} 处块有变更`
-            },
-            runPhase: undefined,
-            error: undefined,
-            lastOrchestratorNote: undefined
-          },
-          runId,
-          "done",
-          `改版提议 · ${keys.size} 处变更`
-        )
-      );
-    } finally {
-      setBusy(false);
-    }
+  function onQueueRevise(opinion: string) {
+    const text = opinion.trim();
+    if (!text) return;
+    reviseQueueRef.current.push(text);
   }
 
   function onApplyPatch(partial: boolean) {
@@ -287,6 +353,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       ],
       activeVersionId: versionId,
       pendingPatch: undefined
+    });
+  }
+
+  function onManuscriptBlocksChange(blocks: ManuscriptBlock[]) {
+    if (!work || !activeVersion || work.status !== "ready" || work.pendingPatch) return;
+    persist({
+      ...work,
+      versions: work.versions.map((v) => (v.id === activeVersion.id ? { ...v, blocks } : v))
     });
   }
 
@@ -316,12 +390,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           work={work}
           isLoggedIn={isLoggedIn}
           ready={ready}
-          parentBusy={busy}
+          jobBusy={jobBusy}
           getAuthHeaders={getAuthHeaders}
           onPersist={persist}
           onGenerate={() => void onGenerate()}
           onReviseFromChat={(opinion) => void onReviseFromChat(opinion)}
+          onQueueRevise={onQueueRevise}
           activeVersion={activeVersion ?? null}
+          versions={work.versions}
           showFeatureNudge={showFeatureNudge}
           onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
           onApplyPatch={onApplyPatch}
@@ -345,6 +421,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               )
             });
           }}
+          onVersionChange={(versionId) => {
+            if (!work.versions.some((v) => v.id === versionId)) return;
+            persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
+          }}
+          onBlocksChange={onManuscriptBlocksChange}
+          onSelectionRevise={(selectedText, opinion) =>
+            void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion))
+          }
           onWowRevise={(opinion) => void onReviseFromChat(opinion)}
         />
       </div>

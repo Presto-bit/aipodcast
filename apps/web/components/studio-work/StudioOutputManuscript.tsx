@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   STUDIO_MANUSCRIPT_BODY,
   STUDIO_MANUSCRIPT_HASHTAGS,
@@ -33,6 +34,13 @@ function IconCopy({ className }: { className?: string }) {
   );
 }
 
+function cloneBlocks(blocks: ManuscriptBlock[]): ManuscriptBlock[] {
+  return blocks.map((b) => {
+    if (b.kind === "hashtags") return { ...b, tags: [...b.tags] };
+    return { ...b };
+  });
+}
+
 /** 输出区稿件：标题备选 + 正文编辑视图 */
 export default function StudioOutputManuscript({
   version,
@@ -43,7 +51,10 @@ export default function StudioOutputManuscript({
   onToggleKey,
   onTitleIndexChange,
   onWowRevise,
-  wowReviseBusy
+  wowReviseBusy,
+  editable = false,
+  onBlocksChange,
+  onSelectionRevise
 }: {
   version: ManuscriptVersion | null;
   compareBlocks?: ManuscriptBlock[] | null;
@@ -54,8 +65,38 @@ export default function StudioOutputManuscript({
   onTitleIndexChange?: (index: number) => void;
   onWowRevise?: (opinion: string) => void;
   wowReviseBusy?: boolean;
+  editable?: boolean;
+  onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
+  onSelectionRevise?: (selectedText: string, opinion: string) => void;
 }) {
-  const blocks = compareMode && compareBlocks ? compareBlocks : version?.blocks ?? [];
+  const sourceBlocks = compareMode && compareBlocks ? compareBlocks : version?.blocks ?? [];
+  const [draftBlocks, setDraftBlocks] = useState<ManuscriptBlock[]>(() => cloneBlocks(sourceBlocks));
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bodySectionRef = useRef<HTMLElement | null>(null);
+  const [selectionUi, setSelectionUi] = useState<{ text: string } | null>(null);
+  const [selectionOpinion, setSelectionOpinion] = useState("");
+
+  useEffect(() => {
+    setDraftBlocks(cloneBlocks(sourceBlocks));
+  }, [version?.id, compareMode, compareBlocks]);
+
+  const scheduleSave = useCallback(
+    (next: ManuscriptBlock[]) => {
+      if (!editable || !onBlocksChange) return;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => onBlocksChange(next), 500);
+    },
+    [editable, onBlocksChange]
+  );
+
+  useEffect(
+    () => () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    },
+    []
+  );
+
+  const blocks = editable && !compareMode ? draftBlocks : sourceBlocks;
   if (!blocks.length) return null;
 
   const titles = manuscriptTitleBlocks(blocks);
@@ -64,6 +105,34 @@ export default function StudioOutputManuscript({
   const hashtags = blocks.find((b) => b.kind === "hashtags");
   const cover = blocks.find((b) => b.kind === "coverBrief");
   const showWow = !compareMode && Boolean(onWowRevise) && titles.length > 0;
+
+  function patchBlock(nextBlock: ManuscriptBlock) {
+    const next = draftBlocks.map((b) => {
+      if (b.kind === nextBlock.kind && (b.kind !== "title" || b.id === nextBlock.id)) {
+        return nextBlock;
+      }
+      return b;
+    });
+    setDraftBlocks(next);
+    scheduleSave(next);
+  }
+
+  function onBodySelection() {
+    if (!onSelectionRevise || compareMode) return;
+    const sel = window.getSelection();
+    const text = sel?.toString().trim() ?? "";
+    if (!text || text.length < 4) {
+      setSelectionUi(null);
+      return;
+    }
+    const anchor = bodySectionRef.current;
+    if (!anchor || !sel?.anchorNode || !anchor.contains(sel.anchorNode)) {
+      setSelectionUi(null);
+      return;
+    }
+    setSelectionUi({ text });
+    setSelectionOpinion("");
+  }
 
   return (
     <div className="rounded-md border border-line/50 bg-fill/35 px-3 py-2.5">
@@ -89,7 +158,16 @@ export default function StudioOutputManuscript({
                 onClick={() => onTitleIndexChange?.(i)}
               >
                 <span className="mr-1 text-[10px] text-muted">{i + 1}</span>
-                {t.text}
+                {editable ? (
+                  <input
+                    className="w-full min-w-[8rem] border-0 bg-transparent p-0 text-xs text-ink outline-none"
+                    value={t.text}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => patchBlock({ ...t, text: e.target.value })}
+                  />
+                ) : (
+                  t.text
+                )}
               </button>
             ))}
           </div>
@@ -110,12 +188,21 @@ export default function StudioOutputManuscript({
                 标题变更
               </label>
             ) : null}
-            <p className={STUDIO_MANUSCRIPT_TITLE}>{titles[0]!.text}</p>
+            {editable && !compareMode ? (
+              <textarea
+                className={`w-full resize-none border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_TITLE}`}
+                rows={2}
+                value={titles[0]!.text}
+                onChange={(e) => patchBlock({ ...titles[0]!, text: e.target.value })}
+              />
+            ) : (
+              <p className={STUDIO_MANUSCRIPT_TITLE}>{titles[0]!.text}</p>
+            )}
           </section>
         ) : null}
 
         {body && body.kind === "body" ? (
-          <section>
+          <section ref={bodySectionRef} onMouseUp={onBodySelection}>
             {compareMode && changedKeys?.has("body") && onToggleKey ? (
               <label className="mb-1 flex items-center gap-1.5 text-[10px] text-muted">
                 <input
@@ -130,22 +217,84 @@ export default function StudioOutputManuscript({
             {body.evidence === "corpus" || bodyHasCorpusAnchors(body.text) ? (
               <p className="mb-1 text-[10px] text-brand/85">正文含资料锚点</p>
             ) : null}
-            <p className={`whitespace-pre-wrap ${STUDIO_MANUSCRIPT_BODY}`}>{body.text}</p>
+            {editable && !compareMode ? (
+              <textarea
+                className={`w-full resize-y border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_BODY}`}
+                rows={8}
+                value={body.text}
+                onChange={(e) => patchBlock({ ...body, text: e.target.value })}
+              />
+            ) : (
+              <p className={`whitespace-pre-wrap ${STUDIO_MANUSCRIPT_BODY}`}>{body.text}</p>
+            )}
+            {selectionUi && onSelectionRevise ? (
+              <div className="mt-2 rounded-lg border border-line/60 bg-surface px-2.5 py-2 shadow-soft">
+                <p className="mb-1 text-[10px] text-muted">优化选中片段</p>
+                <input
+                  className="mb-2 w-full rounded-md border border-line/60 bg-fill/30 px-2 py-1 text-xs text-ink outline-none"
+                  placeholder="例如：更口语、保留数据"
+                  value={selectionOpinion}
+                  onChange={(e) => setSelectionOpinion(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded-md bg-brand px-2 py-1 text-[11px] text-brand-foreground"
+                    onClick={() => {
+                      onSelectionRevise(selectionUi.text, selectionOpinion);
+                      setSelectionUi(null);
+                      window.getSelection()?.removeAllRanges();
+                    }}
+                  >
+                    优化这段
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-md border border-line px-2 py-1 text-[11px] text-muted"
+                    onClick={() => setSelectionUi(null)}
+                  >
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </section>
         ) : null}
 
         {hashtags && hashtags.kind === "hashtags" ? (
-          <p className={STUDIO_MANUSCRIPT_HASHTAGS}>
-            {hashtags.tags.map((t) => (
-              <span key={t} className="mr-2">
-                #{t.replace(/^#/, "")}
-              </span>
-            ))}
-          </p>
+          editable && !compareMode ? (
+            <input
+              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_HASHTAGS}`}
+              value={hashtags.tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ")}
+              onChange={(e) => {
+                const tags = e.target.value
+                  .split(/[\s,#]+/)
+                  .map((t) => t.replace(/^#/, "").trim())
+                  .filter(Boolean);
+                patchBlock({ ...hashtags, tags });
+              }}
+            />
+          ) : (
+            <p className={STUDIO_MANUSCRIPT_HASHTAGS}>
+              {hashtags.tags.map((t) => (
+                <span key={t} className="mr-2">
+                  #{t.replace(/^#/, "")}
+                </span>
+              ))}
+            </p>
+          )
         ) : null}
 
         {cover && cover.kind === "coverBrief" ? (
-          <p className={STUDIO_MANUSCRIPT_META}>封面：{cover.text}</p>
+          editable && !compareMode ? (
+            <input
+              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_META}`}
+              value={cover.text}
+              onChange={(e) => patchBlock({ ...cover, text: e.target.value })}
+            />
+          ) : (
+            <p className={STUDIO_MANUSCRIPT_META}>封面：{cover.text}</p>
+          )
         ) : null}
       </div>
 
@@ -176,7 +325,7 @@ export default function StudioOutputManuscript({
             aria-label="复制全部（含话题）"
             className="rounded p-1 text-muted hover:bg-fill/80 hover:text-ink"
             onClick={() =>
-              void navigator.clipboard.writeText(manuscriptCopyAll(version.blocks, titleIndex))
+              void navigator.clipboard.writeText(manuscriptCopyAll(blocks, titleIndex))
             }
           >
             <IconCopy />

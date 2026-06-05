@@ -30,7 +30,24 @@ export function buildStudioAuthorPrompt(taskSentence: string): string {
   return [
     "围绕【创作任务】中的具体产品、卖点、受众场景写小红书种草/推广正文。",
     "禁止把「账号阶段/读者/切入角度」等偏好标签写进正文。",
-    "禁止与任务无关的通用护肤、熬夜、脸垮等虚构案例。",
+    "禁止📌先说结论/💡展开/要点一二三/与任务无关的通用护肤熬夜脸垮等模板骨架。",
+    "正文须为自然段，引用任务里的真实产品名与使用场景。",
     `创作任务：${taskSentence.trim().slice(0, 600)}`
   ].join("\n");
+}
+
+/** 改版 Job：附带当前稿件摘要，避免模型脱离上下文 */
+export function buildStudioReviseTaskSentence(
+  baseTask: string,
+  manuscriptPlain: string,
+  opinion: string
+): string {
+  const clip = manuscriptPlain.trim().slice(0, 2400);
+  return [
+    baseTask.trim(),
+    clip ? `【当前稿件】\n${clip}` : "",
+    `改版意见：${opinion.trim()}`
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }

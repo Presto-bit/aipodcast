@@ -52,7 +52,9 @@ async function fetchJobRow(jobId: string, authHeaders: Record<string, string>): 
 function progressMessage(row: Record<string, unknown>): string {
   const progress = typeof row.progress === "number" ? row.progress : undefined;
   const st = String(row.status || "").trim();
-  if (progress != null && progress >= 70) return "正在生成发布傻瓜包…";
+  const detail = String(row.progress_message || row.progressMessage || "").trim();
+  if (detail) return detail;
+  if (progress != null && progress >= 72) return "优化文稿…";
   if (progress != null && progress >= 55) return "正在生成内容成品…";
   if (progress != null && progress >= 20) return "正在检索资料…";
   if (st === "queued") return "云端排队中…";
