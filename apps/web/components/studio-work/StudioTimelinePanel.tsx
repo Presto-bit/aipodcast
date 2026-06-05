@@ -27,7 +27,9 @@ export default function StudioTimelinePanel({
   onSelectionRevise,
   showFeatureNudge,
   onFillFeature,
-  onDismissFeatureNudge
+  onDismissFeatureNudge,
+  streamingBlocks = null,
+  streamingBodyText = null
 }: {
   work: StudioWork;
   turns: StudioAgentTurn[];
@@ -50,6 +52,8 @@ export default function StudioTimelinePanel({
   showFeatureNudge: boolean;
   onFillFeature: () => void;
   onDismissFeatureNudge: () => void;
+  streamingBlocks?: ManuscriptBlock[] | null;
+  streamingBodyText?: string | null;
 }) {
   void scrollRef;
   const items = buildStudioTimeline(work, turns, { hideManuscript: hideManuscript });
@@ -96,6 +100,8 @@ export default function StudioTimelinePanel({
               onWowRevise={onWowRevise}
               onBlocksChange={onBlocksChange}
               onSelectionRevise={onSelectionRevise}
+              streamingBlocks={streamingBlocks}
+              streamingBodyText={streamingBodyText}
             />
           );
         })}

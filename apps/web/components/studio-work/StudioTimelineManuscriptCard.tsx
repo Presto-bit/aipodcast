@@ -1,8 +1,6 @@
 "use client";
 
-import { useState } from "react";
 import { diffBlockKeys } from "../../lib/studioDeliverable";
-import { resolvePrimaryTitleIndex } from "../../lib/studioManuscriptView";
 import { taskSentenceFromWork } from "../../lib/studioWorkTask";
 import type {
   ManuscriptBlock,
@@ -12,7 +10,7 @@ import type {
   StudioWork
 } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
-import StudioXhsPhonePreview from "./StudioXhsPhonePreview";
+import StudioStreamingSurface from "./StudioStreamingSurface";
 
 export default function StudioTimelineManuscriptCard({
   work,
@@ -30,7 +28,9 @@ export default function StudioTimelineManuscriptCard({
   onTitleIndexChange,
   onWowRevise,
   onBlocksChange,
-  onSelectionRevise
+  onSelectionRevise,
+  streamingBlocks = null,
+  streamingBodyText = null
 }: {
   work: StudioWork;
   run: StudioRun;
@@ -48,6 +48,8 @@ export default function StudioTimelineManuscriptCard({
   onWowRevise?: (opinion: string) => void;
   onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   onSelectionRevise?: (selectedText: string, opinion: string) => void;
+  streamingBlocks?: ManuscriptBlock[] | null;
+  streamingBodyText?: string | null;
 }) {
   const isRunning = run.status === "running" && work.status === "generating";
   const compareMode = Boolean(pendingPatch);
@@ -57,17 +59,11 @@ export default function StudioTimelineManuscriptCard({
     compareMode && pendingPatch
       ? pendingPatch.proposedBlocks
       : version?.blocks ?? [];
-  const titleIndex = resolvePrimaryTitleIndex(
-    compareMode ? null : version,
-    displayBlocks.filter((b) => b.kind === "title").length
-  );
 
   const patchChangedKeys =
     compareMode && pendingPatch && baseVersion
       ? diffBlockKeys(baseVersion.blocks, pendingPatch.proposedBlocks)
       : changedKeys;
-
-  const [docOpen, setDocOpen] = useState(false);
 
   const editable =
     isActiveVersion &&
@@ -77,27 +73,32 @@ export default function StudioTimelineManuscriptCard({
     !busy &&
     Boolean(onBlocksChange && version);
 
-  const generatingPhase =
-    isRunning && !compareMode && run.tool === "generate"
-      ? work.runPhase || run.summary || "写稿中…"
-      : undefined;
-
-  if (generatingPhase) {
+  if (isRunning && !compareMode) {
+    const phase = work.runPhase || run.summary || (run.tool === "revise" ? "改版中…" : "写稿中…");
+    const hasStream = Boolean(
+      (streamingBlocks && streamingBlocks.length > 0) || streamingBodyText?.trim()
+    );
+    if (hasStream) {
+      return (
+        <div className="mt-2">
+          <StudioStreamingSurface
+            variant="active"
+            blocks={streamingBlocks}
+            bodyText={streamingBodyText}
+            phase={phase}
+            taskSentence={taskSentence}
+            flowLayout
+          />
+        </div>
+      );
+    }
     return (
       <div className="mt-2">
         <StudioOutputManuscript
-          version={null}
-          generatingPhase={generatingPhase}
+          version={run.tool === "revise" ? baseVersion : null}
+          generatingPhase={phase}
           generatingTask={taskSentence}
         />
-      </div>
-    );
-  }
-
-  if (isRunning && run.tool === "revise" && baseVersion) {
-    return (
-      <div className="mt-2">
-        <StudioOutputManuscript version={baseVersion} />
       </div>
     );
   }
@@ -149,29 +150,16 @@ export default function StudioTimelineManuscriptCard({
   if (version && displayBlocks.length > 0) {
     return (
       <div className="mt-2 space-y-2">
-        <StudioXhsPhonePreview
+        <StudioOutputManuscript
           version={version}
-          blocks={displayBlocks}
-          titleIndex={titleIndex}
+          borderless
+          onTitleIndexChange={isActiveVersion ? onTitleIndexChange : undefined}
+          onWowRevise={isActiveVersion && work.status === "ready" ? onWowRevise : undefined}
+          wowReviseBusy={busy}
+          editable={editable}
+          onBlocksChange={editable ? onBlocksChange : undefined}
+          onSelectionRevise={isActiveVersion ? onSelectionRevise : undefined}
         />
-        <button
-          type="button"
-          className="text-[11px] text-muted underline hover:text-ink"
-          onClick={() => setDocOpen((o) => !o)}
-        >
-          {docOpen ? "收起文档" : "查看文档"}
-        </button>
-        {docOpen ? (
-          <StudioOutputManuscript
-            version={version}
-            onTitleIndexChange={isActiveVersion ? onTitleIndexChange : undefined}
-            onWowRevise={isActiveVersion && work.status === "ready" ? onWowRevise : undefined}
-            wowReviseBusy={busy}
-            editable={editable}
-            onBlocksChange={editable ? onBlocksChange : undefined}
-            onSelectionRevise={isActiveVersion ? onSelectionRevise : undefined}
-          />
-        ) : null}
       </div>
     );
   }

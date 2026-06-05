@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -29,12 +29,6 @@ import {
 import { buildStudioDialogueTurnGroups } from "../../lib/studioDialogueTurnGroups";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
-import {
-  getStudioAgentMode,
-  setStudioAgentMode,
-  studioAgentModePlaceholder,
-  type StudioAgentMode
-} from "../../lib/studioAgentMode";
 import type { StudioAgentStep } from "../../lib/studioAgentSteps";
 import { streamStudioAgentAsk } from "../../lib/studioAgentAskStream";
 import {
@@ -51,7 +45,6 @@ import type {
   WorkStatus
 } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
-import StudioAgentModeToggle from "./StudioAgentModeToggle";
 import StudioAgentStepBar from "./StudioAgentStepBar";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
@@ -77,8 +70,10 @@ function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]
   return syncWorkTitleFromTurns(next, prefixTurns);
 }
 
-function agentPlaceholder(status: WorkStatus, mode: StudioAgentMode): string {
-  return studioAgentModePlaceholder(mode, status);
+function agentPlaceholder(status: WorkStatus): string {
+  if (status === "generating") return "写稿进行中，可继续描述或提问…";
+  if (status === "ready" || status === "shipped") return "问运营、解读稿件，或描述改版…";
+  return "描述想创作的内容，或提问钩子、结构、运营…";
 }
 
 function appendToolAckTurn(
@@ -128,20 +123,21 @@ export default function StudioAgentDock({
   onSelectionRevise,
   onWowRevise,
   canvasMode = false,
-  canvasSlot,
   agentRouteHint = "",
-  agentSteps = []
+  agentSteps = [],
+  streamingBlocks = null,
+  streamingBodyText = null
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
   ready: boolean;
   jobBusy: boolean;
   canvasMode?: boolean;
-  /** canvasMode：稿件嵌入同一滚动区，位于对话上方 */
-  canvasSlot?: ReactNode;
   /** 单 Agent 路由提示（reply / compose / revise） */
   agentRouteHint?: string;
   agentSteps?: StudioAgentStep[];
+  streamingBlocks?: ManuscriptBlock[] | null;
+  streamingBodyText?: string | null;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
   /** canvasMode：统一 Agent SSE（reply | compose | revise） */
@@ -180,7 +176,7 @@ export default function StudioAgentDock({
   const [phase, setPhase] = useState("");
   const [corpusMenuOpen, setCorpusMenuOpen] = useState(false);
   const [ephemeralHint, setEphemeralHint] = useState("");
-  const [agentMode, setAgentModeState] = useState<StudioAgentMode>("write");
+  const [quickPromptsOpen, setQuickPromptsOpen] = useState(false);
   const dialogueScrollRef = useRef<HTMLDivElement>(null);
   const lastUserAnchorIdRef = useRef<string | null>(null);
   const phaseRef = useRef("");
@@ -203,12 +199,7 @@ export default function StudioAgentDock({
   const canChat = isLoggedIn && ready;
   const showQuickPrompts = turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const canEditTurns = canChat && !agentBusy;
-  const dialogueEmptyHint =
-    canvasSlot
-      ? undefined
-      : turns.length === 0 && isDraftLikeStatus(work.status) && work.status !== "generating"
-        ? "描述你想创作的内容，够信息后会自动开始写稿"
-        : undefined;
+  const dialogueEmptyHint = undefined;
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -226,15 +217,6 @@ export default function StudioAgentDock({
     lastUserAnchorIdRef.current = activeUserTurnId;
     requestAnimationFrame(() => scrollToActiveUser());
   }, [activeUserTurnId, scrollToActiveUser]);
-
-  useEffect(() => {
-    setAgentModeState(getStudioAgentMode());
-  }, [work.id]);
-
-  function updateAgentMode(next: StudioAgentMode) {
-    setStudioAgentMode(next);
-    setAgentModeState(next);
-  }
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -672,12 +654,11 @@ export default function StudioAgentDock({
 
   return (
     <div className={["flex min-h-0 flex-col bg-surface", canvasMode ? "h-full" : "flex-1"].join(" ")}>
-      <div className="mx-auto flex min-h-0 w-full max-w-2xl flex-1 flex-col px-3 py-2">
+      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-2">
         <div
           ref={dialogueScrollRef}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
         >
-          {canvasSlot ? <div className="shrink-0">{canvasSlot}</div> : null}
           <StudioTimelinePanel
             work={work}
             turns={dialogueTurns}
@@ -687,7 +668,9 @@ export default function StudioAgentDock({
             onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
             emptyHint={dialogueEmptyHint}
             busy={agentBusy || jobBusy}
-            hideManuscript={canvasMode}
+            hideManuscript={false}
+            streamingBlocks={streamingBlocks}
+            streamingBodyText={streamingBodyText}
             selectedPatchKeys={selectedPatchKeys}
             changedKeys={changedKeys}
             onTogglePatchKey={onTogglePatchKey}
@@ -708,7 +691,7 @@ export default function StudioAgentDock({
       </div>
 
       <div className="sticky bottom-0 z-20 shrink-0 border-t border-line/40 bg-surface/95 px-3 pb-2 pt-1 backdrop-blur-sm supports-[backdrop-filter]:bg-surface/90">
-        <div className="mx-auto w-full max-w-2xl">
+        <div className="mx-auto w-full max-w-3xl">
           {!isLoggedIn && ready ? (
             <p className="mb-2 text-xs text-warning-ink">
               <Link href="/login" className="text-brand underline">
@@ -729,26 +712,30 @@ export default function StudioAgentDock({
             </div>
           ) : null}
           {showQuickPrompts ? (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {QUICK_PROMPTS.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  disabled={!canChat}
-                  className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
-                  onClick={() => void handleSend(p)}
-                >
-                  {p}
-                </button>
-              ))}
+            <div className="mb-2">
+              <button
+                type="button"
+                className="text-[11px] text-muted underline hover:text-ink"
+                onClick={() => setQuickPromptsOpen((open) => !open)}
+              >
+                {quickPromptsOpen ? "收起示例" : "试试这些"}
+              </button>
+              {quickPromptsOpen ? (
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {QUICK_PROMPTS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      disabled={!canChat}
+                      className="rounded-full border border-line px-3 py-1 text-xs text-ink hover:bg-fill disabled:opacity-50"
+                      onClick={() => void handleSend(p)}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-          {canvasMode ? (
-            <StudioAgentModeToggle
-              mode={agentMode}
-              onChange={updateAgentMode}
-              disabled={!canChat || agentBusy || jobRunning}
-            />
           ) : null}
           <StudioAgentComposer
             value={input}
@@ -756,7 +743,7 @@ export default function StudioAgentDock({
             onSend={() => void handleSend()}
             busy={agentBusy || (jobRunning && Boolean(input.trim()))}
             disabled={!canChat}
-            placeholder={agentPlaceholder(work.status, canvasMode ? agentMode : "write")}
+            placeholder={agentPlaceholder(work.status)}
             menuOpen={corpusMenuOpen}
             generating={jobRunning}
             onCancel={jobRunning ? onCancelStream : undefined}

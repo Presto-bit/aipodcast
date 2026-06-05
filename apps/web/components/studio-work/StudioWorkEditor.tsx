@@ -28,7 +28,6 @@ import {
 import { resolveJobAnchorTurnId } from "../../lib/studioTimeline";
 import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
-import { getStudioAgentMode, setStudioAgentMode } from "../../lib/studioAgentMode";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "../../lib/studioWorkTask";
@@ -42,7 +41,6 @@ import type {
 } from "../../lib/studioWorkTypes";
 import { isFeatureCoreComplete } from "../../lib/homeComposerFeatureCore";
 import StudioAgentDock from "./StudioAgentDock";
-import StudioDraftCanvas from "./StudioDraftCanvas";
 import StudioSessionRail from "./StudioSessionRail";
 
 type CanvasSnapshot = {
@@ -241,13 +239,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           noteIds: cur.binding.noteIds,
           featureCore: getComposerPrefsFeatureCore() as unknown as Record<string, unknown>,
           authorPrompt,
-          agentMode: getStudioAgentMode(),
+          agentMode: "write",
           manuscriptBlocks,
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
           onStep: (step) => setAgentSteps((prev) => upsertAgentStep(prev, step)),
-          onRoute: (route) =>
-            setAgentRouteHint(studioAgentRouteHint(route, getStudioAgentMode())),
+          onRoute: (route) => setAgentRouteHint(studioAgentRouteHint(route, "write")),
           onReply: (text) => {
             const live = getStudioWork(workId);
             if (!live) return;
@@ -564,56 +561,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           canvasMode
           agentRouteHint={agentRouteHint}
           agentSteps={agentSteps}
-          canvasSlot={
-            <StudioDraftCanvas
-              flowLayout
-              work={work}
-              busy={jobBusy}
-              activeVersion={activeVersion ?? null}
-              versions={work.versions}
-              streamingBlocks={streamingBlocks}
-              streamingBodyText={streamingBodyText}
-              generatingTaskSentence={taskSentenceFromWork(work)}
-              showFeatureNudge={showFeatureNudge}
-              onFillFeature={() => {
-                markOpenComposerFeature();
-                router.push(WORKBENCH_CHAT_PATH);
-              }}
-              onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
-              onApplyPatch={onApplyPatch}
-              onDiscardPatch={() => persist({ ...work, pendingPatch: undefined })}
-              selectedPatchKeys={selectedPatchKeys}
-              changedKeys={changedKeys}
-              onTogglePatchKey={(key) => {
-                setSelectedPatchKeys((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(key)) next.delete(key);
-                  else next.add(key);
-                  return next;
-                });
-              }}
-              onTitleIndexChange={(index) => {
-                if (!work || !activeVersion) return;
-                persist({
-                  ...work,
-                  versions: work.versions.map((v) =>
-                    v.id === activeVersion.id ? { ...v, primaryTitleIndex: index } : v
-                  )
-                });
-              }}
-              onVersionChange={(versionId) => {
-                if (!work.versions.some((v) => v.id === versionId)) return;
-                persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
-              }}
-              onBlocksChange={onManuscriptBlocksChange}
-              onSelectionRevise={(selectedText, opinion) => {
-                setStudioAgentMode("write");
-                void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion));
-              }}
-              onWowRevise={(opinion) => void onReviseFromChat(opinion)}
-              onCancelStream={cancelAgentStream}
-            />
-          }
+          streamingBlocks={streamingBlocks}
+          streamingBodyText={streamingBodyText}
           getAuthHeaders={getAuthHeaders}
           onPersist={persist}
           onAgentRun={async ({ userText, prefixTurns, userTurnId }) => {
@@ -657,10 +606,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             persist({ ...work, activeVersionId: versionId, pendingPatch: undefined });
           }}
           onBlocksChange={onManuscriptBlocksChange}
-          onSelectionRevise={(selectedText, opinion) => {
-            setStudioAgentMode("write");
-            void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion));
-          }}
+          onSelectionRevise={(selectedText, opinion) =>
+            void onReviseFromChat(buildSelectionPatchOpinion(selectedText, opinion))
+          }
           onWowRevise={(opinion) => void onReviseFromChat(opinion)}
         />
       </div>
