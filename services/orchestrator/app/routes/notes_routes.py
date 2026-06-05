@@ -82,6 +82,7 @@ from ..notes_ask import (
     _prepare_notes_ask_messages,
     answer_notes_question,
     generate_notes_ask_hints,
+    is_notes_ask_followup,
     iter_notes_answer_events,
     notes_ask_value_error_sse_event,
 )
@@ -1436,13 +1437,16 @@ def notes_ask_stream_api(body: NotesAskRequest, request: Request):
                     dialogue_style_prompt=body.dialogue_style_prompt,
                 )
             else:
+                rag_followup = is_notes_ask_followup(body.chat_history, body.session_state)
                 yield (
                     "data: "
                     + json.dumps(
                         {
                             "type": "phase",
-                            "phase": "retrieving",
-                            "message": "正在检索并整理勾选资料…",
+                            "phase": "answering" if rag_followup else "retrieving",
+                            "message": "正在生成回答…"
+                            if rag_followup
+                            else "正在检索并整理勾选资料…",
                         },
                         ensure_ascii=False,
                     )

@@ -24,6 +24,11 @@ import {
 } from "../../lib/studioWorkStorage";
 import { firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
 import { suggestStudioWorkTitleLlm } from "../../lib/studioWorkTitleSuggest";
+import {
+  resetStudioRagWarmOnBindingChange,
+  softenStudioRagPhaseMessage,
+  studioCorpusBindingKey
+} from "../../lib/studioAskPhase";
 import { buildStudioDialogueTurnGroups } from "../../lib/studioDialogueTurnGroups";
 import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
@@ -47,7 +52,7 @@ const QUICK_PROMPTS = [
 ] as const;
 
 function studioDockHasArtifact(work: StudioWork, activeVersion: ManuscriptVersion | null): boolean {
-  if (work.error || work.status === "generating") return true;
+  if (work.error) return true;
   const compareMode = Boolean(work.pendingPatch);
   const blocks =
     compareMode && work.pendingPatch
@@ -123,6 +128,11 @@ export default function StudioAgentDock({
   const dialogueScrollRef = useRef<HTMLDivElement>(null);
   const artifactScrollRef = useRef<HTMLDivElement>(null);
   const lastUserAnchorIdRef = useRef<string | null>(null);
+  const phaseRef = useRef("");
+  const streamRafRef = useRef(0);
+  const ragWarmBindingsRef = useRef(new Set<string>());
+  const prevCorpusBindingRef = useRef<string | null>(null);
+  const [streamOverlay, setStreamOverlay] = useState<StudioAgentTurn[] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const postDoneStartedRef = useRef(false);
   const titleSuggestAbortRef = useRef<AbortController | null>(null);
@@ -134,6 +144,7 @@ export default function StudioAgentDock({
   }
 
   const turns = work.agentTurns ?? [];
+  const dialogueTurns = streamOverlay ?? turns;
   const readOnly = work.status === "generating" || parentBusy;
   const canChat = isLoggedIn && ready && !readOnly;
   const showQuickPrompts = turns.length === 0 && work.status === "briefing";
@@ -161,7 +172,15 @@ export default function StudioAgentDock({
   useEffect(() => {
     postDoneStartedRef.current = false;
     titleSuggestKeyRef.current = "";
+    ragWarmBindingsRef.current.clear();
+    prevCorpusBindingRef.current = null;
+    setStreamOverlay(null);
   }, [work.id]);
+
+  useEffect(() => {
+    const key = studioCorpusBindingKey(work.binding.notebook, work.binding.noteIds);
+    resetStudioRagWarmOnBindingChange(key, prevCorpusBindingRef, ragWarmBindingsRef.current);
+  }, [work.binding.notebook, work.binding.noteIds]);
 
   useEffect(() => {
     if (!isLoggedIn || !ready) return;
@@ -235,8 +254,36 @@ export default function StudioAgentDock({
     onPersist(syncWorkTitleFromTurns(next, nextTurns));
   }
 
-  function patchTurnsStreaming(nextTurns: StudioAgentTurn[], workBase: StudioWork = work) {
-    onPersist({ ...workBase, agentTurns: nextTurns });
+  function scheduleStreamOverlay(nextTurns: StudioAgentTurn[]) {
+    setStreamOverlay(nextTurns);
+  }
+
+  function flushStreamOverlayFrame(
+    assistantId: string,
+    preview: string,
+    baseTurns: StudioAgentTurn[],
+    intent: StudioRouteDecision["intent"]
+  ) {
+    if (streamRafRef.current) return;
+    streamRafRef.current = requestAnimationFrame(() => {
+      streamRafRef.current = 0;
+      scheduleStreamOverlay(
+        baseTurns.map((t) =>
+          t.id === assistantId ? { ...t, content: preview, streaming: true, intent } : t
+        )
+      );
+    });
+  }
+
+  function handleAskPhase(msg: string, workBase: StudioWork) {
+    const hasCorpus = Boolean(workBase.binding.notebook.trim() && workBase.binding.noteIds.length > 0);
+    const bindingKey = studioCorpusBindingKey(workBase.binding.notebook, workBase.binding.noteIds);
+    const softened =
+      hasCorpus && workBase.binding.noteIds.length > 0
+        ? softenStudioRagPhaseMessage(msg, bindingKey, ragWarmBindingsRef.current)
+        : msg;
+    phaseRef.current = softened;
+    setPhase(softened);
   }
 
   async function runAgentTurn(
@@ -262,8 +309,9 @@ export default function StudioAgentDock({
       intent
     };
     const baseTurns = [...prefixTurns, streamingTurn];
-    applyDialogExtract(baseTurns, workBase.agentSessionState ?? null, workBase);
+    scheduleStreamOverlay(baseTurns);
     setAgentBusyState(true);
+    phaseRef.current = "";
     setPhase("");
 
     abortRef.current?.abort();
@@ -310,28 +358,29 @@ export default function StudioAgentDock({
         authHeaders: getAuthHeaders(),
         signal: ac.signal,
         callbacks: {
-          onPhase: (msg) => setPhase(msg),
+          onPhase: (msg) => handleAskPhase(msg, workBase),
           onChunk: (text, role, section) => {
             if (role === "reasoning") return;
             if (section === "supplement") supplementBuf += text;
             else answerBuf += text;
             const preview = STUDIO_STRUCTURED_OUTPUT_ENABLED
-              ? "…"
+              ? phaseRef.current || "正在生成回答…"
               : answerBuf.trim() || supplementBuf.trim();
-            patchTurnsStreaming(
-              baseTurns.map((t) =>
-                t.id === assistantId ? { ...t, content: preview, streaming: true, intent } : t
-              ),
-              workBase
-            );
+            flushStreamOverlayFrame(assistantId, preview, baseTurns, intent);
           }
         }
       });
+
+      if (streamRafRef.current) {
+        cancelAnimationFrame(streamRafRef.current);
+        streamRafRef.current = 0;
+      }
 
       if (
         STUDIO_STRUCTURED_OUTPUT_ENABLED &&
         !studioStructuredAddsAssistantTurn(done.structured)
       ) {
+        setStreamOverlay(null);
         applyDialogExtract(prefixTurns, done.sessionState, workBase);
         onPersist({ ...workBase, agentTurns: prefixTurns, error: undefined });
         return;
@@ -355,18 +404,21 @@ export default function StudioAgentDock({
             }
           : t
       );
+      setStreamOverlay(null);
       applyDialogExtract(finalTurns, done.sessionState, workBase);
       onPersist({ ...workBase, agentTurns: finalTurns, error: undefined });
     } catch (err) {
       if (ac.signal.aborted) return;
+      setStreamOverlay(null);
       const friendly = formatStudioAskError(String(err instanceof Error ? err.message : err));
       onPersist({
         ...workBase,
-        agentTurns: baseTurns.filter((t) => t.id !== assistantId),
+        agentTurns: prefixTurns,
         error: friendly
       });
     } finally {
       setAgentBusyState(false);
+      phaseRef.current = "";
       setPhase("");
       abortRef.current = null;
     }
@@ -457,7 +509,13 @@ export default function StudioAgentDock({
   function abortBackgroundStreams() {
     abortRef.current?.abort();
     abortRef.current = null;
+    if (streamRafRef.current) {
+      cancelAnimationFrame(streamRafRef.current);
+      streamRafRef.current = 0;
+    }
+    setStreamOverlay(null);
     setAgentBusyState(false);
+    phaseRef.current = "";
     setPhase("");
     if (work.postDoneCoachStreaming) {
       onPersist({ ...work, postDoneCoachStreaming: false });
@@ -517,7 +575,7 @@ export default function StudioAgentDock({
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-surface">
       <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col px-3 py-3">
-        {turns.length > 0 ? (
+        {dialogueTurns.length > 0 || work.status === "generating" ? (
           <div
             className={
               hasArtifact
@@ -526,8 +584,11 @@ export default function StudioAgentDock({
             }
           >
             <StudioDialoguePanel
-              turns={turns}
+              turns={dialogueTurns}
               streamingPhase={phase}
+              statusLine={
+                work.status === "generating" ? work.runPhase || "处理中…" : undefined
+              }
               scrollRef={dialogueScrollRef}
             />
           </div>

@@ -43,8 +43,45 @@ logger = logging.getLogger(__name__)
 _MAX_QUESTION_CHARS = 800
 _MAX_TOTAL_CONTEXT = 44_000
 _MAX_PER_NOTE = 16_000
-_ASK_CONTEXT_CACHE_TTL_SEC = 30.0
+def _ask_context_cache_ttl_sec() -> float:
+    try:
+        return max(15.0, min(600.0, float(os.getenv("NOTES_ASK_CONTEXT_CACHE_TTL_SEC", "90") or "90")))
+    except (TypeError, ValueError):
+        return 90.0
+
+
 _ASK_CONTEXT_CACHE: dict[str, tuple[float, str, list[dict[str, Any]]]] = {}
+
+
+def is_notes_ask_followup(
+    chat_history: list[dict[str, str]] | None,
+    session_state: dict[str, Any] | None,
+) -> bool:
+    """同会话后续轮：有历史或 session_state 即视为 follow-up。"""
+    if chat_history:
+        for turn in chat_history:
+            if not isinstance(turn, dict):
+                continue
+            if str(turn.get("content") or turn.get("message") or "").strip():
+                return True
+    if not session_state or not isinstance(session_state, dict):
+        return False
+    if int(session_state.get("v") or 0) != 1:
+        return False
+    if str(session_state.get("topic") or "").strip():
+        return True
+    threads = session_state.get("threads")
+    if isinstance(threads, list) and len(threads) > 0:
+        return True
+    try:
+        if int(session_state.get("turnCursor") or session_state.get("turn_cursor") or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    facts = session_state.get("facts")
+    if isinstance(facts, list) and any(str(x).strip() for x in facts):
+        return True
+    return False
 
 
 def _notes_ask_reasoning_stream_cap_chars() -> int:
@@ -339,7 +376,7 @@ def _notes_ask_context_cache_get(key: str) -> tuple[str, list[dict[str, Any]]] |
     if not item:
         return None
     ts, context, sources = item
-    if now - ts > _ASK_CONTEXT_CACHE_TTL_SEC:
+    if now - ts > _ask_context_cache_ttl_sec():
         _ASK_CONTEXT_CACHE.pop(key, None)
         return None
     return context, [dict(x) for x in sources]
@@ -473,14 +510,18 @@ def _prepare_notes_ask_messages(
         user_ref=user_ref,
         project_owner_user_uuid=project_owner_user_uuid,
     )
-    plan = _run_notes_ask_planner(
-        notebook=notebook,
-        note_ids=note_ids,
-        question=q,
-        user_ref=user_ref,
-        project_owner_user_uuid=project_owner_user_uuid,
-        total_chars=total_chars,
-    )
+    followup = is_notes_ask_followup(chat_history, session_state)
+    if followup:
+        plan = None
+    else:
+        plan = _run_notes_ask_planner(
+            notebook=notebook,
+            note_ids=note_ids,
+            question=q,
+            user_ref=user_ref,
+            project_owner_user_uuid=project_owner_user_uuid,
+            total_chars=total_chars,
+        )
     plan_type = str((plan or {}).get("answerType") or "").strip() or None
     top_k, answer_type = resolve_retrieval_top_k(
         q,

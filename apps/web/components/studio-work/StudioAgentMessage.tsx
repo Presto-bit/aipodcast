@@ -4,7 +4,9 @@ import { useState } from "react";
 import dynamic from "next/dynamic";
 import {
   STUDIO_ASSISTANT_BODY,
+  STUDIO_ASSISTANT_SURFACE,
   STUDIO_USER_PROMPT,
+  STUDIO_USER_PROMPT_BOX,
   STUDIO_USER_PROMPT_STICKY
 } from "../../lib/studioOutputTypography";
 import type { NotesAskSource } from "../../lib/notesAskCitation";
@@ -36,7 +38,9 @@ export default function StudioAgentMessage({
         data-studio-user-anchor={userAnchor}
         className={stickyUser ? STUDIO_USER_PROMPT_STICKY : undefined}
       >
-        <p className={`whitespace-pre-wrap ${STUDIO_USER_PROMPT}`}>{turn.content}</p>
+        <div className={STUDIO_USER_PROMPT_BOX}>
+          <p className={`whitespace-pre-wrap ${STUDIO_USER_PROMPT}`}>{turn.content}</p>
+        </div>
       </div>
     );
   }
@@ -45,7 +49,7 @@ export default function StudioAgentMessage({
   const isErrorBubble = text.startsWith("出错了：");
 
   return (
-    <div className="py-0.5">
+    <div className={isErrorBubble ? "py-0.5" : STUDIO_ASSISTANT_SURFACE}>
       {turn.streaming && streamingPhase ? (
         <p className="mb-1 text-[10px] text-brand">{streamingPhase}</p>
       ) : null}

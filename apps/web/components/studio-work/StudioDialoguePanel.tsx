@@ -7,7 +7,7 @@ import {
   shouldVirtualizeDialogueHistory,
   splitActiveDialogueGroups
 } from "../../lib/studioDialogueTurnGroups";
-import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
+import { STUDIO_DIALOGUE_SECTION, STUDIO_DIALOGUE_STATUS } from "../../lib/studioOutputTypography";
 import type { StudioAgentTurn } from "../../lib/studioWorkTypes";
 import StudioTurnGroupBlock from "./StudioTurnGroupBlock";
 
@@ -16,10 +16,12 @@ const HISTORY_GROUP_ESTIMATE = 96;
 export default function StudioDialoguePanel({
   turns,
   streamingPhase,
+  statusLine,
   scrollRef
 }: {
   turns: StudioAgentTurn[];
   streamingPhase?: string;
+  statusLine?: string;
   scrollRef: RefObject<HTMLDivElement>;
 }) {
   const groups = buildStudioDialogueTurnGroups(turns);
@@ -33,12 +35,15 @@ export default function StudioDialoguePanel({
     overscan: 4
   });
 
-  if (!turns.length) return null;
+  if (!turns.length && !statusLine) return null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <p className={`${STUDIO_DIALOGUE_SECTION} shrink-0 px-0.5`}>对话</p>
       <div ref={scrollRef} className="mt-2 min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {!turns.length && statusLine ? (
+          <p className={`${STUDIO_DIALOGUE_STATUS} px-0.5 pb-1`}>{statusLine}</p>
+        ) : null}
         {virtualizeHistory ? (
           <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
             {virtualizer.getVirtualItems().map((row) => {
@@ -85,6 +90,7 @@ export default function StudioDialoguePanel({
             />
           </div>
         ) : null}
+        {statusLine ? <p className={`${STUDIO_DIALOGUE_STATUS} px-0.5 pb-1`}>{statusLine}</p> : null}
       </div>
     </div>
   );

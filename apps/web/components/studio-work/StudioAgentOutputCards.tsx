@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { STUDIO_ARTIFACT_HEADING, STUDIO_RUN_PHASE } from "../../lib/studioOutputTypography";
+import { STUDIO_ARTIFACT_HEADING } from "../../lib/studioOutputTypography";
 import { STUDIO_POST_DONE_COACH_ENABLED } from "../../lib/studioPostDoneFollowUp";
 import type { ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
@@ -14,7 +14,6 @@ const NotesAskAnswerMarkdownBody = dynamic(
 
 function outputHeading(work: StudioWork, compareMode: boolean): string | null {
   if (compareMode) return "改版预览";
-  if (work.status === "generating") return "生成中";
   if (
     work.versions.length > 0 &&
     (work.status === "ready" || work.status === "shipped" || work.pendingPatch)
@@ -148,13 +147,9 @@ export default function StudioAgentOutputCards({
 
   if (!heading && !body.length && !footnotes.length) return null;
 
-  const runPhaseHint =
-    work.status === "generating" ? work.runPhase || "处理中…" : "";
-
   return (
     <div className="space-y-2 py-2">
       {heading ? <p className={STUDIO_ARTIFACT_HEADING}>{heading}</p> : null}
-      {runPhaseHint ? <p className={STUDIO_RUN_PHASE}>{runPhaseHint}</p> : null}
       {body.length ? <div className="space-y-3">{body}</div> : null}
       {footnotes.length ? (
         <div className="space-y-2 border-t border-line/50 pt-2">{footnotes}</div>
