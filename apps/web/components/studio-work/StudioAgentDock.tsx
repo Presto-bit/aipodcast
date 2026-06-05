@@ -462,7 +462,6 @@ export default function StudioAgentDock({
     abortBackgroundStreams();
     setInput("");
 
-    const route = routeStudioAction(work, q, turns);
     const userTurn: StudioAgentTurn = {
       id: crypto.randomUUID(),
       role: "user",
@@ -470,6 +469,11 @@ export default function StudioAgentDock({
       createdAt: Date.now()
     };
     const prefixWithUser = [...turns, userTurn];
+    const route = routeStudioAction(
+      { ...work, agentTurns: prefixWithUser },
+      q,
+      prefixWithUser
+    );
     const base = syncWorkTitleFromTurns(
       {
         ...work,
@@ -510,7 +514,6 @@ export default function StudioAgentDock({
     const truncated = workAfterTruncateTurns(work, prefix);
     onPersist(truncated);
 
-    const route = routeStudioAction(truncated, newText, prefix);
     const userTurn: StudioAgentTurn = {
       id: crypto.randomUUID(),
       role: "user",
@@ -518,6 +521,11 @@ export default function StudioAgentDock({
       createdAt: Date.now()
     };
     const prefixWithUser = [...prefix, userTurn];
+    const route = routeStudioAction(
+      { ...truncated, agentTurns: prefixWithUser },
+      newText.trim(),
+      prefixWithUser
+    );
     const base = syncWorkTitleFromTurns(
       { ...truncated, agentTurns: prefixWithUser, lastOrchestratorNote: route.note, error: undefined },
       prefixWithUser

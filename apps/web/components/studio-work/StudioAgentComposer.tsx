@@ -40,7 +40,7 @@ export default function StudioAgentComposer({
           disabled={disabled}
           placeholder={placeholder}
           rows={1}
-          className="w-full min-h-[42px] max-h-[min(24vh,150px)] resize-none border-0 bg-transparent py-0.5 text-[14px] leading-relaxed text-ink outline-none ring-0 placeholder:text-muted/70 focus:outline-none focus:ring-0 disabled:opacity-50"
+          className="w-full min-h-[32px] max-h-[min(18vh,112px)] resize-none border-0 bg-transparent py-0.5 text-[14px] leading-relaxed text-ink outline-none ring-0 placeholder:text-muted/70 focus:outline-none focus:ring-0 disabled:opacity-50"
           style={{ paddingRight: hasText ? 44 : 0 }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {

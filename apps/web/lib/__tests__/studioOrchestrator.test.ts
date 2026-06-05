@@ -31,12 +31,15 @@ const turns = [
   { id: "u1", role: "user" as const, content: "写一篇产品新人清单体小红书", createdAt: 1 }
 ];
 
+const promoMsg =
+  "我想写一篇小红书推广文案，推广杯子，给职场人士提醒喝水";
+const promoTurns = [{ id: "u1", role: "user" as const, content: promoMsg, createdAt: 1 }];
 const autoGen = routeStudioAction(
-  baseWork({ status: "draft", agentTurns: turns }),
-  "写一篇产品新人清单体小红书",
-  turns
+  baseWork({ status: "draft", agentTurns: promoTurns }),
+  promoMsg,
+  promoTurns
 );
-assert(autoGen.tool === "generate", `draft+task should generate, got ${autoGen.tool}`);
+assert(autoGen.tool === "generate", `promo brief should generate, got ${autoGen.tool}`);
 
 const askOnly = routeStudioAction(
   baseWork({ status: "draft", agentTurns: turns }),
