@@ -1,9 +1,35 @@
 import { promoBriefClarifyText } from "./studioGenerateStream";
 import { isOpsStrategyQuestion, opsStrategyFallbackReply } from "./studioOpsStrategy";
+import { STUDIO_OPS_FOLLOWUP_CHIPS } from "./studioBriefMerge";
 import { needsPromoBriefClarification, wouldAutoGenerate } from "./studioOrchestrator";
+import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
-import { taskSentenceFromWork } from "./studioWorkTask";
-import type { StudioWork } from "./studioWorkTypes";
+import type { StudioAgentTurn, StudioWork } from "./studioWorkTypes";
+
+function lastClarifyAssistant(turns: StudioAgentTurn[]): StudioAgentTurn | undefined {
+  return [...turns]
+    .reverse()
+    .find(
+      (t) =>
+        t.role === "assistant" &&
+        (t.intent === "brief_clarify" || t.intent === "compose_rewrite")
+    );
+}
+
+export function userMessageLooksLikeQuestion(text: string): boolean {
+  const q = text.trim();
+  if (!q) return false;
+  return /[?？]$|怎么|如何|为什么|为啥|什么|多少|是否|吗$/.test(q);
+}
+
+/** 成稿后 canvas reply：无明确问句时不插 assistant（Cursor silent） */
+export function shouldSuppressStudioCanvasReply(work: StudioWork, userMessage: string): boolean {
+  const ready = work.status === "ready" || work.status === "shipped";
+  if (!ready || work.versions.length === 0) return false;
+  const q = userMessage.trim();
+  if (!q) return true;
+  return !userMessageLooksLikeQuestion(q) && q.length < 24;
+}
 
 /** Studio 对话区 ask：Cursor 式结构化收尾（仅 JSON，无自由附言） */
 export const STUDIO_STRUCTURED_OUTPUT_ENABLED = true;
@@ -112,6 +138,11 @@ export function resolveStudioStructuredResponse(
     }
   }
 
+  const ready = work.status === "ready" || work.status === "shipped";
+  if (ready && structured.kind === "reply" && q && !userMessageLooksLikeQuestion(q) && q.length < 16) {
+    return { kind: "silent" };
+  }
+
   if (structured.kind !== "ask_user") return structured;
   if (!isDraftLikeStatus(work.status)) return structured;
   if (!q) return structured;
@@ -122,12 +153,26 @@ export function resolveStudioStructuredResponse(
 const DRAFT_CLARIFY_FALLBACK =
   "可以先说说想写什么主题、给谁看、用什么形式吗？";
 
+/** 运营回复后附带的 Cursor 式下一步 chips（无成稿时） */
+export function opsStrategySuggestedReplies(work: StudioWork): string[] | undefined {
+  if (work.versions.length > 0) return undefined;
+  return [...STUDIO_OPS_FOLLOWUP_CHIPS];
+}
+
 /** 信息不足且模型返回 silent 时，给用户可见的兜底追问 */
 export function draftAskFallbackText(
   work: StudioWork,
   latestUserMessage: string,
-  rawAnswer?: string
+  rawAnswer?: string,
+  turns?: StudioAgentTurn[]
 ): string | null {
+  const turnList = turns ?? work.agentTurns;
+  const composeTask = composeTaskSentenceFromTurns(turnList, latestUserMessage);
+
+  if (lastClarifyAssistant(turnList)) {
+    return null;
+  }
+
   if (isOpsStrategyQuestion(latestUserMessage) && work.versions.length === 0) {
     const trimmed = rawAnswer?.trim();
     if (trimmed && !trimmed.startsWith("{") && !/画布|稿件的主题|内容方向/.test(trimmed)) {
@@ -136,9 +181,9 @@ export function draftAskFallbackText(
     return opsStrategyFallbackReply(latestUserMessage, taskSentenceFromWork(work));
   }
   if (!isDraftLikeStatus(work.status)) return null;
-  if (wouldAutoGenerate(work, latestUserMessage)) return null;
+  if (wouldAutoGenerate(work, latestUserMessage, turnList)) return null;
   const trimmed = rawAnswer?.trim();
   if (trimmed && !trimmed.startsWith("{")) return trimmed;
-  if (needsPromoBriefClarification(latestUserMessage)) return promoBriefClarifyText();
+  if (needsPromoBriefClarification(composeTask)) return promoBriefClarifyText();
   return DRAFT_CLARIFY_FALLBACK;
 }

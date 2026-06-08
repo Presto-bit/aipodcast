@@ -59,4 +59,22 @@ assert(kept.kind === "ask_user", "ask_user should remain when info insufficient"
 const fallback = draftAskFallbackText(vagueWork, "帮我想想", '{"kind":"silent"}');
 assert(Boolean(fallback?.trim()), "silent on vague draft should get fallback");
 
+const clarifyWork = {
+  ...vagueWork,
+  agentTurns: [
+    { id: "u1", role: "user", content: "帮我想想", createdAt: 1 },
+    {
+      id: "a1",
+      role: "assistant",
+      content: "补 1 项",
+      intent: "brief_clarify",
+      createdAt: 2
+    }
+  ]
+} as StudioWork;
+assert(
+  draftAskFallbackText(clarifyWork, "场景：办公室", '{"kind":"silent"}', clarifyWork.agentTurns) === null,
+  "no generic fallback after clarify turn"
+);
+
 console.log("studioAgentStructured.test.ts: ok");

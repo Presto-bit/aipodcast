@@ -18,6 +18,7 @@ from .agent_route import (
     is_insufficient_brief,
     reply_for_blocking,
     route_studio_agent,
+    should_force_compose,
 )
 
 StudioTool = Literal["reply", "compose", "revise"]
@@ -79,23 +80,41 @@ def _sanitize_brief(
     return candidate[:2000]
 
 
+def _compose_brief_for_route(turns: list[dict[str, Any]], message: str) -> str:
+    return build_compose_task_sentence(turns, current_message=message)
+
+
 def _rule_decision(
     *,
     message: str,
     status: str,
     version_count: int,
     turns: list[dict[str, Any]],
+    force_compose: bool = False,
 ) -> StudioToolDecision:
-    task_sentence = build_task_sentence_from_turns(turns)
+    compose_brief = _compose_brief_for_route(turns, message)
+    if should_force_compose(
+        message=message,
+        task_sentence=compose_brief,
+        version_count=version_count,
+        force_compose=force_compose,
+    ):
+        return StudioToolDecision(
+            tool="compose",
+            brief=compose_brief[:2000],
+            reply_text="",
+            source="rules",
+            reason="规则：chip 强制成稿",
+        )
     tool = route_studio_agent(
         message=message,
         status=status,
         version_count=version_count,
-        task_sentence=task_sentence,
+        task_sentence=compose_brief,
     )
     if tool == "reply":
-        if is_insufficient_brief(message) and version_count == 0:
-            reply_text = reply_for_blocking(message)
+        if is_insufficient_brief(compose_brief) and version_count == 0:
+            reply_text = reply_for_blocking(compose_brief)
             reason = "规则：brief 不足，追问"
         else:
             reply_text = ""
@@ -109,9 +128,9 @@ def _rule_decision(
         )
 
     brief = (
-        build_compose_task_sentence(turns, current_message=message)
+        compose_brief
         if tool == "compose"
-        else (str(message).strip() or task_sentence)
+        else (str(message).strip() or compose_brief)
     )
     return StudioToolDecision(
         tool=tool,
@@ -130,7 +149,22 @@ def _reconcile_decision(
     status: str,
     version_count: int,
     turns: list[dict[str, Any]],
+    force_compose: bool = False,
 ) -> StudioToolDecision:
+    compose_brief = _compose_brief_for_route(turns, message)
+    if should_force_compose(
+        message=message,
+        task_sentence=compose_brief,
+        version_count=version_count,
+        force_compose=force_compose,
+    ):
+        return StudioToolDecision(
+            tool="compose",
+            brief=compose_brief[:2000],
+            reply_text="",
+            source="rules",
+            reason="规则：chip 强制成稿",
+        )
     llm_tool = str(llm.get("tool") or "reply").strip().lower()
     if llm_tool not in ("reply", "compose", "revise"):
         llm_tool = "reply"
@@ -147,16 +181,20 @@ def _reconcile_decision(
         )
 
     if version_count == 0 and llm_tool == "revise":
-        llm_tool = "compose" if not is_insufficient_brief(message) and not is_ask_only(message) else "reply"
+        llm_tool = (
+            "compose"
+            if not is_insufficient_brief(compose_brief) and not is_ask_only(message, has_manuscript=False)
+            else "reply"
+        )
 
     if is_ask_only(message, has_manuscript=version_count > 0):
         llm_tool = "reply"
 
-    if llm_tool == "compose" and is_insufficient_brief(message):
+    if llm_tool == "compose" and is_insufficient_brief(compose_brief):
         return StudioToolDecision(
             tool="reply",
             brief="",
-            reply_text=llm_reply or reply_for_blocking(message),
+            reply_text=llm_reply or reply_for_blocking(compose_brief),
             source="mixed",
             reason="护栏：compose 降级为追问",
         )
@@ -166,12 +204,12 @@ def _reconcile_decision(
     reason = f"LLM：{tool}"
 
     if rule.tool == "compose" and llm_tool == "reply" and not is_ask_only(message, has_manuscript=version_count > 0):
-        if not is_insufficient_brief(message):
+        if not is_insufficient_brief(compose_brief):
             tool = "compose"
             source = "mixed"
             reason = "规则+LLM：brief 足够，成稿"
 
-    if rule.tool == "compose" and tool == "reply" and not is_insufficient_brief(message) and not is_ask_only(
+    if rule.tool == "compose" and tool == "reply" and not is_insufficient_brief(compose_brief) and not is_ask_only(
         message, has_manuscript=version_count > 0
     ):
         tool = "compose"
@@ -235,6 +273,7 @@ def resolve_studio_agent_tool(
     version_count: int,
     turns: list[dict[str, Any]],
     agent_mode: str = "write",
+    force_compose: bool = False,
 ) -> StudioToolDecision:
     """单 loop 结构化 tool：LLM tool_call + 规则护栏 + 显式模式。"""
     mode = normalize_agent_mode(agent_mode)
@@ -243,6 +282,7 @@ def resolve_studio_agent_tool(
         status=status,
         version_count=version_count,
         turns=turns,
+        force_compose=force_compose,
     )
     if mode == "ask":
         return _apply_mode_guard(rule, agent_mode=mode, message=message)
@@ -274,6 +314,7 @@ def resolve_studio_agent_tool(
             status=status,
             version_count=version_count,
             turns=turns,
+            force_compose=force_compose,
         )
         return _apply_mode_guard(decision, agent_mode=mode, message=message)
     except Exception:

@@ -13,6 +13,7 @@ export type { StudioAgentIntent };
 
 const INTENT_LABEL: Record<StudioAgentIntent, string> = {
   brief_clarify: "需求澄清",
+  compose_rewrite: "重写成稿",
   ops_strategy: "运营策略",
   manuscript_coach: "稿件解读",
   revise_coach: "改版建议",

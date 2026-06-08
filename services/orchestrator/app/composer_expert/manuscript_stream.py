@@ -11,6 +11,7 @@ from typing import Any, Callable
 
 from ..social_llm_utils import extract_partial_social_json_fields
 from ..social_publish_draft import resolve_social_publish_material
+from ..studio.agent_route import compose_soft_failure_code
 from .generate import (
     _compose_expert_material_text,
     _compose_expert_writer_instructions,
@@ -293,7 +294,7 @@ def iter_studio_manuscript_stream(
                 )
                 content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
                 if _looks_like_xhs_template_body(content, task_sentence):
-                    event_q.put(("error", "NEEDS_BRIEF"))
+                    event_q.put(("error", compose_soft_failure_code(task_sentence)))
                     return
                 event_q.put(("done", deliverable))
                 return

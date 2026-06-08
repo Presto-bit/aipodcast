@@ -27,6 +27,7 @@ export type StudioAgentStreamInput = {
   stylePrompt?: string;
   agentMode?: StudioAgentMode;
   manuscriptBlocks?: ManuscriptBlock[];
+  forceCompose?: boolean;
   authHeaders: Record<string, string>;
   signal?: AbortSignal;
   onSession?: (requestId: string) => void;
@@ -72,6 +73,7 @@ export async function streamStudioAgent(
       stylePrompt: input.stylePrompt?.trim() || "",
       agentMode: input.agentMode ?? "write",
       manuscriptBlocks: (input.manuscriptBlocks ?? []).map((b) => ({ ...b })),
+      forceCompose: Boolean(input.forceCompose),
       useRag: input.noteIds.length > 0,
       sourceType: input.noteIds.length > 0 ? "notes_rag" : "composer_prompt"
     }),
@@ -88,6 +90,7 @@ export async function streamStudioAgent(
   const decoder = new TextDecoder();
   let buffer = "";
   let replyText = "";
+  let replyNotified = false;
   let doneTool: "compose" | "revise" | null = null;
   let doneBlocks: ManuscriptBlock[] = [];
   let agentSteps: StudioAgentStep[] = [];
@@ -140,7 +143,10 @@ export async function streamStudioAgent(
           if (route) input.onRoute?.(route);
         } else if (type === "reply") {
           replyText = String(ev.text || "").trim();
-          if (replyText) input.onReply?.(replyText);
+          if (replyText && !replyNotified) {
+            replyNotified = true;
+            input.onReply?.(replyText);
+          }
         } else if (type === "phase") {
           const msg = String(ev.message || "").trim();
           if (msg) input.onPhase?.(msg, tool === "revise" ? "revise" : "compose");
@@ -158,7 +164,10 @@ export async function streamStudioAgent(
           const dt = String(ev.tool || "");
           if (dt === "reply") {
             const text = (replyText || "好的。").trim();
-            if (text) input.onReply?.(text);
+            if (text && !replyNotified) {
+              replyNotified = true;
+              input.onReply?.(text);
+            }
             return { status: "reply", text };
           }
           doneTool = dt === "revise" ? "revise" : "compose";

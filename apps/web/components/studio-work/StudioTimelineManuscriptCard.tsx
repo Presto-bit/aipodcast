@@ -52,13 +52,20 @@ export default function StudioTimelineManuscriptCard({
             taskSentence={taskSentence}
             flowLayout
             isRevise={run.tool === "revise"}
+            corpusNotebook={work.binding.notebook}
+            corpusNoteIds={work.binding.noteIds}
           />
         </div>
       );
     }
     return (
       <div className="mt-2">
-        <StudioOutputManuscript version={run.tool === "revise" ? baseVersion : null} generatingPhase={phase} />
+        <StudioOutputManuscript
+          version={run.tool === "revise" ? baseVersion : null}
+          generatingPhase={phase}
+          corpusNotebook={work.binding.notebook}
+          corpusNoteIds={work.binding.noteIds}
+        />
       </div>
     );
   }
@@ -69,6 +76,8 @@ export default function StudioTimelineManuscriptCard({
         <StudioOutputManuscript
           version={version}
           onTitleIndexChange={isActiveVersion ? onTitleIndexChange : undefined}
+          corpusNotebook={work.binding.notebook}
+          corpusNoteIds={work.binding.noteIds}
         />
       </div>
     );

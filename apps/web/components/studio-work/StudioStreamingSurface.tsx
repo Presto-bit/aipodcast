@@ -33,7 +33,9 @@ export default function StudioStreamingSurface({
   version = null,
   onTitleIndexChange,
   flowLayout = false,
-  isRevise = false
+  isRevise = false,
+  corpusNotebook = "",
+  corpusNoteIds = []
 }: {
   phase?: string;
   taskSentence?: string;
@@ -45,6 +47,8 @@ export default function StudioStreamingSurface({
   onTitleIndexChange?: (index: number) => void;
   flowLayout?: boolean;
   isRevise?: boolean;
+  corpusNotebook?: string;
+  corpusNoteIds?: string[];
 }) {
   void taskSentence;
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -75,7 +79,12 @@ export default function StudioStreamingSurface({
 
   if (isReadyLike && version) {
     return (
-      <StudioOutputManuscript version={version} onTitleIndexChange={onTitleIndexChange} />
+      <StudioOutputManuscript
+        version={version}
+        onTitleIndexChange={onTitleIndexChange}
+        corpusNotebook={corpusNotebook}
+        corpusNoteIds={corpusNoteIds}
+      />
     );
   }
 
@@ -111,7 +120,13 @@ export default function StudioStreamingSurface({
           />
         ) : null}
 
-        <StudioManuscriptReadable key={activeIndex} variant={streamVariant} trailingCursor={isActive} />
+        <StudioManuscriptReadable
+          key={activeIndex}
+          variant={streamVariant}
+          trailingCursor={isActive}
+          corpusNotebook={corpusNotebook}
+          corpusNoteIds={corpusNoteIds}
+        />
 
         {onCancel && isActive ? (
           <button

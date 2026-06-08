@@ -164,6 +164,7 @@ def run_agent_tool_loop(
         status=status,
         version_count=version_count,
         turns=turns,
+        force_compose=bool(payload.get("forceCompose")),
     )
     if agent_mode == "ask":
         decision = _apply_mode_guard(rule, agent_mode=agent_mode, message=message)
@@ -239,6 +240,7 @@ def run_agent_tool_loop(
             status=status,
             version_count=version_count,
             turns=turns,
+            force_compose=bool(payload.get("forceCompose")),
         )
         decision = _apply_mode_guard(decision, agent_mode=agent_mode, message=message)
         _emit(emit_step, "route", "开始写稿" if decision.tool == "compose" else "开始改版", "done", decision.tool)
@@ -256,6 +258,7 @@ def run_agent_tool_loop(
         version_count=version_count,
         turns=turns,
         agent_mode=agent_mode,
+        force_compose=bool(payload.get("forceCompose")),
     )
     _emit(
         emit_step,

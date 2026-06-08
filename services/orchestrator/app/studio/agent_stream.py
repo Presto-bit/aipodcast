@@ -24,6 +24,7 @@ from ..composer_expert.manuscript_stream import (
 from ..social_llm_utils import extract_partial_social_json_fields, invoke_social_llm
 from .agent_route import (
     build_compose_task_sentence,
+    compose_soft_failure_code,
     is_insufficient_brief,
     reply_for_blocking,
 )
@@ -31,6 +32,11 @@ from .agent_loop import run_agent_tool_loop
 from .agent_tool_schema import normalize_agent_mode
 
 STUDIO_NEEDS_BRIEF = "NEEDS_BRIEF"
+STUDIO_NEEDS_REWRITE = "NEEDS_REWRITE"
+
+
+def _compose_soft_failure_code(task_sentence: str) -> str:
+    return compose_soft_failure_code(task_sentence)
 _OPS_SIGNAL = re.compile(
     r"运营|策略|涨粉|流量|什么时候发|怎么推|推广方案|发布计划|发布节奏"
 )
@@ -101,6 +107,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     agent_mode = normalize_agent_mode(
         str(payload.get("agentMode") or payload.get("agent_mode") or "write")
     )
+    force_compose = bool(payload.get("forceCompose"))
 
     pending_steps: list[dict[str, Any]] = []
 
@@ -121,7 +128,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         status=status,
         version_count=version_count,
         turns=turns,
-        payload={**payload, "agentMode": agent_mode},
+        payload={**payload, "agentMode": agent_mode, "forceCompose": force_compose},
         emit_step=emit_step,
     )
     for step_ev in pending_steps:
@@ -145,16 +152,17 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     yield _sse({**tool_call_payload, "type": "route"})
 
     if tool == "reply":
+        compose_brief = build_compose_task_sentence(turns, current_message=message)
         if decision.reply_text:
             text = decision.reply_text
-        elif is_insufficient_brief(message) and version_count == 0:
-            text = reply_for_blocking(message)
+        elif is_insufficient_brief(compose_brief) and version_count == 0:
+            text = reply_for_blocking(compose_brief)
         else:
             text = _short_coach_reply(
                 message,
                 has_manuscript=version_count > 0,
                 manuscript_excerpt=manuscript_excerpt,
-                task_sentence=build_compose_task_sentence(turns, current_message=message),
+                task_sentence=compose_brief,
             )
         yield _sse({"type": "reply", "text": text, "requestId": rid})
         yield _sse(
@@ -257,6 +265,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
 
     def worker() -> None:
         last_errors: list[str] = []
+        template_retry_done = False
         for attempt in range(3):
             try:
                 deliverable = generate_xhs_expert_deliverable(
@@ -273,7 +282,14 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 )
                 content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
                 if _looks_like_xhs_template_body(content, task_sentence):
-                    event_q.put(("error", STUDIO_NEEDS_BRIEF))
+                    if not template_retry_done and attempt < 2:
+                        template_retry_done = True
+                        last_errors = [
+                            "成稿过于模板化，请换开头钩子、段落结构与用词重写，三方向须明显不同"
+                        ]
+                        event_q.put(("phase", "正在按已有信息重写…"))
+                        continue
+                    event_q.put(("error", _compose_soft_failure_code(task_sentence)))
                     return
                 blocks = deliverable_to_manuscript_blocks_dict(deliverable)
                 event_q.put(("done", {"tool": tool, "blocks": blocks}))

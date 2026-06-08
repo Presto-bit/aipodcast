@@ -20,7 +20,7 @@ import {
   getStudioComposerPrefs,
   getStudioWork
 } from "../../lib/studioWorkStorage";
-import { firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
+import { composeTaskSentenceFromTurns, firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
 import { suggestStudioWorkTitleLlm } from "../../lib/studioWorkTitleSuggest";
 import {
   resetStudioRagWarmOnBindingChange,
@@ -32,9 +32,12 @@ import { markOpenComposerFeature } from "../../lib/studioComposerFeatureLink";
 import { WORKBENCH_CHAT_PATH } from "../../lib/navPaths";
 import type { StudioAgentStep } from "../../lib/studioAgentSteps";
 import { streamStudioAgentAsk } from "../../lib/studioAgentAskStream";
+import { mergeBriefChipReply } from "../../lib/studioBriefMerge";
+import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import {
   STUDIO_STRUCTURED_OUTPUT_ENABLED,
   draftAskFallbackText,
+  opsStrategySuggestedReplies,
   resolveStudioStructuredResponse,
   studioStructuredAddsAssistantTurn
 } from "../../lib/studioAgentStructured";
@@ -130,11 +133,12 @@ export default function StudioAgentDock({
   streamingBodyText?: string | null;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
-  /** canvasMode：统一 Agent SSE（reply | compose | revise） */
+  /** 单 Agent SSE（reply | compose | revise）；提供时优先于 ask+Job 双轨 */
   onAgentRun?: (params: {
     userText: string;
     prefixTurns: StudioAgentTurn[];
     userTurnId: string;
+    forceCompose?: boolean;
   }) => void | Promise<void>;
   onGenerate?: () => void | Promise<void>;
   onReviseFromChat?: (opinion: string) => void | Promise<void>;
@@ -191,14 +195,15 @@ export default function StudioAgentDock({
       Boolean(ephemeralHint) ||
       agentBusy ||
       jobRunning);
+  const useAgentStream = Boolean(onAgentRun);
   const composeProgressLabel = studioStreamPhaseLabel({
     runPhase: work.runPhase,
     hasStream: Boolean(streamingBlocks?.length || streamingBodyText?.trim()),
     isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
   });
-  const dockPhase =
-    phase ||
-    (jobRunning ? composeProgressLabel : undefined);
+  const dockPhase = useAgentStream
+    ? phase || undefined
+    : phase || (jobRunning ? composeProgressLabel : undefined);
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -440,7 +445,7 @@ export default function StudioAgentDock({
           done.answer.trim() ||
           supplementBuf.trim() ||
           answerBuf.trim();
-        const clarify = draftAskFallbackText(workBase, q, rawFallback);
+        const clarify = draftAskFallbackText(workBase, q, rawFallback, prefixTurns);
         if (clarify) {
           const finalTurns = baseTurns.map((t) =>
             t.id === assistantId
@@ -449,6 +454,10 @@ export default function StudioAgentDock({
                   content: clarify,
                   streaming: false,
                   intent,
+                  suggestedReplies:
+                    intent === "ops_strategy"
+                      ? opsStrategySuggestedReplies(workBase)
+                      : undefined,
                   askSources: done.sources?.length ? done.sources : undefined
                 }
               : t
@@ -483,6 +492,8 @@ export default function StudioAgentDock({
               content: finalContent,
               streaming: false,
               intent,
+              suggestedReplies:
+                intent === "ops_strategy" ? opsStrategySuggestedReplies(workBase) : undefined,
               askSources: done.sources?.length ? done.sources : undefined
             }
           : t
@@ -565,8 +576,17 @@ export default function StudioAgentDock({
     await runAgentTurn(prefixWithUser, q, base, route);
   }
 
-  async function handleSend(overrideText?: string) {
-    const q = (overrideText ?? input).trim();
+  function resolveOutgoingMessage(raw: string, fromChip = false): string {
+    const text = raw.trim();
+    if (!text) return "";
+  if (!fromChip) return text;
+  if (/^继续问/.test(text)) return text;
+  const priorCompose = composeTaskSentenceFromTurns(turns);
+    return mergeBriefChipReply(priorCompose, text);
+  }
+
+  async function handleSend(overrideText?: string, fromChip = false) {
+    const q = resolveOutgoingMessage(overrideText ?? input, fromChip);
     if (!q || !canChat) return;
     abortBackgroundStreams();
     setInput("");
@@ -589,7 +609,7 @@ export default function StudioAgentDock({
     );
     onPersist(base);
 
-    if (canvasMode && onAgentRun) {
+    if (useAgentStream) {
       if (jobRunning && /改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化/.test(q)) {
         onQueueRevise?.(q);
         setEphemeralHint("已加入改版队列，当前任务完成后执行");
@@ -598,7 +618,12 @@ export default function StudioAgentDock({
       }
       setAgentBusyState(true);
       try {
-        await onAgentRun({ userText: q, prefixTurns: prefixWithUser, userTurnId: userTurn.id });
+        await onAgentRun!({
+          userText: q,
+          prefixTurns: prefixWithUser,
+          userTurnId: userTurn.id,
+          forceCompose: shouldForceStudioCompose(q, fromChip)
+        });
       } finally {
         setAgentBusyState(false);
         setEphemeralHint("");
@@ -639,7 +664,7 @@ export default function StudioAgentDock({
     };
     const prefixWithUser = [...prefix, userTurn];
 
-    if (canvasMode && onAgentRun) {
+    if (useAgentStream) {
       const base = syncWorkTitleFromTurns(
         { ...truncated, agentTurns: prefixWithUser, error: undefined },
         prefixWithUser
@@ -647,7 +672,12 @@ export default function StudioAgentDock({
       onPersist(base);
       setAgentBusyState(true);
       try {
-        await onAgentRun({ userText: newText.trim(), prefixTurns: prefixWithUser, userTurnId: userTurn.id });
+        await onAgentRun!({
+          userText: newText.trim(),
+          prefixTurns: prefixWithUser,
+          userTurnId: userTurn.id,
+          forceCompose: shouldForceStudioCompose(newText.trim(), false)
+        });
       } finally {
         setAgentBusyState(false);
       }
@@ -669,8 +699,8 @@ export default function StudioAgentDock({
   }
 
   const orchestratorHint = useMemo(
-    () => studioOrchestratorHint(work, input),
-    [work, input]
+    () => studioOrchestratorHint(work, input, turns),
+    [work, input, turns]
   );
 
   const quickPromptsBlock = showQuickPrompts ? (
@@ -748,7 +778,7 @@ export default function StudioAgentDock({
         {agentRouteHint || ephemeralHint ? (
           <StudioEphemeralHint text={agentRouteHint || ephemeralHint} ttlMs={4000} />
         ) : null}
-        {!jobRunning && agentBusy && dockPhase ? (
+        {!useAgentStream && !jobRunning && agentBusy && dockPhase ? (
           <p className="text-[11px] text-brand">{dockPhase}</p>
         ) : null}
       </StudioEphemeralPanel>
@@ -763,7 +793,7 @@ export default function StudioAgentDock({
       scrollRef={dialogueScrollRef}
       canEdit={canEditTurns}
       onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
-      onSuggestedReply={(text) => void handleSend(text)}
+      onSuggestedReply={(text) => void handleSend(text, true)}
       emptyHint={dialogueEmptyHint}
       busy={agentBusy || jobBusy}
       hideManuscript={false}

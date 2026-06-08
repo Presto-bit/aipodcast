@@ -1,3 +1,4 @@
+import { mergeBriefChipReply } from "../studioBriefMerge";
 import { routeStudioAction } from "../studioOrchestrator";
 import type { StudioWork } from "../studioWorkTypes";
 
@@ -80,5 +81,20 @@ const revise = routeStudioAction(
   "把标题改得更犀利一点"
 );
 assert(revise.tool === "revise", `ready+revise intent should revise, got ${revise.tool}`);
+
+const listTurns = [
+  { id: "u1", role: "user" as const, content: "我想写一篇清单体内容", createdAt: 1 }
+];
+const mergedBrief = mergeBriefChipReply(listTurns[0]!.content, "受众：产品新人");
+const mergedTurns = [
+  ...listTurns,
+  { id: "u2", role: "user" as const, content: mergedBrief, createdAt: 2 }
+];
+const afterChip = routeStudioAction(
+  baseWork({ status: "draft", agentTurns: mergedTurns }),
+  mergedBrief,
+  mergedTurns
+);
+assert(afterChip.tool === "generate", `merged chip brief should generate, got ${afterChip.tool}`);
 
 console.log("studioOrchestrator.test.ts: ok");

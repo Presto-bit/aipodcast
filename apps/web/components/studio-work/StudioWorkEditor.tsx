@@ -25,10 +25,16 @@ import {
   STUDIO_ACK_GENERATE,
   STUDIO_ACK_REVISE,
   buildStudioBriefClarifyAssistantTurn,
-  buildStudioComposeWrapUp
+  buildStudioRewriteClarifyAssistantTurn
 } from "../../lib/studioTimeline";
-import { manuscriptTitleBlocks } from "../../lib/studioManuscriptView";
-import { composeTaskSentenceFromTurns } from "../../lib/studioWorkTask";
+import {
+  classifyComposeSoftFailure,
+  studioComposeFailureNote
+} from "../../lib/studioComposeFailure";
+import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
+import { shouldSuppressStudioCanvasReply } from "../../lib/studioAgentStructured";
+import { composeTaskSentenceFromTurns, firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
+import { isInsufficientBrief } from "../../lib/studioOrchestrator";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
@@ -117,6 +123,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       userText: string;
       prefixTurns: StudioAgentTurn[];
       userTurnId: string;
+      forceCompose?: boolean;
     }) => {
       const cur = getStudioWork(workId);
       if (!cur || !isLoggedIn) return;
@@ -210,6 +217,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           authorPrompt,
           agentMode: "write",
           manuscriptBlocks,
+          forceCompose: params.forceCompose,
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
           onStep: (step) => setAgentSteps((prev) => upsertAgentStep(prev, step)),
@@ -217,6 +225,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onReply: (text) => {
             const live = getStudioWork(workId);
             if (!live || !text.trim()) return;
+            if (shouldSuppressStudioCanvasReply(live, params.userText)) return;
+            const lastAssistant = live.agentTurns?.filter((t) => t.role === "assistant").at(-1);
+            if (lastAssistant?.content.trim() === text.trim()) return;
             const assistantTurn: StudioAgentTurn = {
               id: crypto.randomUUID(),
               role: "assistant",
@@ -270,8 +281,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
         if (result.status === "reply") {
           const text = result.text.trim();
+          const suppressReply = shouldSuppressStudioCanvasReply(after, params.userText);
           const lastAssistant = after.agentTurns?.filter((t) => t.role === "assistant").at(-1);
-          if (text && lastAssistant?.content !== text) {
+          if (!suppressReply && text && lastAssistant?.content !== text) {
             persist({
               ...after,
               agentTurns: [
@@ -307,15 +319,13 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         }
 
         if (result.status === "error") {
-          const softReject =
-            /NEEDS_BRIEF|通用模板|validation_failed|成稿像是|补充受众/.test(result.error) ||
-            result.error.includes("模板");
-          if (runId && softReject) {
-            const clarifyTurn = buildStudioBriefClarifyAssistantTurn(
-              "template",
-              params.userText,
-              effectiveTaskSentence
-            );
+          const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
+          const failureKind = classifyComposeSoftFailure(result.error, composeTask);
+          if (runId && failureKind) {
+            const clarifyTurn =
+              failureKind === "needs_rewrite"
+                ? buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask)
+                : buildStudioBriefClarifyAssistantTurn("template", params.userText, composeTask);
             persist(
               finishStudioRun(
                 {
@@ -323,11 +333,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
                   agentTurns: [...(after.agentTurns ?? []), clarifyTurn],
                   status: "draft",
                   error: undefined,
-                  runPhase: undefined
+                  runPhase: undefined,
+                  lastOrchestratorNote: studioComposeFailureNote(failureKind)
                 },
                 runId,
                 "error",
-                "需补充 brief"
+                studioComposeFailureNote(failureKind)
               )
             );
             return;
@@ -354,12 +365,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
         const blocks = result.blocks;
         const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
+        const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
         if (!blocks.length || shouldRejectDeliverableBody(result.tool, bodyText)) {
-          const clarifyTurn = buildStudioBriefClarifyAssistantTurn(
-            !blocks.length ? "empty" : "template",
-            params.userText,
-            effectiveTaskSentence
-          );
+          const empty = !blocks.length;
+          const failureKind: "needs_brief" | "needs_rewrite" =
+            !empty && !isInsufficientBrief(composeTask) ? "needs_rewrite" : "needs_brief";
+          const clarifyTurn =
+            failureKind === "needs_rewrite"
+              ? buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask)
+              : buildStudioBriefClarifyAssistantTurn(empty ? "empty" : "template", params.userText, composeTask);
           persist(
             finishStudioRun(
               {
@@ -367,11 +381,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
                 agentTurns: [...(after.agentTurns ?? []), clarifyTurn],
                 status: runTool === "generate" ? "draft" : "ready",
                 error: undefined,
-                runPhase: undefined
+                runPhase: undefined,
+                lastOrchestratorNote: studioComposeFailureNote(failureKind)
               },
               runId,
               "error",
-              "需补充 brief"
+              studioComposeFailureNote(failureKind)
             )
           );
           return;
@@ -388,24 +403,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           return;
         }
 
-        const variantCount = manuscriptTitleBlocks(blocks).length || 3;
-        const wrapUpTurn: StudioAgentTurn = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: buildStudioComposeWrapUp(
-            result.tool === "revise" ? "revise" : "compose",
-            blocks,
-            variantCount
-          ),
-          intent: "compose_wrap_up",
-          createdAt: Date.now()
-        };
-
         persist(
           finishStudioRun(
             {
               ...after,
-              agentTurns: [...(after.agentTurns ?? []), wrapUpTurn],
               status: "ready",
               plan: result.tool === "compose" ? undefined : after.plan,
               intake: result.tool === "compose" ? intake : after.intake,
@@ -548,9 +549,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           streamingBodyText={streamingBodyText}
           getAuthHeaders={getAuthHeaders}
           onPersist={persist}
-          onAgentRun={async ({ userText, prefixTurns, userTurnId }) => {
+          onAgentRun={async ({ userText, prefixTurns, userTurnId, forceCompose }) => {
             await runJobExclusive(() =>
-              runAgentStream({ userText, prefixTurns, userTurnId })
+              runAgentStream({ userText, prefixTurns, userTurnId, forceCompose })
             );
           }}
           onQueueRevise={onQueueRevise}

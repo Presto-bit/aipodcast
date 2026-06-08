@@ -1,11 +1,22 @@
 /** Cursor 式 brief 澄清：温和文案 + 可点选补全 chips */
 
+import { isInsufficientBrief } from "./studioOrchestrator";
+
 export type StudioBriefClarifyTurn = {
   content: string;
   suggestedReplies: string[];
 };
 
+export const STUDIO_COMPOSE_RETRY_CHIP = "按已有信息先写一版";
+
 type BriefGap = "topic" | "audience" | "sellPoint" | "scene";
+
+function isPromoBrief(text: string): boolean {
+  return (
+    /推广|种草|带货/.test(text) ||
+    (/水杯|杯子|保温杯|产品|新品/.test(text) && /小红书|笔记|写篇|写一篇|推广/.test(text))
+  );
+}
 
 function detectBriefGaps(text: string): Set<BriefGap> {
   const gaps = new Set<BriefGap>();
@@ -14,16 +25,17 @@ function detectBriefGaps(text: string): Set<BriefGap> {
     gaps.add("audience");
     return gaps;
   }
-  if (!/清单|教程|测评|故事|攻略|笔记|周报|总结|推广|种草|体|文章|内容/.test(text)) {
+  const promo = isPromoBrief(text);
+  if (!promo && !/清单|教程|测评|故事|攻略|笔记|周报|总结|体|文章|内容/.test(text)) {
     gaps.add("topic");
   }
-  if (!/受众|人群|读者|新人|白领|职场|学生|同行|买家|用户/.test(text)) {
+  if (!/受众|人群|读者|新人|白领|职场|女性|男性|学生|同行|买家|用户/.test(text)) {
     gaps.add("audience");
   }
-  if (/推广|种草|带货|水杯|杯子|产品|新品|卖点/.test(text) && !/卖点|功能|材质|主打|差异化|保温|提醒/.test(text)) {
+  if (promo && !/卖点|功能|材质|主打|差异化|保温|提醒|一键|便携/.test(text)) {
     gaps.add("sellPoint");
   }
-  if (/推广|种草|带货/.test(text) && !/场景|办公室|通勤|桌面|使用/.test(text)) {
+  if (promo && !/场景|办公室|通勤|桌面|工位|使用|开会|久坐/.test(text)) {
     gaps.add("scene");
   }
   return gaps;
@@ -31,7 +43,27 @@ function detectBriefGaps(text: string): Set<BriefGap> {
 
 function chipExamples(gaps: Set<BriefGap>, userMessage: string): string[] {
   const chips: string[] = [];
+  const promo = isPromoBrief(userMessage);
   const isListicle = /清单|list|几条|避坑/.test(userMessage);
+
+  if (promo) {
+    if (gaps.has("audience")) {
+      chips.push("受众：职场白领");
+      chips.push("受众：通勤上班族");
+    }
+    if (gaps.has("sellPoint")) {
+      chips.push("卖点：6 小时保温，一键开盖");
+      chips.push("卖点：定时提醒喝水");
+    }
+    if (gaps.has("scene")) {
+      chips.push("场景：办公室桌面提醒喝水");
+      chips.push("场景：工位久坐忘喝水");
+    }
+    if (gaps.has("topic") && !gaps.has("sellPoint")) {
+      chips.push("主题：职场补水好物");
+    }
+    return [...new Set(chips)].slice(0, 4);
+  }
 
   if (gaps.has("audience")) {
     chips.push("受众：产品新人");
@@ -47,15 +79,29 @@ function chipExamples(gaps: Set<BriefGap>, userMessage: string): string[] {
     chips.push(isListicle ? "主题：onboarding 避坑清单" : "主题：产品新人成长干货");
   }
 
-  chips.push(
-    isListicle
-      ? "给产品新人，清单体讲 3 个 onboarding 避坑"
-      : "给产品新人，清单体讲 3 个避坑，主题是 xxx"
-  );
+  if (isListicle) {
+    chips.push("给产品新人，清单体讲 3 个 onboarding 避坑");
+  }
   return [...new Set(chips)].slice(0, 5);
 }
 
-/** 模板/空稿失败 → 助手追问 + chips（不设 work.error） */
+function withRetryChip(
+  suggestedReplies: string[],
+  context: string,
+  opts?: { alwaysRetry?: boolean }
+): string[] {
+  const out = [...suggestedReplies];
+  const shouldOfferRetry =
+    opts?.alwaysRetry ||
+    (context.trim().length >= 8 && !isInsufficientBrief(context)) ||
+    context.trim().length >= 8;
+  if (shouldOfferRetry && !out.includes(STUDIO_COMPOSE_RETRY_CHIP)) {
+    out.unshift(STUDIO_COMPOSE_RETRY_CHIP);
+  }
+  return out.slice(0, 6);
+}
+
+/** 模板/空稿失败且 brief 仍不足 → 追问 + chips */
 export function buildStudioBriefClarifyTurn(
   reason: "template" | "empty" = "template",
   userMessage = "",
@@ -63,7 +109,7 @@ export function buildStudioBriefClarifyTurn(
 ): StudioBriefClarifyTurn {
   const context = [userMessage, taskSentence].filter(Boolean).join("\n");
   const gaps = detectBriefGaps(context);
-  const suggestedReplies = chipExamples(gaps, context);
+  const suggestedReplies = withRetryChip(chipExamples(gaps, context), context);
 
   if (reason === "empty") {
     return {
@@ -75,7 +121,7 @@ export function buildStudioBriefClarifyTurn(
         gaps.has("sellPoint") ? "· **卖点**：核心卖点是什么？" : "",
         gaps.has("scene") ? "· **场景**：在什么场景种草？" : "",
         "",
-        "也可直接一句说完，例如：「给产品新人，清单体讲 3 个 onboarding 避坑」"
+        "也可点「按已有信息先写一版」，我先按现有内容试写。"
       ]
         .filter(Boolean)
         .join("\n"),
@@ -85,17 +131,40 @@ export function buildStudioBriefClarifyTurn(
 
   return {
     content: [
-      "这版还偏泛，我需要更具体的 brief 才能写好。补 **1～2 项** 就行：",
+      "还缺一点具体信息才能写稳。补 **1～2 项** 即可：",
       "",
-      gaps.has("audience") ? "· **受众**（如产品新人、职场白领）" : "",
-      gaps.has("sellPoint") ? "· **卖点**（如功能、差异化）" : "",
-      gaps.has("scene") ? "· **场景**（如 onboarding、办公室）" : "",
+      gaps.has("audience") ? "· **受众**（如职场女性、产品新人）" : "",
+      gaps.has("sellPoint") ? "· **卖点**（如定时提醒、保温时长）" : "",
+      gaps.has("scene") ? "· **场景**（如办公室桌面、通勤）" : "",
       gaps.has("topic") ? "· **主题**（这篇核心讲什么）" : "",
       "",
-      "点下方快捷补全，或直接回复一句完整 brief。"
+      "点下方快捷补全；信息已够也可直接点「按已有信息先写一版」。"
     ]
       .filter(Boolean)
       .join("\n"),
+    suggestedReplies
+  };
+}
+
+/** brief 已够但成稿偏模板/空泛 → 不重问受众，提示重写（Cursor 式） */
+export function buildStudioRewriteClarifyTurn(
+  userMessage = "",
+  taskSentence = ""
+): StudioBriefClarifyTurn {
+  const context = [taskSentence, userMessage].filter(Boolean).join("\n");
+  const gaps = detectBriefGaps(context);
+  const optional = chipExamples(gaps, context).slice(0, 2);
+  const suggestedReplies = withRetryChip(optional, context, { alwaysRetry: true });
+
+  return {
+    content: [
+      "你的 brief 我已经收到了；上一版成稿偏模板化，不是信息不够。",
+      "",
+      "点 **按已有信息先写一版**，我会按现有 brief 直接重写；",
+      optional.length
+        ? `或补 1 项细节：\n${optional.map((c) => `· ${c}`).join("\n")}`
+        : "若还要微调，直接在下方补充一句即可。"
+    ].join("\n"),
     suggestedReplies
   };
 }

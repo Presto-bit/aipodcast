@@ -1,6 +1,6 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
 import { normalizeStudioRunPhase } from "./studioRunPhase";
-import { hasTaskContext } from "./studioWorkTask";
+import { composeTaskSentenceFromTurns, hasTaskContext } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type {
   StudioAgentIntent,
@@ -91,7 +91,9 @@ export function routeStudioAction(
 ): StudioRouteDecision {
   const q = userMessage.trim();
   const intent = inferStudioAgentIntent(q, work);
-  const taskReady = hasTaskContext(work, turns ?? work.agentTurns);
+  const turnList = turns ?? work.agentTurns;
+  const composeTask = composeTaskSentenceFromTurns(turnList, q);
+  const taskReady = hasTaskContext(work, turnList);
 
   if (work.status === "generating") {
     return {
@@ -120,7 +122,7 @@ export function routeStudioAction(
     taskReady &&
     (work.versions?.length ?? 0) === 0 &&
     !isAskOnlyMessage(q, intent) &&
-    !isInsufficientBrief(q)
+    !isInsufficientBrief(composeTask)
   ) {
     return {
       tool: "generate",

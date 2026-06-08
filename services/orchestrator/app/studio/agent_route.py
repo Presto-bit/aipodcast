@@ -6,6 +6,16 @@ from typing import Any, Literal
 
 StudioTool = Literal["reply", "compose", "revise"]
 
+STUDIO_NEEDS_BRIEF = "NEEDS_BRIEF"
+STUDIO_NEEDS_REWRITE = "NEEDS_REWRITE"
+
+
+def compose_soft_failure_code(task_sentence: str) -> str:
+    brief = str(task_sentence or "").strip()
+    if is_insufficient_brief(brief):
+        return STUDIO_NEEDS_BRIEF
+    return STUDIO_NEEDS_REWRITE
+
 TOPIC_FORM_SIGNAL = re.compile(
     r"清单|小红书|笔记|教程|测评|好物|干货|故事|攻略|标题|正文|受众|新人|职场|产品|运营|清单体|种草|周报|总结"
 )
@@ -16,6 +26,9 @@ REVISE_SIGNAL = re.compile(r"改版|改一下|改标题|改正文|缩短|加长|
 BLOCK_PATCH_SIGNAL = re.compile(r"【块级改版】|块级改版")
 WRITE_INTENT = re.compile(r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写")
 ASK_SIGNAL = re.compile(r"[?？]$|怎么(写|改|搭)|如何(写|改)|钩子|开头|结构|^(帮我)?(分析|解读|看看|讲讲)")
+COMPOSE_CHIP_SIGNAL = re.compile(
+    r"^(按已有信息|直接开始写成稿|(受众|卖点|场景|主题)[：:])"
+)
 
 
 def _needs_promo_clarify(text: str) -> bool:
@@ -59,6 +72,25 @@ def is_ask_only(message: str, *, has_manuscript: bool) -> bool:
     return False
 
 
+def should_force_compose(
+    *,
+    message: str,
+    task_sentence: str,
+    version_count: int,
+    force_compose: bool = False,
+) -> bool:
+    if version_count > 0:
+        return False
+    compose_brief = str(task_sentence or "").strip()
+    if is_insufficient_brief(compose_brief):
+        return False
+    if is_ask_only(message, has_manuscript=False) and not COMPOSE_CHIP_SIGNAL.search(message.strip()):
+        return False
+    if force_compose:
+        return True
+    return bool(COMPOSE_CHIP_SIGNAL.search(message.strip()))
+
+
 def route_studio_agent(
     *,
     message: str,
@@ -76,7 +108,14 @@ def route_studio_agent(
         return "revise"
     draft_like = status in ("draft", "briefing", "planned")
     if draft_like and task_sentence.strip() and version_count == 0:
-        if not is_ask_only(q, has_manuscript=False) and not is_insufficient_brief(q):
+        compose_brief = task_sentence.strip()
+        if should_force_compose(
+            message=q,
+            task_sentence=compose_brief,
+            version_count=version_count,
+        ):
+            return "compose"
+        if not is_ask_only(q, has_manuscript=False) and not is_insufficient_brief(compose_brief):
             return "compose"
     return "reply"
 

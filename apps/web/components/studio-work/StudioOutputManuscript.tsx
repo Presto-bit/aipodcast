@@ -32,13 +32,17 @@ function IconCopy({ className }: { className?: string }) {
 export default function StudioOutputManuscript({
   version,
   onTitleIndexChange,
-  generatingPhase
+  generatingPhase,
+  corpusNotebook = "",
+  corpusNoteIds = []
 }: {
   version: ManuscriptVersion | null;
   onTitleIndexChange?: (index: number) => void;
-  /** 写稿进度仅展示在输入框 footer，此处仅占位 */
+  /** 写稿进度仅展示在成稿区，此处仅占位 */
   generatingPhase?: string;
   generatingTask?: string;
+  corpusNotebook?: string;
+  corpusNoteIds?: string[];
 }) {
   const sourceBlocks = version?.blocks ?? [];
   const titles = manuscriptTitleBlocks(sourceBlocks);
@@ -71,7 +75,12 @@ export default function StudioOutputManuscript({
         />
       ) : null}
 
-      <StudioManuscriptReadable key={titleIndex} variant={variant} />
+      <StudioManuscriptReadable
+        key={titleIndex}
+        variant={variant}
+        corpusNotebook={corpusNotebook}
+        corpusNoteIds={corpusNoteIds}
+      />
 
       {version ? (
         <div className="mt-3 flex justify-start">

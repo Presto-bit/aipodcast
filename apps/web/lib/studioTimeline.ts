@@ -1,4 +1,4 @@
-import { buildStudioBriefClarifyTurn } from "./studioBriefClarify";
+import { buildStudioBriefClarifyTurn, buildStudioRewriteClarifyTurn } from "./studioBriefClarify";
 import { buildStudioDialogueTurnGroups } from "./studioDialogueTurnGroups";
 import { manuscriptTitleBlocks } from "./studioManuscriptView";
 import type {
@@ -49,6 +49,21 @@ export function buildStudioBriefClarifyAssistantTurn(
     role: "assistant",
     content,
     intent: "brief_clarify",
+    suggestedReplies,
+    createdAt: Date.now()
+  };
+}
+
+export function buildStudioRewriteClarifyAssistantTurn(
+  userMessage = "",
+  taskSentence = ""
+): StudioAgentTurn {
+  const { content, suggestedReplies } = buildStudioRewriteClarifyTurn(userMessage, taskSentence);
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    content,
+    intent: "compose_rewrite",
     suggestedReplies,
     createdAt: Date.now()
   };

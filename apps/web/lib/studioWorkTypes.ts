@@ -6,6 +6,7 @@ import type { NotesAskSource } from "./notesAskCitation";
 
 export type StudioAgentIntent =
   | "brief_clarify"
+  | "compose_rewrite"
   | "ops_strategy"
   | "manuscript_coach"
   | "revise_coach"
