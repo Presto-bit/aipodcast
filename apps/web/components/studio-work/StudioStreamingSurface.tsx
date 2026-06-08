@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  manuscriptBodyBlocks,
   manuscriptTitleBlocks,
   resolveManuscriptVariant
 } from "../../lib/studioManuscriptView";
@@ -61,6 +62,8 @@ export default function StudioStreamingSurface({
   }, [blocks, version?.blocks]);
 
   const titles = useMemo(() => manuscriptTitleBlocks(displayBlocks), [displayBlocks]);
+  const bodyCount = useMemo(() => manuscriptBodyBlocks(displayBlocks).length, [displayBlocks]);
+  const showVariantTabs = titles.length > 1 && (!isActive || bodyCount > 1);
   const hasContent = Boolean(
     bodyText?.trim() ||
       titles.length ||
@@ -109,7 +112,7 @@ export default function StudioStreamingSurface({
       <div className="text-left">
         <StreamPhaseHint label={streamPhase} />
 
-        {titles.length > 1 ? (
+        {showVariantTabs ? (
           <StudioVariantTabs
             titles={titles}
             titleIndex={activeIndex}

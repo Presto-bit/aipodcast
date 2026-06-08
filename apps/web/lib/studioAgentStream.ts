@@ -49,7 +49,11 @@ export type StudioAgentStreamResult =
 export async function streamStudioAgent(
   input: StudioAgentStreamInput
 ): Promise<StudioAgentStreamResult> {
-  const res = await fetch("/api/studio/agent/stream", {
+  const aborted = () => Boolean(input.signal?.aborted);
+
+  let res: Response;
+  try {
+    res = await fetch("/api/studio/agent/stream", {
     method: "POST",
     credentials: "same-origin",
     headers: {
@@ -78,7 +82,14 @@ export async function streamStudioAgent(
       sourceType: input.noteIds.length > 0 ? "notes_rag" : "composer_prompt"
     }),
     signal: input.signal
-  });
+    });
+  } catch (err) {
+    if (aborted() || isStreamFetchAbortError(err)) {
+      return { status: "aborted" };
+    }
+    const msg = String(err instanceof Error ? err.message : err).trim();
+    return { status: "error", error: msg || "Agent 请求失败" };
+  }
 
   if (!res.ok || !res.body) {
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -97,89 +108,97 @@ export async function streamStudioAgent(
   let firstDeltaAt = 0;
   const startedAt = Date.now();
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n\n");
-    buffer = parts.pop() ?? "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
 
-    for (const block of parts) {
-      for (const line of block.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed.startsWith("data:")) continue;
-        const raw = trimmed.slice(5).trim();
-        if (!raw) continue;
-        let ev: Record<string, unknown>;
-        try {
-          ev = JSON.parse(raw) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        const type = String(ev.type || "");
-        const tool = String(ev.tool || "") as StudioAgentTool;
+      for (const block of parts) {
+        for (const line of block.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith("data:")) continue;
+          const raw = trimmed.slice(5).trim();
+          if (!raw) continue;
+          let ev: Record<string, unknown>;
+          try {
+            ev = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            continue;
+          }
+          const type = String(ev.type || "");
+          const tool = String(ev.tool || "") as StudioAgentTool;
 
-        if (type === "session") {
-          const rid = String(ev.requestId || "").trim();
-          if (rid) input.onSession?.(rid);
-        } else if (type === "step") {
-          const step = parseStudioAgentStep(ev);
-          if (step) {
-            agentSteps = upsertAgentStep(agentSteps, step);
-            input.onStep?.(step);
-          }
-        } else if (type === "tool_call") {
-          const call = parseStudioAgentToolCall(ev);
-          if (call) {
-            const modeRaw = String(ev.mode || "").trim();
-            input.onToolCall?.({
-              ...call,
-              mode: modeRaw === "ask" || modeRaw === "write" ? modeRaw : input.agentMode,
-              source: String(ev.source || "").trim() || undefined
-            });
-          }
-        } else if (type === "route") {
-          const route = parseStudioAgentRouteEvent(ev);
-          if (route) input.onRoute?.(route);
-        } else if (type === "reply") {
-          replyText = String(ev.text || "").trim();
-          if (replyText && !replyNotified) {
-            replyNotified = true;
-            input.onReply?.(replyText);
-          }
-        } else if (type === "phase") {
-          const msg = String(ev.message || "").trim();
-          if (msg) input.onPhase?.(msg, tool === "revise" ? "revise" : "compose");
-        } else if (type === "body_delta") {
-          if (!firstDeltaAt) firstDeltaAt = Date.now();
-          const body = String(ev.body || "");
-          if (body) input.onBodyDelta?.(body, tool === "revise" ? "revise" : "compose");
-        } else if (type === "block_delta") {
-          if (!firstDeltaAt) firstDeltaAt = Date.now();
-          const blocks = normalizeStreamManuscriptBlocks(ev.blocks);
-          if (blocks.length) {
-            input.onBlockDelta?.(blocks, tool === "revise" ? "revise" : "compose");
-          }
-        } else if (type === "done") {
-          const dt = String(ev.tool || "");
-          if (dt === "reply") {
-            const text = (replyText || "好的。").trim();
-            if (text && !replyNotified) {
-              replyNotified = true;
-              input.onReply?.(text);
+          if (type === "session") {
+            const rid = String(ev.requestId || "").trim();
+            if (rid) input.onSession?.(rid);
+          } else if (type === "step") {
+            const step = parseStudioAgentStep(ev);
+            if (step) {
+              agentSteps = upsertAgentStep(agentSteps, step);
+              input.onStep?.(step);
             }
-            return { status: "reply", text };
+          } else if (type === "tool_call") {
+            const call = parseStudioAgentToolCall(ev);
+            if (call) {
+              const modeRaw = String(ev.mode || "").trim();
+              input.onToolCall?.({
+                ...call,
+                mode: modeRaw === "ask" || modeRaw === "write" ? modeRaw : input.agentMode,
+                source: String(ev.source || "").trim() || undefined
+              });
+            }
+          } else if (type === "route") {
+            const route = parseStudioAgentRouteEvent(ev);
+            if (route) input.onRoute?.(route);
+          } else if (type === "reply") {
+            replyText = String(ev.text || "").trim();
+            if (replyText && !replyNotified) {
+              replyNotified = true;
+              input.onReply?.(replyText);
+            }
+          } else if (type === "phase") {
+            const msg = String(ev.message || "").trim();
+            if (msg) input.onPhase?.(msg, tool === "revise" ? "revise" : "compose");
+          } else if (type === "body_delta") {
+            if (!firstDeltaAt) firstDeltaAt = Date.now();
+            const body = String(ev.body || "");
+            if (body) input.onBodyDelta?.(body, tool === "revise" ? "revise" : "compose");
+          } else if (type === "block_delta") {
+            if (!firstDeltaAt) firstDeltaAt = Date.now();
+            const blocks = normalizeStreamManuscriptBlocks(ev.blocks);
+            if (blocks.length) {
+              input.onBlockDelta?.(blocks, tool === "revise" ? "revise" : "compose");
+            }
+          } else if (type === "done") {
+            const dt = String(ev.tool || "");
+            if (dt === "reply") {
+              const text = (replyText || "好的。").trim();
+              if (text && !replyNotified) {
+                replyNotified = true;
+                input.onReply?.(text);
+              }
+              return { status: "reply", text };
+            }
+            doneTool = dt === "revise" ? "revise" : "compose";
+            doneBlocks = normalizeStreamManuscriptBlocks(ev.blocks);
+          } else if (type === "error") {
+            return { status: "error", error: String(ev.message || "生成失败") };
           }
-          doneTool = dt === "revise" ? "revise" : "compose";
-          doneBlocks = normalizeStreamManuscriptBlocks(ev.blocks);
-        } else if (type === "error") {
-          return { status: "error", error: String(ev.message || "生成失败") };
         }
       }
     }
+  } catch (err) {
+    if (aborted() || isStreamFetchAbortError(err)) {
+      return { status: "aborted" };
+    }
+    const msg = String(err instanceof Error ? err.message : err).trim();
+    return { status: "error", error: msg || "Agent 流中断" };
   }
 
-  if (input.signal?.aborted) {
+  if (aborted()) {
     return { status: "aborted" };
   }
 
@@ -195,4 +214,12 @@ export async function streamStudioAgent(
   }
 
   return { status: "error", error: "Agent 未返回完整结果" };
+}
+
+/** fetch/SSE 被 AbortController 取消时浏览器常报 Network error / Failed to fetch */
+export function isStreamFetchAbortError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "AbortError") return true;
+  const msg = err.message.trim().toLowerCase();
+  return msg === "network error" || msg.includes("failed to fetch") || msg.includes("aborted");
 }

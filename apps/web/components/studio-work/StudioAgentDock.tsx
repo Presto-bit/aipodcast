@@ -50,11 +50,9 @@ import type {
   WorkStatus
 } from "../../lib/studioWorkTypes";
 import StudioAgentComposer from "./StudioAgentComposer";
-import StudioAgentStepBar from "./StudioAgentStepBar";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
 import StudioEphemeralHint from "./StudioEphemeralHint";
-import StudioEphemeralPanel from "./StudioEphemeralPanel";
 
 const QUICK_PROMPTS = [
   "我想写一篇清单体内容，受众是产品新人",
@@ -194,12 +192,7 @@ export default function StudioAgentDock({
   const centerEmptyComposer =
     canvasMode && turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const showAgentOutputStatus =
-    canvasMode &&
-    (agentSteps.length > 0 ||
-      Boolean(agentRouteHint) ||
-      Boolean(ephemeralHint) ||
-      agentBusy ||
-      jobRunning);
+    canvasMode && (jobRunning || agentBusy) && Boolean(composeProgressLabel || agentRouteHint || ephemeralHint);
   const useAgentStream = Boolean(onAgentRun);
   const composeProgressLabel = studioStreamPhaseLabel({
     runPhase: work.runPhase,
@@ -593,6 +586,15 @@ export default function StudioAgentDock({
   async function handleSend(overrideText?: string, fromChip = false) {
     const q = resolveOutgoingMessage(overrideText ?? input, fromChip);
     if (!q || !canChat) return;
+    if (
+      useAgentStream &&
+      jobRunning &&
+      !/改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化/.test(q) &&
+      !shouldForceStudioCompose(q, fromChip)
+    ) {
+      setEphemeralHint("写稿进行中，请稍候…");
+      return;
+    }
     abortBackgroundStreams();
     setInput("");
 
@@ -777,17 +779,10 @@ export default function StudioAgentDock({
   );
 
   const agentOutputStatus = showAgentOutputStatus ? (
-    <div className="space-y-2">
-      <StudioEphemeralPanel active={jobRunning || agentBusy} ttlMs={4000}>
-        {agentSteps.length ? <StudioAgentStepBar steps={agentSteps} /> : null}
-        {agentRouteHint || ephemeralHint ? (
-          <StudioEphemeralHint text={agentRouteHint || ephemeralHint} ttlMs={4000} />
-        ) : null}
-        {!useAgentStream && !jobRunning && agentBusy && dockPhase ? (
-          <p className="text-[11px] text-brand">{dockPhase}</p>
-        ) : null}
-      </StudioEphemeralPanel>
-    </div>
+    <StudioEphemeralHint
+      text={composeProgressLabel || agentRouteHint || ephemeralHint}
+      className="text-muted"
+    />
   ) : null;
 
   const timelinePanel = (

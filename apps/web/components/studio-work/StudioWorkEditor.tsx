@@ -409,10 +409,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         }
 
         if (result.status === "error") {
+          if (/^network error$/i.test(result.error) || /failed to fetch/i.test(result.error)) {
+            if (ac.signal.aborted || streamAbortRef.current !== ac) return;
+          }
           const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
           const failureKind = classifyComposeSoftFailure(result.error, composeTask);
           if (runId && failureKind) {
             finishSoftComposeFailure(after, failureKind, params);
+            setAgentRouteHint("");
+            setAgentSteps([]);
             return;
           }
           if (runId) {
@@ -443,6 +448,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           const failureKind: StudioComposeSoftFailure =
             !empty && !isInsufficientBrief(composeTask) ? "needs_rewrite" : "needs_brief";
           finishSoftComposeFailure(after, failureKind, params, blocks, empty);
+          setAgentRouteHint("");
+          setAgentSteps([]);
           return;
         }
 
@@ -488,11 +495,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         );
         setAgentRouteHint("");
         setComposePreview(null);
-        clearStreamingSurface();
+        setAgentSteps([]);
+        if (streamAbortRef.current === ac) {
+          clearStreamingSurface();
+        }
       } catch (err) {
         if (ac.signal.aborted) return;
         const failed = getStudioWork(workId);
         const msg = String(err instanceof Error ? err.message : err);
+        if (/^network error$/i.test(msg) || /failed to fetch/i.test(msg)) {
+          return;
+        }
         if (failed && runId) {
           persist(
             finishStudioRun(
@@ -506,7 +519,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           persist({ ...failed, error: msg });
         }
       } finally {
-        clearStreamingSurface();
+        if (streamAbortRef.current === ac) {
+          clearStreamingSurface();
+        }
         if (streamAbortRef.current === ac) streamAbortRef.current = null;
       }
     },

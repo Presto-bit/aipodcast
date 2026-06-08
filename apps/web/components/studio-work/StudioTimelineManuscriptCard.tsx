@@ -83,7 +83,6 @@ export default function StudioTimelineManuscriptCard({
     if (hasStream) {
       return (
         <div className="mt-2">
-          <p className="mb-1.5 text-[11px] text-muted">撰写中·预览（待校验）</p>
           <StudioStreamingSurface
             variant="active"
             blocks={streamingBlocks}

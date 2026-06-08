@@ -6,9 +6,9 @@ export type ComposeProgressParams = {
   isRevise?: boolean;
 };
 
-/** 流式成稿区：含「正在输出成稿…」等贴近产物的进度 */
+/** 流式成稿区：有正文时不重复 phase 文案（进度由光标/内容体现） */
 export function studioStreamPhaseLabel(params: ComposeProgressParams): string {
-  if (params.hasStream) return "正在输出成稿…";
+  if (params.hasStream) return "";
   const raw = (params.runPhase || "").trim();
   if (raw) return humanizeComposePhase(raw);
   return params.isRevise ? "改版中…" : "写稿中…";
