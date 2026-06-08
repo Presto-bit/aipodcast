@@ -41,6 +41,7 @@ import {
   resolveStudioStructuredResponse,
   studioStructuredAddsAssistantTurn
 } from "../../lib/studioAgentStructured";
+import type { StudioComposePreview } from "../../lib/studioComposePreview";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
@@ -119,7 +120,9 @@ export default function StudioAgentDock({
   agentRouteHint = "",
   agentSteps = [],
   streamingBlocks = null,
-  streamingBodyText = null
+  streamingBodyText = null,
+  composePreview = null,
+  onAdoptComposePreview
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
@@ -131,6 +134,8 @@ export default function StudioAgentDock({
   agentSteps?: StudioAgentStep[];
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
+  composePreview?: StudioComposePreview | null;
+  onAdoptComposePreview?: () => void;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
   /** 单 Agent SSE（reply | compose | revise）；提供时优先于 ask+Job 双轨 */
@@ -799,6 +804,8 @@ export default function StudioAgentDock({
       hideManuscript={false}
       streamingBlocks={streamingBlocks}
       streamingBodyText={streamingBodyText}
+      composePreview={composePreview}
+      onAdoptComposePreview={onAdoptComposePreview}
       activeAgentStatus={agentOutputStatus}
       onTitleIndexChange={onTitleIndexChange}
       onBlocksChange={onBlocksChange}

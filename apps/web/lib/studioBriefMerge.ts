@@ -5,7 +5,7 @@ const WRITE_INTENT_RE = /生成|成稿|创作一篇|写一篇|开始写|帮我�
 
 /**
  * Cursor 式 chip：在已有 brief 上追加字段，而非覆盖整段对话。
- * chip 为完整例句时与 prior 合并；「按已有信息先写一版」补写稿意图。
+ * chip 为完整例句时与 prior 合并；「再试一次」补写稿意图。
  */
 export function mergeBriefChipReply(existingBrief: string, chip: string): string {
   const base = existingBrief.trim();
@@ -13,7 +13,7 @@ export function mergeBriefChipReply(existingBrief: string, chip: string): string
   if (!chipText) return normalizeStudioComposeBrief(base);
   if (!base) return normalizeStudioComposeBrief(chipText);
 
-  if (/^按已有信息/.test(chipText)) {
+  if (/^(按已有信息|再试一次)/.test(chipText)) {
     if (!WRITE_INTENT_RE.test(base)) {
       return normalizeStudioComposeBrief(`我想写：${base}`);
     }

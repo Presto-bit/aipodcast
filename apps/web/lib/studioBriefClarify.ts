@@ -7,7 +7,7 @@ export type StudioBriefClarifyTurn = {
   suggestedReplies: string[];
 };
 
-export const STUDIO_COMPOSE_RETRY_CHIP = "按已有信息先写一版";
+export const STUDIO_COMPOSE_RETRY_CHIP = "再试一次";
 
 type BriefGap = "topic" | "audience" | "sellPoint" | "scene";
 
@@ -121,7 +121,7 @@ export function buildStudioBriefClarifyTurn(
         gaps.has("sellPoint") ? "· **卖点**：核心卖点是什么？" : "",
         gaps.has("scene") ? "· **场景**：在什么场景种草？" : "",
         "",
-        "也可点「按已有信息先写一版」，我先按现有内容试写。"
+        "也可点「再试一次」，我先按现有内容试写。"
       ]
         .filter(Boolean)
         .join("\n"),
@@ -138,7 +138,7 @@ export function buildStudioBriefClarifyTurn(
       gaps.has("scene") ? "· **场景**（如办公室桌面、通勤）" : "",
       gaps.has("topic") ? "· **主题**（这篇核心讲什么）" : "",
       "",
-      "点下方快捷补全；信息已够也可直接点「按已有信息先写一版」。"
+      "点下方快捷补全；信息已够也可直接点「再试一次」。"
     ]
       .filter(Boolean)
       .join("\n"),
@@ -146,25 +146,17 @@ export function buildStudioBriefClarifyTurn(
   };
 }
 
-/** brief 已够但成稿偏模板/空泛 → 不重问受众，提示重写（Cursor 式） */
+/** brief 已够但成稿偏模板/空泛 → 不重问受众；预览稿已保留在画布 */
 export function buildStudioRewriteClarifyTurn(
-  userMessage = "",
-  taskSentence = ""
+  _userMessage = "",
+  _taskSentence = ""
 ): StudioBriefClarifyTurn {
-  const context = [taskSentence, userMessage].filter(Boolean).join("\n");
-  const gaps = detectBriefGaps(context);
-  const optional = chipExamples(gaps, context).slice(0, 2);
-  const suggestedReplies = withRetryChip(optional, context, { alwaysRetry: true });
-
   return {
     content: [
-      "你的 brief 我已经收到了；上一版成稿偏模板化，不是信息不够。",
+      "上一版预览稿偏模板化（不是 brief 不够），已保留在上方稿件区，可先采纳再改。",
       "",
-      "点 **按已有信息先写一版**，我会按现有 brief 直接重写；",
-      optional.length
-        ? `或补 1 项细节：\n${optional.map((c) => `· ${c}`).join("\n")}`
-        : "若还要微调，直接在下方补充一句即可。"
+      "若要系统重写，点 **再试一次**；也可直接在下方补充改写意见。"
     ].join("\n"),
-    suggestedReplies
+    suggestedReplies: [STUDIO_COMPOSE_RETRY_CHIP]
   };
 }

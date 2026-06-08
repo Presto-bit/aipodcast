@@ -69,6 +69,25 @@ export function buildStudioRewriteClarifyAssistantTurn(
   };
 }
 
+/** needs_rewrite 失败：避免连续堆叠相同澄清气泡 */
+export function appendComposeClarifyTurn(
+  turns: StudioAgentTurn[],
+  turn: StudioAgentTurn
+): StudioAgentTurn[] {
+  if (turn.intent !== "compose_rewrite") {
+    return [...turns, turn];
+  }
+  const lastAssistant = [...turns].reverse().find((t) => t.role === "assistant");
+  if (lastAssistant?.intent === "compose_rewrite") {
+    return turns.map((t) =>
+      t.id === lastAssistant.id
+        ? { ...turn, id: lastAssistant.id, createdAt: lastAssistant.createdAt }
+        : t
+    );
+  }
+  return [...turns, turn];
+}
+
 /** Cursor 式收尾：结果 → 看哪里 → 下一步（单行，各一句） */
 export function buildStudioComposeWrapUp(
   tool: "compose" | "revise",

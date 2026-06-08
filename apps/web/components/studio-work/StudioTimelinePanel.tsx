@@ -2,6 +2,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import { buildStudioTimeline } from "../../lib/studioTimeline";
+import type { StudioComposePreview } from "../../lib/studioComposePreview";
 import type { ManuscriptBlock, StudioAgentTurn, StudioWork } from "../../lib/studioWorkTypes";
 import StudioTimelineManuscriptCard from "./StudioTimelineManuscriptCard";
 import StudioAgentMessage from "./StudioAgentMessage";
@@ -25,6 +26,8 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge,
   streamingBlocks = null,
   streamingBodyText = null,
+  composePreview = null,
+  onAdoptComposePreview,
   activeAgentStatus = null
 }: {
   work: StudioWork;
@@ -44,6 +47,8 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge: () => void;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
+  composePreview?: StudioComposePreview | null;
+  onAdoptComposePreview?: () => void;
   activeAgentStatus?: ReactNode;
 }) {
   void scrollRef;
@@ -93,6 +98,8 @@ export default function StudioTimelinePanel({
               onBlocksChange={onBlocksChange}
               streamingBlocks={streamingBlocks}
               streamingBodyText={streamingBodyText}
+              composePreview={composePreview}
+              onAdoptComposePreview={onAdoptComposePreview}
             />
           );
         })}

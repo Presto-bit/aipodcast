@@ -14,7 +14,7 @@ assert(
   "field chip keeps prior brief"
 );
 assert(
-  mergeBriefChipReply(base, "按已有信息先写一版").startsWith("我想写"),
+  mergeBriefChipReply(base, "再试一次").startsWith("我想写"),
   "write intent injected"
 );
 assert(

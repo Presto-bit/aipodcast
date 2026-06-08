@@ -20,8 +20,9 @@ assert(
 );
 
 const rewriteTurn = buildStudioRewriteClarifyTurn(promoBrief, promoBrief);
-assert(rewriteTurn.content.includes("偏模板"), "rewrite explains quality not brief");
-assert(rewriteTurn.suggestedReplies[0] === STUDIO_COMPOSE_RETRY_CHIP, "retry first");
+assert(rewriteTurn.content.includes("预览稿"), "rewrite mentions preview retained");
+assert(rewriteTurn.suggestedReplies.length === 1, "rewrite chip only retry");
+assert(rewriteTurn.suggestedReplies[0] === STUDIO_COMPOSE_RETRY_CHIP, "retry chip");
 
 assert(
   classifyComposeSoftFailure("NEEDS_REWRITE", promoBrief) === "needs_rewrite",

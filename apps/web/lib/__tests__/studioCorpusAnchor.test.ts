@@ -18,7 +18,7 @@ assert(textHasCorpusAnchors("引用[资料3]"), "detect anchor token");
 assert(buildStudioCorpusSources("nb", ["n1", "n2"])[1]?.index === "2", "source index");
 
 assert(shouldForceStudioCompose("场景：办公室", true), "chip forces compose");
-assert(shouldForceStudioCompose("按已有信息先写一版", false), "rewrite chip forces compose");
+assert(shouldForceStudioCompose("再试一次", false), "rewrite chip forces compose");
 assert(!shouldForceStudioCompose("继续问发布与推广细节", false), "ops chip does not force compose");
 
 assert(userMessageLooksLikeQuestion("钩子怎么写？"), "question mark");

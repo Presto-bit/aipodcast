@@ -24,13 +24,20 @@ import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentStep
 import {
   STUDIO_ACK_GENERATE,
   STUDIO_ACK_REVISE,
+  appendComposeClarifyTurn,
   buildStudioBriefClarifyAssistantTurn,
   buildStudioRewriteClarifyAssistantTurn
 } from "../../lib/studioTimeline";
 import {
   classifyComposeSoftFailure,
-  studioComposeFailureNote
+  studioComposeFailureNote,
+  type StudioComposeSoftFailure
 } from "../../lib/studioComposeFailure";
+import {
+  blocksFromComposeStream,
+  hasComposePreviewContent,
+  type StudioComposePreview
+} from "../../lib/studioComposePreview";
 import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { shouldSuppressStudioCanvasReply } from "../../lib/studioAgentStructured";
 import { composeTaskSentenceFromTurns, firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
@@ -57,6 +64,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const [work, setWork] = useState<StudioWork | null>(null);
   const [streamingBlocks, setStreamingBlocks] = useState<ManuscriptBlock[] | null>(null);
   const [streamingBodyText, setStreamingBodyText] = useState<string | null>(null);
+  const [composePreview, setComposePreview] = useState<StudioComposePreview | null>(null);
+  const streamingBlocksRef = useRef<ManuscriptBlock[] | null>(null);
+  const streamingBodyRef = useRef<string | null>(null);
   const [jobBusy, setJobBusy] = useState(false);
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const reviseQueueRef = useRef<string[]>([]);
@@ -114,9 +124,37 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   );
 
   const clearStreamingSurface = useCallback(() => {
+    streamingBlocksRef.current = null;
+    streamingBodyRef.current = null;
     setStreamingBlocks(null);
     setStreamingBodyText(null);
   }, []);
+
+  const adoptComposePreview = useCallback(() => {
+    const cur = getStudioWork(workId);
+    if (!cur || !composePreview) return;
+    const versionId = crypto.randomUUID();
+    persist({
+      ...cur,
+      status: "ready",
+      versions: [
+        ...cur.versions,
+        {
+          id: versionId,
+          label: nextVersionLabel(cur.versions),
+          createdAt: Date.now(),
+          blocks: composePreview.blocks,
+          primaryTitleIndex: 0,
+          sourceRunId: composePreview.runId
+        }
+      ],
+      activeVersionId: versionId,
+      error: undefined,
+      runPhase: undefined,
+      lastOrchestratorNote: undefined
+    });
+    setComposePreview(null);
+  }, [workId, composePreview]);
 
   const runAgentStream = useCallback(
     async (params: {
@@ -159,10 +197,58 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       streamAbortRef.current = ac;
       setAgentRouteHint("");
       setAgentSteps([]);
+      streamingBlocksRef.current = null;
+      streamingBodyRef.current = null;
+      setComposePreview(null);
 
       let runId = "";
       let runTool: "generate" | "revise" = "generate";
       let ackAppended = false;
+
+      const retainFailedComposePreview = (
+        failureKind: StudioComposeSoftFailure,
+        fallbackBlocks: ManuscriptBlock[] = []
+      ) => {
+        if (!runId) return;
+        const previewBlocks = blocksFromComposeStream(
+          streamingBlocksRef.current,
+          streamingBodyRef.current,
+          fallbackBlocks
+        );
+        if (hasComposePreviewContent(previewBlocks)) {
+          setComposePreview({ runId, blocks: previewBlocks, reason: failureKind });
+        }
+      };
+
+      const finishSoftComposeFailure = (
+        after: StudioWork,
+        failureKind: StudioComposeSoftFailure,
+        params: { userText: string; prefixTurns: StudioAgentTurn[] },
+        fallbackBlocks: ManuscriptBlock[] = [],
+        empty = false
+      ) => {
+        const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
+        retainFailedComposePreview(failureKind, fallbackBlocks);
+        const clarifyTurn =
+          failureKind === "needs_rewrite"
+            ? buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask)
+            : buildStudioBriefClarifyAssistantTurn(empty ? "empty" : "template", params.userText, composeTask);
+        persist(
+          finishStudioRun(
+            {
+              ...after,
+              agentTurns: appendComposeClarifyTurn(after.agentTurns ?? [], clarifyTurn),
+              status: "draft",
+              error: undefined,
+              runPhase: undefined,
+              lastOrchestratorNote: studioComposeFailureNote(failureKind)
+            },
+            runId,
+            "error",
+            studioComposeFailureNote(failureKind)
+          )
+        );
+      };
 
       const ensureComposeRun = (tool: "generate" | "revise") => {
         if (ackAppended) return;
@@ -199,6 +285,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         );
         setStreamingBlocks([]);
         setStreamingBodyText("");
+        streamingBlocksRef.current = null;
+        streamingBodyRef.current = null;
       };
 
       const manuscriptBlocks = baseVersion?.blocks ?? [];
@@ -248,10 +336,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           },
           onBlockDelta: (blocks, tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            streamingBlocksRef.current = blocks;
             setStreamingBlocks(blocks);
           },
           onBodyDelta: (body, tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            streamingBodyRef.current = body;
             setStreamingBodyText(body);
           }
         });
@@ -322,25 +412,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
           const failureKind = classifyComposeSoftFailure(result.error, composeTask);
           if (runId && failureKind) {
-            const clarifyTurn =
-              failureKind === "needs_rewrite"
-                ? buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask)
-                : buildStudioBriefClarifyAssistantTurn("template", params.userText, composeTask);
-            persist(
-              finishStudioRun(
-                {
-                  ...after,
-                  agentTurns: [...(after.agentTurns ?? []), clarifyTurn],
-                  status: "draft",
-                  error: undefined,
-                  runPhase: undefined,
-                  lastOrchestratorNote: studioComposeFailureNote(failureKind)
-                },
-                runId,
-                "error",
-                studioComposeFailureNote(failureKind)
-              )
-            );
+            finishSoftComposeFailure(after, failureKind, params);
             return;
           }
           if (runId) {
@@ -368,27 +440,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
         if (!blocks.length || shouldRejectDeliverableBody(result.tool, bodyText)) {
           const empty = !blocks.length;
-          const failureKind: "needs_brief" | "needs_rewrite" =
+          const failureKind: StudioComposeSoftFailure =
             !empty && !isInsufficientBrief(composeTask) ? "needs_rewrite" : "needs_brief";
-          const clarifyTurn =
-            failureKind === "needs_rewrite"
-              ? buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask)
-              : buildStudioBriefClarifyAssistantTurn(empty ? "empty" : "template", params.userText, composeTask);
-          persist(
-            finishStudioRun(
-              {
-                ...after,
-                agentTurns: [...(after.agentTurns ?? []), clarifyTurn],
-                status: runTool === "generate" ? "draft" : "ready",
-                error: undefined,
-                runPhase: undefined,
-                lastOrchestratorNote: studioComposeFailureNote(failureKind)
-              },
-              runId,
-              "error",
-              studioComposeFailureNote(failureKind)
-            )
-          );
+          finishSoftComposeFailure(after, failureKind, params, blocks, empty);
           return;
         }
 
@@ -433,6 +487,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           )
         );
         setAgentRouteHint("");
+        setComposePreview(null);
         clearStreamingSurface();
       } catch (err) {
         if (ac.signal.aborted) return;
@@ -547,6 +602,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           agentSteps={agentSteps}
           streamingBlocks={streamingBlocks}
           streamingBodyText={streamingBodyText}
+          composePreview={composePreview}
+          onAdoptComposePreview={adoptComposePreview}
           getAuthHeaders={getAuthHeaders}
           onPersist={persist}
           onAgentRun={async ({ userText, prefixTurns, userTurnId, forceCompose }) => {
