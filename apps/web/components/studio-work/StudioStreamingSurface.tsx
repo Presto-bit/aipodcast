@@ -6,6 +6,7 @@ import {
   buildManuscriptFlowText,
   manuscriptTitleBlocks,
   resolveBodyForTitleIndex,
+  resolveManuscriptVariant,
   studioTitleDirectionLabel
 } from "../../lib/studioManuscriptView";
 import { STUDIO_STREAM_BODY, STUDIO_STREAM_CURSOR } from "../../lib/studioOutputTypography";
@@ -27,8 +28,6 @@ export default function StudioStreamingSurface({
   onCancel,
   variant = "active",
   version = null,
-  editable = false,
-  onBlocksChange,
   onTitleIndexChange,
   flowLayout = false
 }: {
@@ -39,8 +38,6 @@ export default function StudioStreamingSurface({
   onCancel?: () => void;
   variant?: StudioStreamingVariant;
   version?: ManuscriptVersion | null;
-  editable?: boolean;
-  onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   onTitleIndexChange?: (index: number) => void;
   flowLayout?: boolean;
 }) {
@@ -58,8 +55,6 @@ export default function StudioStreamingSurface({
   const targetBody = (bodyText ?? blockBody).trim();
   const displayBody = isReadyLike ? blockBody.trim() : targetBody;
   const titles = useMemo(() => manuscriptTitleBlocks(displayBlocks), [displayBlocks]);
-  const hashtags = displayBlocks.find((b) => b.kind === "hashtags");
-  const cover = displayBlocks.find((b) => b.kind === "coverBrief");
   const hasContent = Boolean(displayBody || titles.length);
   const titleIndex = version ? (version.primaryTitleIndex ?? previewIndex) : previewIndex;
   const activeIndex = onTitleIndexChange ? titleIndex : previewIndex;
@@ -86,12 +81,7 @@ export default function StudioStreamingSurface({
 
   if (isReadyLike && version) {
     return (
-      <StudioOutputManuscript
-        version={version}
-        editable={editable}
-        onBlocksChange={onBlocksChange}
-        onTitleIndexChange={onTitleIndexChange}
-      />
+      <StudioOutputManuscript version={version} onTitleIndexChange={onTitleIndexChange} />
     );
   }
 
@@ -113,14 +103,14 @@ export default function StudioStreamingSurface({
       );
     }
 
-    const primaryTitle = titles[activeIndex] ?? titles[0];
-    const variantBody =
-      resolveBodyForTitleIndex(displayBlocks, activeIndex)?.text ?? displayBody;
+    const slice = resolveManuscriptVariant(displayBlocks, activeIndex);
+    const streamBody = displayBody || slice.body;
     const flowText = buildManuscriptFlowText({
-      title: primaryTitle?.text,
-      body: variantBody,
-      hashtags: hashtags && hashtags.kind === "hashtags" ? hashtags.tags : undefined,
-      cover: cover && cover.kind === "coverBrief" ? cover.text : undefined
+      title: slice.title,
+      body: streamBody,
+      interaction: slice.interaction,
+      hashtags: slice.hashtags,
+      cover: slice.cover
     });
 
     return (

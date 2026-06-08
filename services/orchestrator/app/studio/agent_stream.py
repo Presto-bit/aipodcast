@@ -171,7 +171,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         {
             "type": "step",
             "id": "compose_stream",
-            "label": "流式写稿" if tool == "compose" else "流式改版",
+            "label": "撰写成稿" if tool == "compose" else "按你的意见修改",
             "status": "running",
             "tool": tool,
             "requestId": rid,
@@ -285,7 +285,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 {
                     "type": "step",
                     "id": "compose_stream",
-                    "label": "流式写稿" if tool == "compose" else "流式改版",
+                    "label": "撰写成稿" if tool == "compose" else "按你的意见修改",
                     "status": "done",
                     "tool": tool,
                     "requestId": rid,

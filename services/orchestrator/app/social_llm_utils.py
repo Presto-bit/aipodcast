@@ -268,6 +268,9 @@ def extract_partial_social_json_fields(acc: str) -> dict[str, Any]:
     tags = _extract_json_string_array(text, "tags", limit=12)
     if tags:
         out["tags"] = tags
+    interactions = _extract_json_string_array(text, "interactions", limit=3)
+    if interactions:
+        out["interactions"] = interactions
     images = _extract_json_string_array(text, "imageSuggestions", limit=8)
     if images:
         out["imageSuggestions"] = images

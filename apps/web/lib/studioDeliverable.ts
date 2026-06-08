@@ -1,7 +1,10 @@
 import type { ExpertDeliverable } from "./homeComposerExpertTypes";
 import type { ManuscriptBlock } from "./studioWorkTypes";
 import { xhsBodyPlainText } from "./xhsBodyFormat";
-import { resolveBodyForTitleIndex } from "./studioManuscriptView";
+import {
+  buildManuscriptFlowText,
+  resolveManuscriptVariant
+} from "./studioManuscriptView";
 
 export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): ManuscriptBlock[] {
   if (deliverable.expertId !== "xhs_ops" || !("titles" in deliverable.content)) {
@@ -40,8 +43,26 @@ export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): M
       });
     }
   }
-  const tags = (c.hashtags || []).map((t) => String(t).replace(/^#/, "").trim()).filter(Boolean);
-  if (tags.length) blocks.push({ id: "hashtags", kind: "hashtags", tags });
+  const variantCount = Math.max(
+    variantBodies.length,
+    c.titles.length,
+    (c.interactions ?? []).length,
+    1
+  );
+  const sharedTags = (c.hashtags || []).map((t) => String(t).replace(/^#/, "").trim()).filter(Boolean);
+  const interactions = (c.interactions ?? []).map((t) => String(t || "").trim()).filter(Boolean);
+  for (let i = 0; i < Math.min(3, variantCount); i++) {
+    if (sharedTags.length) {
+      blocks.push({ id: `hashtags-${i}`, kind: "hashtags", tags: [...sharedTags] });
+    }
+    const interaction = interactions[i] ?? interactions[0] ?? "";
+    if (interaction) {
+      blocks.push({ id: `interaction-${i}`, kind: "interaction", text: interaction });
+    }
+  }
+  if (!variantCount && sharedTags.length) {
+    blocks.push({ id: "hashtags-0", kind: "hashtags", tags: sharedTags });
+  }
   const cover = c.cover?.headline?.trim() || c.cover?.subline?.trim();
   if (cover || c.cover?.slides?.length) {
     const brief =
@@ -54,14 +75,7 @@ export function deliverableToManuscriptBlocks(deliverable: ExpertDeliverable): M
 }
 
 export function manuscriptCopyAll(blocks: ManuscriptBlock[], titleIndex = 0): string {
-  const titles = blocks.filter((b): b is Extract<ManuscriptBlock, { kind: "title" }> => b.kind === "title");
-  const body = resolveBodyForTitleIndex(blocks, titleIndex);
-  const tags = blocks.find((b) => b.kind === "hashtags");
-  const title = titles[titleIndex]?.text || titles[0]?.text || "";
-  const bodyText = body?.text ?? "";
-  const tagLine =
-    tags && tags.kind === "hashtags" ? tags.tags.map((t) => `#${t}`).join(" ") : "";
-  return [title, bodyText, tagLine].filter(Boolean).join("\n\n");
+  return buildManuscriptFlowText(resolveManuscriptVariant(blocks, titleIndex));
 }
 
 export function nextVersionLabel(versions: { label: string }[]): string {
@@ -69,7 +83,15 @@ export function nextVersionLabel(versions: { label: string }[]): string {
 }
 
 export function blockStableKey(b: ManuscriptBlock): string {
-  return b.kind === "title" ? `${b.kind}:${b.id}` : b.kind;
+  if (
+    b.kind === "title" ||
+    b.kind === "body" ||
+    b.kind === "hashtags" ||
+    b.kind === "interaction"
+  ) {
+    return `${b.kind}:${b.id}`;
+  }
+  return b.kind;
 }
 
 /** 对比两版 blocks，返回变更的 stable keys */
@@ -89,6 +111,7 @@ export function diffBlockKeys(prev: ManuscriptBlock[], next: ManuscriptBlock[]):
     }
     if (ob.kind === "title" && nb.kind === "title" && ob.text !== nb.text) changed.add(key);
     if (ob.kind === "body" && nb.kind === "body" && ob.text !== nb.text) changed.add(key);
+    if (ob.kind === "interaction" && nb.kind === "interaction" && ob.text !== nb.text) changed.add(key);
     if (ob.kind === "hashtags" && nb.kind === "hashtags") {
       if (ob.tags.join(",") !== nb.tags.join(",")) changed.add(key);
     }

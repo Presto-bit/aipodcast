@@ -18,7 +18,7 @@ export default function StudioTimelineManuscriptCard({
   isActiveVersion,
   busy,
   onTitleIndexChange,
-  onBlocksChange,
+  onBlocksChange: _onBlocksChange,
   streamingBlocks = null,
   streamingBodyText = null
 }: {
@@ -35,13 +35,6 @@ export default function StudioTimelineManuscriptCard({
 }) {
   const isRunning = run.status === "running" && work.status === "generating";
   const taskSentence = taskSentenceFromWork(work);
-
-  const editable =
-    isActiveVersion &&
-    work.status === "ready" &&
-    !isRunning &&
-    !busy &&
-    Boolean(onBlocksChange && version);
 
   if (isRunning) {
     const phase = work.runPhase || run.summary || (run.tool === "revise" ? "改版中…" : "写稿中…");
@@ -79,8 +72,6 @@ export default function StudioTimelineManuscriptCard({
         <StudioOutputManuscript
           version={version}
           onTitleIndexChange={isActiveVersion ? onTitleIndexChange : undefined}
-          editable={editable}
-          onBlocksChange={editable ? onBlocksChange : undefined}
         />
       </div>
     );

@@ -1,22 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  STUDIO_MANUSCRIPT_BODY,
-  STUDIO_MANUSCRIPT_HASHTAGS,
-  STUDIO_MANUSCRIPT_META,
-  STUDIO_MANUSCRIPT_TITLE
-} from "../../lib/studioOutputTypography";
+import { useEffect, useState } from "react";
+import { STUDIO_MANUSCRIPT_BODY } from "../../lib/studioOutputTypography";
 import {
   buildManuscriptFlowText,
   manuscriptTitleBlocks,
-  resolveBodyForTitleIndex,
+  resolveManuscriptVariant,
   resolvePrimaryTitleIndex,
   studioTitleDirectionLabel
 } from "../../lib/studioManuscriptView";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import { studioComposeProgressLabel } from "../../lib/studioComposeProgress";
-import { normalizeStudioRunPhase } from "../../lib/studioRunPhase";
+import { humanizeComposePhase } from "../../lib/studioAgentReadable";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 
@@ -35,47 +30,6 @@ function IconCopy({ className }: { className?: string }) {
       <rect x="9" y="9" width="13" height="13" rx="2" />
       <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
     </svg>
-  );
-}
-
-function cloneBlocks(blocks: ManuscriptBlock[]): ManuscriptBlock[] {
-  return blocks.map((b) => {
-    if (b.kind === "hashtags") return { ...b, tags: [...b.tags] };
-    return { ...b };
-  });
-}
-
-function AutoGrowTextarea({
-  value,
-  onChange,
-  className
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  className: string;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [value]);
-
-  return (
-    <textarea
-      ref={ref}
-      value={value}
-      rows={1}
-      className={`${className} resize-none overflow-hidden`}
-      onChange={(e) => {
-        onChange(e.target.value);
-        const el = e.target;
-        el.style.height = "auto";
-        el.style.height = `${el.scrollHeight}px`;
-      }}
-    />
   );
 }
 
@@ -110,34 +64,20 @@ function BestOfTabs({
   );
 }
 
-function hashtagLine(tags: string[]): string {
-  return tags.map((t) => `#${t.replace(/^#/, "")}`).join(" ");
-}
-
-/** 输出区稿件：横向 best of N + 对应正文连续排版（无区块与空行） */
+/** 输出区稿件：横向 best of N，整篇只读连续排版 */
 export default function StudioOutputManuscript({
   version,
   onTitleIndexChange,
-  editable = false,
-  onBlocksChange,
   generatingPhase,
   generatingTask
 }: {
   version: ManuscriptVersion | null;
   onTitleIndexChange?: (index: number) => void;
-  editable?: boolean;
-  onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   generatingPhase?: string;
   generatingTask?: string;
 }) {
   const sourceBlocks = version?.blocks ?? [];
-  const [draftBlocks, setDraftBlocks] = useState<ManuscriptBlock[]>(() => cloneBlocks(sourceBlocks));
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [streamLines, setStreamLines] = useState<string[]>([]);
-
-  useEffect(() => {
-    setDraftBlocks(cloneBlocks(sourceBlocks));
-  }, [version?.id]);
 
   useEffect(() => {
     if (!generatingPhase) {
@@ -156,27 +96,10 @@ export default function StudioOutputManuscript({
     });
   }, [generatingPhase, generatingTask]);
 
-  const scheduleSave = useCallback(
-    (next: ManuscriptBlock[]) => {
-      if (!editable || !onBlocksChange) return;
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => onBlocksChange(next), 500);
-    },
-    [editable, onBlocksChange]
-  );
-
-  useEffect(
-    () => () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    },
-    []
-  );
-
   if (generatingPhase) {
     const label =
       studioComposeProgressLabel({ runPhase: generatingPhase }) ||
-      normalizeStudioRunPhase(generatingPhase) ||
-      generatingPhase.trim() ||
+      humanizeComposePhase(generatingPhase) ||
       "写稿中…";
     return (
       <div className="text-left">
@@ -197,37 +120,22 @@ export default function StudioOutputManuscript({
     );
   }
 
-  const blocks = editable ? draftBlocks : sourceBlocks;
-  if (!blocks.length) return null;
+  if (!sourceBlocks.length) return null;
 
-  const titles = manuscriptTitleBlocks(blocks);
+  const titles = manuscriptTitleBlocks(sourceBlocks);
   const titleIndex = resolvePrimaryTitleIndex(version, titles.length);
-  const primaryTitle = titles[titleIndex] ?? titles[0];
-  const body = resolveBodyForTitleIndex(blocks, titleIndex);
-  const hashtags = blocks.find((b) => b.kind === "hashtags");
-  const cover = blocks.find((b) => b.kind === "coverBrief");
+  const variant = resolveManuscriptVariant(sourceBlocks, titleIndex);
   const showBestOf = titles.length > 1 && Boolean(onTitleIndexChange);
-
-  function patchBlock(nextBlock: ManuscriptBlock) {
-    const next = draftBlocks.map((b) => {
-      if (nextBlock.kind === "title" || nextBlock.kind === "body") {
-        return b.id === nextBlock.id ? nextBlock : b;
-      }
-      return b.kind === nextBlock.kind ? nextBlock : b;
-    });
-    setDraftBlocks(next);
-    scheduleSave(next);
-  }
-
   const flowText = buildManuscriptFlowText({
-    title: primaryTitle?.text,
-    body: body?.text,
-    hashtags: hashtags && hashtags.kind === "hashtags" ? hashtags.tags : undefined,
-    cover: cover && cover.kind === "coverBrief" ? cover.text : undefined
+    title: variant.title,
+    body: variant.body,
+    interaction: variant.interaction,
+    hashtags: variant.hashtags,
+    cover: variant.cover
   });
 
   return (
-    <article className="min-w-0 text-left">
+    <article className="min-w-0 select-text text-left">
       {showBestOf ? (
         <BestOfTabs
           titles={titles}
@@ -236,56 +144,19 @@ export default function StudioOutputManuscript({
         />
       ) : null}
 
-      {editable ? (
-        <div className="space-y-2">
-          {!showBestOf && primaryTitle ? (
-            <AutoGrowTextarea
-              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_TITLE}`}
-              value={primaryTitle.text}
-              onChange={(text) => patchBlock({ ...primaryTitle, text })}
-            />
-          ) : null}
-          {body ? (
-            <AutoGrowTextarea
-              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_BODY}`}
-              value={body.text}
-              onChange={(text) => patchBlock({ ...body, text })}
-            />
-          ) : null}
-          {hashtags && hashtags.kind === "hashtags" ? (
-            <input
-              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_HASHTAGS}`}
-              value={hashtagLine(hashtags.tags)}
-              onChange={(e) => {
-                const tags = e.target.value
-                  .split(/[\s,#]+/)
-                  .map((t) => t.replace(/^#/, "").trim())
-                  .filter(Boolean);
-                patchBlock({ ...hashtags, tags });
-              }}
-            />
-          ) : null}
-          {cover && cover.kind === "coverBrief" ? (
-            <input
-              className={`w-full border-0 bg-transparent p-0 outline-none ${STUDIO_MANUSCRIPT_META}`}
-              value={cover.text}
-              onChange={(e) => patchBlock({ ...cover, text: e.target.value })}
-            />
-          ) : null}
-        </div>
-      ) : flowText ? (
-        <p className={STUDIO_MANUSCRIPT_BODY}>{flowText}</p>
+      {flowText ? (
+        <p className={`${STUDIO_MANUSCRIPT_BODY} cursor-text`}>{flowText}</p>
       ) : null}
 
       {version ? (
         <div className="mt-2 flex justify-start">
           <button
             type="button"
-            title="复制全部（含话题）"
-            aria-label="复制全部（含话题）"
+            title="复制全部（含话题与互动）"
+            aria-label="复制全部（含话题与互动）"
             className="rounded p-1 text-muted hover:text-ink"
             onClick={() =>
-              void navigator.clipboard.writeText(manuscriptCopyAll(blocks, titleIndex))
+              void navigator.clipboard.writeText(manuscriptCopyAll(sourceBlocks, titleIndex))
             }
           >
             <IconCopy />

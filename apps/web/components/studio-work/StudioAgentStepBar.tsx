@@ -1,6 +1,7 @@
 "use client";
 
 import type { StudioAgentStep } from "../../lib/studioAgentSteps";
+import { humanizeAgentStepLabel } from "../../lib/studioAgentReadable";
 
 export default function StudioAgentStepBar({ steps }: { steps: StudioAgentStep[] }) {
   if (!steps.length) return null;
@@ -15,7 +16,9 @@ export default function StudioAgentStepBar({ steps }: { steps: StudioAgentStep[]
         {steps.map((step) => (
           <li key={step.id} className="flex items-center gap-2 text-[11px] leading-snug">
             <StepDot status={step.status} />
-            <span className={step.status === "done" ? "text-ink" : "text-muted"}>{step.label}</span>
+            <span className={step.status === "done" ? "text-ink" : "text-muted"}>
+              {humanizeAgentStepLabel(step)}
+            </span>
             {step.tool && step.tool !== step.label ? (
               <span className="text-[10px] text-muted/80">{step.tool}</span>
             ) : null}

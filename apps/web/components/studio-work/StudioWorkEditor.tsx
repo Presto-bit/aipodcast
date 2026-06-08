@@ -21,7 +21,8 @@ import {
 import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
-import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
+import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE, buildStudioComposeWrapUp } from "../../lib/studioTimeline";
+import { manuscriptTitleBlocks } from "../../lib/studioManuscriptView";
 import { composeTaskSentenceFromTurns } from "../../lib/studioWorkTask";
 import type {
   ManuscriptBlock,
@@ -316,10 +317,22 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           return;
         }
 
+        const variantCount = manuscriptTitleBlocks(blocks).length || 3;
+        const wrapUpTurn: StudioAgentTurn = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: buildStudioComposeWrapUp(
+            result.tool === "revise" ? "revise" : "compose",
+            variantCount
+          ),
+          createdAt: Date.now()
+        };
+
         persist(
           finishStudioRun(
             {
               ...after,
+              agentTurns: [...(after.agentTurns ?? []), wrapUpTurn],
               status: "ready",
               plan: result.tool === "compose" ? undefined : after.plan,
               intake: result.tool === "compose" ? intake : after.intake,
@@ -345,7 +358,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             result.tool === "revise" ? "改版完成" : "稿件已生成"
           )
         );
-        setAgentRouteHint(result.tool === "revise" ? "改版完成" : "写稿完成");
+        setAgentRouteHint("");
         clearStreamingSurface();
       } catch (err) {
         if (ac.signal.aborted) return;

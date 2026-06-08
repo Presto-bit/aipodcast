@@ -39,6 +39,7 @@ export type ManuscriptBlock =
   | { id: string; kind: "title"; text: string; evidence?: BlockEvidence }
   | { id: string; kind: "body"; text: string; evidence?: BlockEvidence }
   | { id: string; kind: "hashtags"; tags: string[] }
+  | { id: string; kind: "interaction"; text: string }
   | { id: string; kind: "coverBrief"; text: string };
 
 export type ManuscriptVersion = {

@@ -79,12 +79,6 @@ export default function StudioDraftCanvas({
     setMobileVersionOpen(false);
   }, [work.activeVersionId, compareMode]);
 
-  const editable =
-    variant === "ready" &&
-    work.status === "ready" &&
-    !busy &&
-    Boolean(onBlocksChange);
-
   const patchFooter =
     compareMode && work.pendingPatch && onApplyPatch && onDiscardPatch ? (
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
@@ -147,8 +141,6 @@ export default function StudioDraftCanvas({
       bodyText={variant === "active" ? streamingBodyText : null}
       onCancel={variant === "active" ? onCancelStream : undefined}
       version={variant === "ready" || variant === "diff" ? activeVersion : null}
-      editable={editable}
-      onBlocksChange={onBlocksChange}
       onTitleIndexChange={onTitleIndexChange}
       flowLayout={flowLayout}
     />

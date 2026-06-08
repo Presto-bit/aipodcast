@@ -51,6 +51,8 @@ export type XhsContent = {
   body: string;
   /** best-of-3 正文变体，与 titles 一一对应 */
   bodies?: string[];
+  /** 与 bodies 对应的互动引导句 */
+  interactions?: string[];
   hashtags: string[];
   cover: XhsCoverSpec;
 };

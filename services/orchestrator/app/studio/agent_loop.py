@@ -241,7 +241,7 @@ def run_agent_tool_loop(
             turns=turns,
         )
         decision = _apply_mode_guard(decision, agent_mode=agent_mode, message=message)
-        _emit(emit_step, "route", f"执行 {decision.tool}", "done", decision.tool)
+        _emit(emit_step, "route", "开始写稿" if decision.tool == "compose" else "开始改版", "done", decision.tool)
         return AgentLoopResult(
             decision=decision,
             manuscript_excerpt=manuscript_excerpt,
@@ -257,5 +257,11 @@ def run_agent_tool_loop(
         turns=turns,
         agent_mode=agent_mode,
     )
-    _emit(emit_step, "route", f"执行 {decision.tool}", "done", decision.tool)
+    _emit(
+        emit_step,
+        "route",
+        "开始写稿" if decision.tool == "compose" else "开始改版" if decision.tool == "revise" else "准备回复",
+        "done",
+        decision.tool,
+    )
     return AgentLoopResult(decision=decision, manuscript_excerpt=manuscript_excerpt, steps=steps)

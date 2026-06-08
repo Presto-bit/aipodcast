@@ -1,7 +1,8 @@
 import { normalizeStudioComposeBrief } from "../studioComposeBrief";
 import {
   buildManuscriptFlowText,
-  resolveBodyForTitleIndex
+  resolveBodyForTitleIndex,
+  resolveManuscriptVariant
 } from "../studioManuscriptView";
 import type { ManuscriptBlock } from "../studioWorkTypes";
 
@@ -27,8 +28,13 @@ const blocks: ManuscriptBlock[] = [
 
 assert(resolveBodyForTitleIndex(blocks, 1)?.text === "正文B", "body by index");
 assert(
-  buildManuscriptFlowText({ title: "标题A", body: "行1\n\n行2" }) === "标题A 行1 行2",
-  "flatten flow"
+  resolveManuscriptVariant(blocks, 1).body === "正文B",
+  "variant body by index"
+);
+assert(
+  buildManuscriptFlowText({ title: "标题A", body: "行1\n\n行2", interaction: "评论区聊聊" }) ===
+    "标题A 行1 行2 评论区聊聊",
+  "flatten flow with interaction"
 );
 
 console.log("studioManuscriptView.test.ts: ok");

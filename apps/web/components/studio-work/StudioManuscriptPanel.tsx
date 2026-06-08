@@ -53,9 +53,11 @@ function BlockCard({
                 ? "正文"
                 : block.kind === "hashtags"
                   ? "话题"
-                  : "封面说明"}
+                  : block.kind === "interaction"
+                    ? "互动"
+                    : "封面说明"}
           </span>
-          {block.kind !== "hashtags" && block.kind !== "coverBrief" ? (
+          {block.kind === "title" || block.kind === "body" ? (
             <EvidenceTag evidence={block.evidence} />
           ) : null}
         </div>
@@ -63,7 +65,7 @@ function BlockCard({
           复制
         </button>
       </div>
-      {block.kind === "title" || block.kind === "body" ? (
+      {block.kind === "title" || block.kind === "body" || block.kind === "interaction" ? (
         <p className="mt-2 whitespace-pre-wrap text-[15px] leading-[1.72] text-ink">{block.text}</p>
       ) : null}
       {block.kind === "hashtags" ? (

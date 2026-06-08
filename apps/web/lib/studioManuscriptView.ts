@@ -25,6 +25,60 @@ export function resolveBodyForTitleIndex(
   return bodies[0];
 }
 
+/** 按 best-of 下标取话题；兼容旧稿单个 hashtags 块 */
+export function resolveHashtagsForTitleIndex(
+  blocks: ManuscriptBlock[],
+  titleIndex: number
+): string[] {
+  const indexed = blocks.find(
+    (b): b is Extract<ManuscriptBlock, { kind: "hashtags" }> =>
+      b.kind === "hashtags" && b.id === `hashtags-${titleIndex}`
+  );
+  if (indexed) return indexed.tags;
+  const shared = blocks.find((b): b is Extract<ManuscriptBlock, { kind: "hashtags" }> => b.kind === "hashtags");
+  return shared?.tags ?? [];
+}
+
+export function resolveInteractionForTitleIndex(
+  blocks: ManuscriptBlock[],
+  titleIndex: number
+): string {
+  const indexed = blocks.find(
+    (b): b is Extract<ManuscriptBlock, { kind: "interaction" }> =>
+      b.kind === "interaction" && b.id === `interaction-${titleIndex}`
+  );
+  if (indexed) return indexed.text;
+  const shared = blocks.find((b): b is Extract<ManuscriptBlock, { kind: "interaction" }> => b.kind === "interaction");
+  return shared?.text ?? "";
+}
+
+export type ManuscriptVariantSlice = {
+  title: string;
+  body: string;
+  hashtags: string[];
+  interaction: string;
+  cover: string;
+};
+
+export function resolveManuscriptVariant(
+  blocks: ManuscriptBlock[],
+  titleIndex: number
+): ManuscriptVariantSlice {
+  const titles = manuscriptTitleBlocks(blocks);
+  const active =
+    titles.length > 0 ? Math.max(0, Math.min(titleIndex, titles.length - 1)) : 0;
+  const title = titles[active]?.text ?? titles[0]?.text ?? "";
+  const body = resolveBodyForTitleIndex(blocks, active)?.text ?? "";
+  const cover = blocks.find((b) => b.kind === "coverBrief");
+  return {
+    title,
+    body,
+    hashtags: resolveHashtagsForTitleIndex(blocks, active),
+    interaction: resolveInteractionForTitleIndex(blocks, active),
+    cover: cover && cover.kind === "coverBrief" ? cover.text : ""
+  };
+}
+
 export function resolvePrimaryTitleIndex(version: { primaryTitleIndex?: number } | null, titleCount: number): number {
   const idx = version?.primaryTitleIndex ?? 0;
   if (titleCount <= 0) return 0;
@@ -66,11 +120,14 @@ export function buildManuscriptFlowText(parts: {
   title?: string;
   body?: string;
   hashtags?: string[];
+  interaction?: string;
   cover?: string;
+  includeTitle?: boolean;
 }): string {
   const segments: string[] = [];
-  if (parts.title?.trim()) segments.push(parts.title.trim());
+  if (parts.includeTitle !== false && parts.title?.trim()) segments.push(parts.title.trim());
   if (parts.body?.trim()) segments.push(flattenManuscriptDisplayText(parts.body));
+  if (parts.interaction?.trim()) segments.push(flattenManuscriptDisplayText(parts.interaction));
   if (parts.hashtags?.length) {
     segments.push(parts.hashtags.map((t) => `#${t.replace(/^#/, "")}`).join(" "));
   }

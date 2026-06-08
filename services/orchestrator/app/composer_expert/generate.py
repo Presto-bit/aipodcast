@@ -184,6 +184,7 @@ def _compose_expert_writer_instructions(
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
         "titles 数组须恰好 3 个备选标题（痛点型/好奇型/数字型各一，每个≤20字）。",
         "bodies 数组须恰好 3 个正文变体，与 titles 顺序一一对应（痛点向/好奇向/数字向），每篇角度与写法须明显不同。",
+        "interactions 数组须恰好 3 个互动引导句，与 titles/bodies 一一对应，语气随各方向变化。",
         "开头前两行须有强钩子：具体场景、痛点问句、数字结果或反常识，禁止「很多人/近年来」式空泛开场。",
         "正文段内用句号衔接，避免连续空行；可用 sections 或 body，但优先输出 bodies 数组。",
         f"任务核心：{task_sentence.strip()[:300]}",
@@ -320,6 +321,21 @@ def _expand_bodies_to_three(bodies: list[str], titles: list[str], fallback: str)
             out.append(seed)
         elif title and title not in seed[: min(len(title) + 8, len(seed))]:
             out.append(f"{title} {seed}")
+        else:
+            out.append(seed)
+    return out[:3]
+
+
+def _expand_interactions_to_three(interactions: list[str], fallback: str) -> list[str]:
+    """模型常只回 1 个 interaction：补齐 3 套以配合 best-of Tab。"""
+    cleaned = [str(x).strip() for x in interactions if str(x).strip()]
+    seed = cleaned[0] if cleaned else str(fallback or "").strip()
+    if not seed:
+        return []
+    out: list[str] = []
+    for i in range(3):
+        if i < len(cleaned):
+            out.append(cleaned[i])
         else:
             out.append(seed)
     return out[:3]
@@ -877,12 +893,21 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
             raw_bodies_count = 1
     formatted_bodies = _expand_bodies_to_three(formatted_bodies, titles[:3], single_body)
     primary_body = formatted_bodies[0] if formatted_bodies else single_body or titles[0]
+    interaction_single = str(pack.get("interaction") or "").strip()
+    formatted_interactions: list[str] = []
+    interactions_raw = pack.get("interactions")
+    if isinstance(interactions_raw, list):
+        formatted_interactions = [str(x).strip() for x in interactions_raw if str(x).strip()]
+    if not formatted_interactions and interaction_single:
+        formatted_interactions = [interaction_single]
+    formatted_interactions = _expand_interactions_to_three(formatted_interactions, interaction_single)
     return {
         "titles": titles[:3],
         "body": primary_body,
         "bodies": formatted_bodies[:3],
         "_rawBodiesCount": raw_bodies_count or len(formatted_bodies),
         "hashtags": hashtags,
+        "interactions": formatted_interactions[:3],
         "cover": {
             "headline": headline,
             "layout": "text_center",

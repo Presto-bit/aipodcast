@@ -32,12 +32,16 @@ def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[d
     cover = content.get("cover") if isinstance(content.get("cover"), dict) else {}
     cover_hook = str(cover.get("headline") or cover.get("hook") or "").strip()
     bodies = content.get("bodies") if isinstance(content.get("bodies"), list) else []
+    interactions = content.get("interactions") if isinstance(content.get("interactions"), list) else []
+    interaction = str(content.get("interaction") or "").strip()
     return partial_social_to_manuscript_blocks(
         {
             "titles": titles,
             "bodies": bodies,
             "body": body,
             "tags": tags,
+            "interactions": interactions,
+            "interaction": interaction,
             "cover_hook": cover_hook,
         }
     )
@@ -46,27 +50,46 @@ def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[d
 def partial_social_to_manuscript_blocks(partial: dict[str, Any]) -> list[dict[str, Any]]:
     """将流式 JSON 片段转为前端 ManuscriptBlock 形状。"""
     blocks: list[dict[str, Any]] = []
-    titles = partial.get("titles")
-    if isinstance(titles, list):
-        for i, raw in enumerate(titles[:3]):
+    titles: list[str] = []
+    titles_raw = partial.get("titles")
+    if isinstance(titles_raw, list):
+        for i, raw in enumerate(titles_raw[:3]):
             text = str(raw or "").strip()
             if text:
+                titles.append(text)
                 blocks.append({"id": f"title-{i}", "kind": "title", "text": text, "evidence": "model"})
+    bodies_count = 0
     bodies_raw = partial.get("bodies")
     if isinstance(bodies_raw, list) and any(str(b).strip() for b in bodies_raw):
         for i, raw in enumerate(bodies_raw[:3]):
             text = str(raw or "").strip()
             if text:
+                bodies_count += 1
                 blocks.append({"id": f"body-{i}", "kind": "body", "text": text, "evidence": "model"})
     else:
         body = str(partial.get("body") or "").strip()
         if body:
+            bodies_count = 1
             blocks.append({"id": "body-0", "kind": "body", "text": body, "evidence": "model"})
     tags_raw = partial.get("tags")
+    tags: list[str] = []
     if isinstance(tags_raw, list):
         tags = [str(t).replace("#", "").strip() for t in tags_raw if str(t).strip()]
+    interactions_raw = partial.get("interactions")
+    interactions: list[str] = []
+    if isinstance(interactions_raw, list):
+        interactions = [str(x).strip() for x in interactions_raw if str(x).strip()]
+    if not interactions:
+        single = str(partial.get("interaction") or "").strip()
+        if single:
+            interactions = [single]
+    variant_count = max(len(titles), bodies_count, len(interactions), 1)
+    for i in range(min(3, variant_count)):
         if tags:
-            blocks.append({"id": "hashtags", "kind": "hashtags", "tags": tags[:12]})
+            blocks.append({"id": f"hashtags-{i}", "kind": "hashtags", "tags": tags[:12]})
+        interaction = interactions[i] if i < len(interactions) else (interactions[0] if interactions else "")
+        if interaction:
+            blocks.append({"id": f"interaction-{i}", "kind": "interaction", "text": interaction})
     cover_hook = str(partial.get("cover_hook") or partial.get("theme") or "").strip()
     if cover_hook:
         blocks.append({"id": "coverBrief", "kind": "coverBrief", "text": cover_hook[:240]})
