@@ -162,6 +162,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           id: crypto.randomUUID(),
           role: "assistant",
           content: tool === "generate" ? STUDIO_ACK_GENERATE : STUDIO_ACK_REVISE,
+          intent: "compose_ack",
           createdAt: Date.now()
         };
         const ackTurns = [...params.prefixTurns, ackTurn];
@@ -325,6 +326,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             result.tool === "revise" ? "revise" : "compose",
             variantCount
           ),
+          intent: "compose_wrap_up",
           createdAt: Date.now()
         };
 

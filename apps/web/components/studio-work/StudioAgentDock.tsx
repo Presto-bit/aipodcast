@@ -50,6 +50,7 @@ import StudioAgentStepBar from "./StudioAgentStepBar";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
 import StudioEphemeralHint from "./StudioEphemeralHint";
+import StudioEphemeralPanel from "./StudioEphemeralPanel";
 
 const QUICK_PROMPTS = [
   "我想写一篇清单体内容，受众是产品新人",
@@ -88,6 +89,7 @@ function appendToolAckTurn(
       id: crypto.randomUUID(),
       role: "assistant",
       content,
+      intent: "compose_ack",
       createdAt: Date.now()
     }
   ];
@@ -742,18 +744,20 @@ export default function StudioAgentDock({
 
   const agentOutputStatus = showAgentOutputStatus ? (
     <div className="space-y-2">
-      {agentSteps.length ? <StudioAgentStepBar steps={agentSteps} /> : null}
-      {agentRouteHint || ephemeralHint ? (
-        <StudioEphemeralHint text={agentRouteHint || ephemeralHint} />
-      ) : null}
-      {jobRunning ? (
-        <p className="flex items-center gap-1.5 text-[11px] text-brand">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
-          {composeProgressLabel}
-        </p>
-      ) : agentBusy && dockPhase ? (
-        <p className="text-[11px] text-brand">{dockPhase}</p>
-      ) : null}
+      <StudioEphemeralPanel active={jobRunning || agentBusy} ttlMs={4000}>
+        {agentSteps.length ? <StudioAgentStepBar steps={agentSteps} /> : null}
+        {agentRouteHint || ephemeralHint ? (
+          <StudioEphemeralHint text={agentRouteHint || ephemeralHint} ttlMs={4000} />
+        ) : null}
+        {jobRunning ? (
+          <p className="flex items-center gap-1.5 text-[11px] text-brand">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
+            {composeProgressLabel}
+          </p>
+        ) : agentBusy && dockPhase ? (
+          <p className="text-[11px] text-brand">{dockPhase}</p>
+        ) : null}
+      </StudioEphemeralPanel>
     </div>
   ) : null;
 

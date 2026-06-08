@@ -53,11 +53,32 @@ const work: StudioWork = {
 assert(resolveJobAnchorTurnId(work.agentTurns, "generate") === ackId, "resolve ack");
 
 const items = buildStudioTimeline(work);
-assert(items.length === 2, "group + manuscript");
-assert(items[0]?.kind === "turn-group", "first is dialogue");
-assert(items[1]?.kind === "manuscript", "manuscript after ack group");
-if (items[1]?.kind === "manuscript") {
-  assert(items[1].version?.id === "v1", "version linked to run");
+assert(items.length === 3, "user + ack + manuscript");
+assert(items[0]?.kind === "dialogue" && items[0].turn.role === "user", "first is user");
+assert(items[1]?.kind === "dialogue" && items[1].ephemeral === true, "ack ephemeral");
+assert(items[2]?.kind === "manuscript", "manuscript after ack");
+if (items[2]?.kind === "manuscript") {
+  assert(items[2].version?.id === "v1", "version linked to run");
+}
+
+const wrapWork: StudioWork = {
+  ...work,
+  agentTurns: [
+    ...(work.agentTurns ?? []),
+    {
+      id: "wrap-1",
+      role: "assistant",
+      content: "写稿完成。\n接下来你可以：",
+      intent: "compose_wrap_up",
+      createdAt: 3
+    }
+  ]
+};
+const wrapItems = buildStudioTimeline(wrapWork);
+assert(wrapItems.length === 4, "user + ack + manuscript + wrap-up");
+assert(wrapItems[3]?.kind === "dialogue", "wrap-up in timeline order after manuscript");
+if (wrapItems[3]?.kind === "dialogue") {
+  assert(wrapItems[3].turn.intent === "compose_wrap_up", "wrap-up turn");
 }
 
 console.log("studioTimeline.test.ts: ok");

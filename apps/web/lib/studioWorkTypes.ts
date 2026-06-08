@@ -9,7 +9,9 @@ export type StudioAgentIntent =
   | "ops_strategy"
   | "manuscript_coach"
   | "revise_coach"
-  | "general";
+  | "general"
+  | "compose_ack"
+  | "compose_wrap_up";
 
 export type StudioAgentTurn = {
   id: string;

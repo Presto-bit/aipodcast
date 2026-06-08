@@ -16,7 +16,9 @@ const INTENT_LABEL: Record<StudioAgentIntent, string> = {
   ops_strategy: "运营策略",
   manuscript_coach: "稿件解读",
   revise_coach: "改版建议",
-  general: "创作助手"
+  general: "创作助手",
+  compose_ack: "开始写稿",
+  compose_wrap_up: "写稿完成"
 };
 
 export function studioAgentIntentLabel(intent: StudioAgentIntent): string {

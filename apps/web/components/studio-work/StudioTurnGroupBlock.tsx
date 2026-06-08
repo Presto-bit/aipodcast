@@ -1,7 +1,9 @@
 "use client";
 
+import { isStudioComposeAckTurn } from "../../lib/studioTimeline";
 import type { StudioAgentTurn } from "../../lib/studioWorkTypes";
 import StudioAgentMessage from "./StudioAgentMessage";
+import StudioEphemeralHint from "./StudioEphemeralHint";
 
 export default function StudioTurnGroupBlock({
   userTurn,
@@ -26,13 +28,17 @@ export default function StudioTurnGroupBlock({
         canEdit={canEdit}
         onEditUserTurn={onEditUserTurn}
       />
-      {assistantTurns.map((turn) => (
-        <StudioAgentMessage
-          key={turn.id}
-          turn={turn}
-          streamingPhase={turn.streaming ? streamingPhase : undefined}
-        />
-      ))}
+      {assistantTurns.map((turn) =>
+        isStudioComposeAckTurn(turn) ? (
+          <StudioEphemeralHint key={turn.id} text={turn.content} ttlMs={4000} />
+        ) : (
+          <StudioAgentMessage
+            key={turn.id}
+            turn={turn}
+            streamingPhase={turn.streaming ? streamingPhase : undefined}
+          />
+        )
+      )}
     </div>
   );
 }

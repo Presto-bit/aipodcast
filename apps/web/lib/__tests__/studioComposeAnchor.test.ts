@@ -46,11 +46,11 @@ const work: StudioWork = {
 };
 
 const items = buildStudioTimeline(work);
-assert(items.length === 2, "turn group + running manuscript card");
-assert(items[1]?.kind === "manuscript", "manuscript card present");
-if (items[1]?.kind === "manuscript") {
-  assert(items[1].run.id === runId, "running run linked");
-  assert(items[1].run.status === "running", "run still running");
+assert(items.length === 3, "user + ack + running manuscript card");
+assert(items[2]?.kind === "manuscript", "manuscript card present");
+if (items[2]?.kind === "manuscript") {
+  assert(items[2].run.id === runId, "running run linked");
+  assert(items[2].run.status === "running", "run still running");
 }
 
 console.log("studioComposeAnchor.test.ts: ok");

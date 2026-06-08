@@ -1,5 +1,4 @@
 import { buildStudioDialogueTurnGroups } from "./studioDialogueTurnGroups";
-import type { StudioDialogueTurnGroup } from "./studioDialogueTurnGroups";
 import type {
   ManuscriptVersion,
   PendingPatch,
@@ -11,21 +10,37 @@ import type {
 export const STUDIO_ACK_GENERATE = "收到，开始写稿…";
 export const STUDIO_ACK_REVISE = "收到，按你的意见改版…";
 
-/** Cursor 式写稿/改版收尾（出现在成稿下方的助手消息） */
+export function isStudioComposeAckTurn(turn: StudioAgentTurn): boolean {
+  return (
+    turn.intent === "compose_ack" ||
+    turn.content === STUDIO_ACK_GENERATE ||
+    turn.content === STUDIO_ACK_REVISE
+  );
+}
+
+export function isStudioComposeWrapUpTurn(turn: StudioAgentTurn): boolean {
+  if (turn.intent === "compose_wrap_up") return true;
+  const head = turn.content.trim().slice(0, 8);
+  return head.startsWith("写稿完成") || head.startsWith("改版完成");
+}
+
+/** Cursor 式写稿/改版收尾（按时间线排在成稿之后） */
 export function buildStudioComposeWrapUp(tool: "compose" | "revise", variantCount = 3): string {
   if (tool === "revise") {
     return [
       "改版完成。",
-      "上方是最新成稿，你可以继续用一句话微调，例如：",
+      "你可以继续用一句话微调，例如：",
       "· 「再短一点，保留卖点」",
       "· 「语气更像博主聊天」",
       "· 「只改标题，正文别动」"
     ].join("\n");
   }
-  const n = Math.max(variantCount, 3);
+  const n = Math.max(variantCount, 2);
+  const tabHint =
+    n > 1 ? "点上方「痛点向 / 好奇向 / 数字向」可切换整篇文案，" : "";
   return [
     "写稿完成。",
-    `上方是 best of ${n} 三个方向（痛点 / 好奇 / 数字），点 Tab 可切换整篇文案（标题、正文、话题与互动句一起变）。`,
+    `${tabHint}标题、正文、互动与话题会一起切换。`,
     "接下来你可以：",
     "· 选一个方向继续改，例如「好奇向再口语一点」",
     "· 点击复制按钮带走成稿",
@@ -33,10 +48,13 @@ export function buildStudioComposeWrapUp(tool: "compose" | "revise", variantCoun
   ].join("\n");
 }
 
-export type StudioTimelineTurnItem = {
-  kind: "turn-group";
-  group: StudioDialogueTurnGroup;
+export type StudioTimelineDialogueItem = {
+  kind: "dialogue";
+  turn: StudioAgentTurn;
+  groupId: string;
   isActive: boolean;
+  userAnchor?: "active" | "history";
+  ephemeral?: boolean;
 };
 
 export type StudioTimelineManuscriptItem = {
@@ -48,7 +66,7 @@ export type StudioTimelineManuscriptItem = {
   isActiveVersion: boolean;
 };
 
-export type StudioTimelineItem = StudioTimelineTurnItem | StudioTimelineManuscriptItem;
+export type StudioTimelineItem = StudioTimelineDialogueItem | StudioTimelineManuscriptItem;
 
 /** 从对话中解析最近一次 generate/revise 确认句 id */
 export function resolveJobAnchorTurnId(
@@ -85,7 +103,7 @@ function runsByAnchor(work: StudioWork): Map<string, StudioRun[]> {
   return map;
 }
 
-/** 对话组 + 锚定稿件卡 → 纵向时间线 */
+/** 对话与锚定稿件卡按 agentTurns 顺序交错 → 纵向时间线 */
 export function buildStudioTimeline(
   work: StudioWork,
   turns: StudioAgentTurn[] = work.agentTurns,
@@ -98,13 +116,25 @@ export function buildStudioTimeline(
   const activeGroupId = groups[groups.length - 1]?.id;
 
   for (const group of groups) {
+    const isActive = group.id === activeGroupId;
+
     items.push({
-      kind: "turn-group",
-      group,
-      isActive: group.id === activeGroupId
+      kind: "dialogue",
+      turn: group.userTurn,
+      groupId: group.id,
+      isActive,
+      userAnchor: isActive ? "active" : "history"
     });
 
     for (const assistantTurn of group.assistantTurns) {
+      items.push({
+        kind: "dialogue",
+        turn: assistantTurn,
+        groupId: group.id,
+        isActive,
+        ephemeral: isStudioComposeAckTurn(assistantTurn)
+      });
+
       if (options?.hideManuscript) continue;
       const runs = anchors.get(assistantTurn.id) ?? [];
       for (const run of runs) {

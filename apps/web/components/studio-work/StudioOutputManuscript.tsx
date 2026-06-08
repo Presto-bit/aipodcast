@@ -3,17 +3,17 @@
 import { useEffect, useState } from "react";
 import { STUDIO_MANUSCRIPT_BODY } from "../../lib/studioOutputTypography";
 import {
-  buildManuscriptFlowText,
   manuscriptTitleBlocks,
   resolveManuscriptVariant,
-  resolvePrimaryTitleIndex,
-  studioTitleDirectionLabel
+  resolvePrimaryTitleIndex
 } from "../../lib/studioManuscriptView";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import { studioComposeProgressLabel } from "../../lib/studioComposeProgress";
 import { humanizeComposePhase } from "../../lib/studioAgentReadable";
-import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
+import type { ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
+import StudioEphemeralHint from "./StudioEphemeralHint";
+import StudioManuscriptReadable, { StudioVariantTabs } from "./StudioManuscriptReadable";
 
 function IconCopy({ className }: { className?: string }) {
   return (
@@ -33,38 +33,7 @@ function IconCopy({ className }: { className?: string }) {
   );
 }
 
-function BestOfTabs({
-  titles,
-  titleIndex,
-  onTitleIndexChange
-}: {
-  titles: ReturnType<typeof manuscriptTitleBlocks>;
-  titleIndex: number;
-  onTitleIndexChange: (index: number) => void;
-}) {
-  return (
-    <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <span className="text-[10px] text-muted">best of {titles.length}</span>
-      {titles.map((t, i) => (
-        <button
-          key={t.id}
-          type="button"
-          title={t.text}
-          className={`text-[11px] transition ${
-            i === titleIndex
-              ? "font-medium text-brand underline decoration-brand underline-offset-4"
-              : "text-muted hover:text-ink"
-          }`}
-          onClick={() => onTitleIndexChange(i)}
-        >
-          {studioTitleDirectionLabel(i)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** 输出区稿件：横向 best of N，整篇只读连续排版 */
+/** 输出区稿件：标题 chip 切换变体，结构化只读排版 */
 export default function StudioOutputManuscript({
   version,
   onTitleIndexChange,
@@ -77,23 +46,18 @@ export default function StudioOutputManuscript({
   generatingTask?: string;
 }) {
   const sourceBlocks = version?.blocks ?? [];
-  const [streamLines, setStreamLines] = useState<string[]>([]);
+  const [progressHint, setProgressHint] = useState("");
 
   useEffect(() => {
     if (!generatingPhase) {
-      setStreamLines([]);
+      setProgressHint("");
       return;
     }
     const taskLine = generatingTask?.trim()
       ? `任务：${generatingTask.trim().slice(0, 160)}`
-      : null;
+      : "";
     const phaseLine = phaseToGenerateStreamLine(generatingPhase);
-    setStreamLines((prev) => {
-      const next = [...prev];
-      if (taskLine && !next.includes(taskLine)) next.unshift(taskLine);
-      if (!next.includes(phaseLine)) next.push(phaseLine);
-      return next;
-    });
+    setProgressHint([taskLine, phaseLine].filter(Boolean).join(" · "));
   }, [generatingPhase, generatingTask]);
 
   if (generatingPhase) {
@@ -107,14 +71,14 @@ export default function StudioOutputManuscript({
           <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
           {label}
         </p>
-        {streamLines.length ? (
-          <p className={`mt-1.5 text-[11px] text-muted ${STUDIO_MANUSCRIPT_BODY}`}>
-            {streamLines.slice(-2).join(" · ")}
-          </p>
+        {progressHint ? (
+          <StudioEphemeralHint text={progressHint} ttlMs={4000} className="mt-1.5" />
         ) : (
-          <p className={`mt-1.5 text-[11px] text-muted ${STUDIO_MANUSCRIPT_BODY}`}>
-            通常需要 30 秒到 2 分钟，成稿会出现在下方
-          </p>
+          <StudioEphemeralHint
+            text="通常需要 30 秒到 2 分钟，成稿会出现在下方"
+            ttlMs={4000}
+            className="mt-1.5"
+          />
         )}
       </div>
     );
@@ -125,31 +89,22 @@ export default function StudioOutputManuscript({
   const titles = manuscriptTitleBlocks(sourceBlocks);
   const titleIndex = resolvePrimaryTitleIndex(version, titles.length);
   const variant = resolveManuscriptVariant(sourceBlocks, titleIndex);
-  const showBestOf = titles.length > 1 && Boolean(onTitleIndexChange);
-  const flowText = buildManuscriptFlowText({
-    title: variant.title,
-    body: variant.body,
-    interaction: variant.interaction,
-    hashtags: variant.hashtags,
-    cover: variant.cover
-  });
+  const showTabs = titles.length > 1 && Boolean(onTitleIndexChange);
 
   return (
-    <article className="min-w-0 select-text text-left">
-      {showBestOf ? (
-        <BestOfTabs
+    <div className="min-w-0 text-left">
+      {showTabs ? (
+        <StudioVariantTabs
           titles={titles}
           titleIndex={titleIndex}
           onTitleIndexChange={onTitleIndexChange!}
         />
       ) : null}
 
-      {flowText ? (
-        <p className={`${STUDIO_MANUSCRIPT_BODY} cursor-text`}>{flowText}</p>
-      ) : null}
+      <StudioManuscriptReadable variant={variant} />
 
       {version ? (
-        <div className="mt-2 flex justify-start">
+        <div className="mt-3 flex justify-start">
           <button
             type="button"
             title="复制全部（含话题与互动）"
@@ -163,6 +118,6 @@ export default function StudioOutputManuscript({
           </button>
         </div>
       ) : null}
-    </article>
+    </div>
   );
 }

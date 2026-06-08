@@ -3,19 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import {
-  buildManuscriptFlowText,
   manuscriptTitleBlocks,
   resolveBodyForTitleIndex,
-  resolveManuscriptVariant,
-  studioTitleDirectionLabel
+  resolveManuscriptVariant
 } from "../../lib/studioManuscriptView";
-import { STUDIO_STREAM_BODY, STUDIO_STREAM_CURSOR } from "../../lib/studioOutputTypography";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
-
-function StreamCursor() {
-  return <span className={STUDIO_STREAM_CURSOR} aria-hidden />;
-}
+import StudioEphemeralHint from "./StudioEphemeralHint";
+import StudioManuscriptReadable, { StudioVariantTabs } from "./StudioManuscriptReadable";
 
 export type StudioStreamingVariant = "idle" | "active" | "ready" | "diff";
 
@@ -41,7 +36,7 @@ export default function StudioStreamingSurface({
   onTitleIndexChange?: (index: number) => void;
   flowLayout?: boolean;
 }) {
-  const [streamLines, setStreamLines] = useState<string[]>([]);
+  const [streamHint, setStreamHint] = useState("");
   const [previewIndex, setPreviewIndex] = useState(0);
 
   const isActive = variant === "active";
@@ -71,12 +66,7 @@ export default function StudioStreamingSurface({
       ? `任务 · ${taskSentence.trim().slice(0, 120)}`
       : null;
     const phaseLine = phaseToGenerateStreamLine(label);
-    setStreamLines((prev) => {
-      const next = [...prev];
-      if (taskLine && !next.includes(taskLine)) next.unshift(taskLine);
-      if (!next.includes(phaseLine)) next.push(phaseLine);
-      return next.slice(-6);
-    });
+    setStreamHint([taskLine, phaseLine].filter(Boolean).join(" · "));
   }, [phase, taskSentence, isReadyLike]);
 
   if (isReadyLike && version) {
@@ -89,13 +79,9 @@ export default function StudioStreamingSurface({
     if (!hasContent) {
       return (
         <div className="text-left">
-          {streamLines.length ? (
-            <p className="text-[13px] leading-relaxed text-muted">{streamLines.join(" · ")}</p>
-          ) : null}
+          {streamHint ? <StudioEphemeralHint text={streamHint} ttlMs={4000} /> : null}
           {isActive ? (
-            <p className={`mt-2 ${STUDIO_STREAM_BODY} text-muted/70`}>
-              <StreamCursor />
-            </p>
+            <p className="mt-2 text-[13px] text-muted/70">正在撰写…</p>
           ) : (
             <p className="text-[13px] text-muted">准备根据你的需求撰写笔记…</p>
           )}
@@ -104,57 +90,29 @@ export default function StudioStreamingSurface({
     }
 
     const slice = resolveManuscriptVariant(displayBlocks, activeIndex);
-    const streamBody = displayBody || slice.body;
-    const flowText = buildManuscriptFlowText({
-      title: slice.title,
-      body: streamBody,
-      interaction: slice.interaction,
-      hashtags: slice.hashtags,
-      cover: slice.cover
-    });
+    const streamVariant = {
+      ...slice,
+      body: displayBody || slice.body
+    };
 
     return (
-      <article className="text-left">
-        {streamLines.length > 1 ? (
-          <p className="mb-2 text-[11px] leading-snug text-muted/90">
-            {streamLines.slice(-2).join(" · ")}
-          </p>
+      <div className="text-left">
+        {streamHint ? (
+          <StudioEphemeralHint text={streamHint} ttlMs={4000} className="mb-2" />
         ) : null}
 
         {titles.length > 1 ? (
-          <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="text-[10px] text-muted">best of {titles.length}</span>
-            {titles.map((t, i) => (
-              <button
-                key={t.id}
-                type="button"
-                title={t.text}
-                className={`text-[11px] transition ${
-                  i === activeIndex
-                    ? "font-medium text-brand underline decoration-brand underline-offset-4"
-                    : "text-muted hover:text-ink"
-                }`}
-                onClick={() => {
-                  setPreviewIndex(i);
-                  onTitleIndexChange?.(i);
-                }}
-              >
-                {studioTitleDirectionLabel(i)}
-              </button>
-            ))}
-          </div>
+          <StudioVariantTabs
+            titles={titles}
+            titleIndex={activeIndex}
+            onTitleIndexChange={(i) => {
+              setPreviewIndex(i);
+              onTitleIndexChange?.(i);
+            }}
+          />
         ) : null}
 
-        {flowText ? (
-          <p className={STUDIO_STREAM_BODY}>
-            {flowText}
-            {isActive ? <StreamCursor /> : null}
-          </p>
-        ) : isActive ? (
-          <p className={`${STUDIO_STREAM_BODY} text-muted/70`}>
-            <StreamCursor />
-          </p>
-        ) : null}
+        <StudioManuscriptReadable variant={streamVariant} trailingCursor={isActive} />
 
         {onCancel && isActive ? (
           <button
@@ -165,7 +123,7 @@ export default function StudioStreamingSurface({
             停止
           </button>
         ) : null}
-      </article>
+      </div>
     );
   }
 

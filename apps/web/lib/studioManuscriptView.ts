@@ -111,6 +111,53 @@ export function studioTitleDirectionLabel(index: number): string {
   return STUDIO_TITLE_DIRECTION_LABELS[index] ?? `方向 ${index + 1}`;
 }
 
+/** 方向 Tab 副文案，增强可读性 */
+export const STUDIO_TITLE_DIRECTION_HINTS = ["直击用户痛点", "激发好奇心", "用数字说话"] as const;
+
+export function studioTitleDirectionHint(index: number): string {
+  return STUDIO_TITLE_DIRECTION_HINTS[index] ?? "";
+}
+
+export type ManuscriptBodySegment =
+  | { kind: "paragraph"; text: string }
+  | { kind: "list"; items: string[] };
+
+const BODY_LIST_LINE_RE = /^[\s·•\-*①②③④⑤⑥⑦⑧⑨⑩\d+[\].、)]/;
+
+function splitBodyListItems(text: string): string[] {
+  return text
+    .split(/\n+/)
+    .map((line) => line.replace(/^[\s·•\-*]+/, "").replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/, "").trim())
+    .filter(Boolean);
+}
+
+/** 正文分段：保留段落换行，识别清单体 */
+export function parseManuscriptBodySegments(body: string): ManuscriptBodySegment[] {
+  const chunks = splitXhsBodyParagraphs(body);
+  const segments: ManuscriptBodySegment[] = [];
+
+  for (const chunk of chunks) {
+    const lines = chunk.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length > 1 && lines.every((line) => BODY_LIST_LINE_RE.test(line))) {
+      segments.push({ kind: "list", items: splitBodyListItems(chunk) });
+      continue;
+    }
+    if (lines.length === 1 && /[·•]/.test(lines[0]!)) {
+      const parts = lines[0]!
+        .split(/[·•]/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      if (parts.length > 1) {
+        segments.push({ kind: "list", items: parts });
+        continue;
+      }
+    }
+    segments.push({ kind: "paragraph", text: chunk.replace(/\n+/g, " ").trim() });
+  }
+
+  return segments;
+}
+
 /** 展示用：折叠换行为空格，避免成稿被段落/区块拆开 */
 export function flattenManuscriptDisplayText(text: string): string {
   return text.replace(/\s*\n+\s*/g, " ").trim();

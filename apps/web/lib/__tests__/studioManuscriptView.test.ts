@@ -1,8 +1,11 @@
 import { normalizeStudioComposeBrief } from "../studioComposeBrief";
 import {
   buildManuscriptFlowText,
+  parseManuscriptBodySegments,
   resolveBodyForTitleIndex,
-  resolveManuscriptVariant
+  resolveManuscriptVariant,
+  studioTitleDirectionHint,
+  studioTitleDirectionLabel
 } from "../studioManuscriptView";
 import type { ManuscriptBlock } from "../studioWorkTypes";
 
@@ -36,5 +39,9 @@ assert(
     "标题A 行1 行2 评论区聊聊",
   "flatten flow with interaction"
 );
+assert(studioTitleDirectionLabel(0) === "痛点向", "direction label");
+assert(studioTitleDirectionHint(1) === "激发好奇心", "direction hint");
+const segs = parseManuscriptBodySegments("第一段。\n\n第二段。\n\n· 要点一\n· 要点二");
+assert(segs.length === 3 && segs[2]?.kind === "list", "list segments");
 
 console.log("studioManuscriptView.test.ts: ok");

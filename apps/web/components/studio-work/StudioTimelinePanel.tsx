@@ -3,8 +3,9 @@
 import type { ReactNode, RefObject } from "react";
 import { buildStudioTimeline } from "../../lib/studioTimeline";
 import type { ManuscriptBlock, StudioAgentTurn, StudioWork } from "../../lib/studioWorkTypes";
-import StudioTurnGroupBlock from "./StudioTurnGroupBlock";
 import StudioTimelineManuscriptCard from "./StudioTimelineManuscriptCard";
+import StudioAgentMessage from "./StudioAgentMessage";
+import StudioEphemeralHint from "./StudioEphemeralHint";
 
 export default function StudioTimelinePanel({
   work,
@@ -54,18 +55,22 @@ export default function StudioTimelinePanel({
 
       <div className="space-y-5">
         {items.map((item) => {
-          if (item.kind === "turn-group") {
+          if (item.kind === "dialogue") {
+            const isUser = item.turn.role === "user";
             return (
-              <div key={`group-${item.group.id}`}>
-                <StudioTurnGroupBlock
-                  userTurn={item.group.userTurn}
-                  assistantTurns={item.group.assistantTurns}
-                  userAnchor={item.isActive ? "active" : "history"}
-                  streamingPhase={item.isActive ? streamingPhase : undefined}
-                  canEdit={canEdit}
-                  onEditUserTurn={onEditUserTurn}
-                />
-                {item.isActive && activeAgentStatus ? (
+              <div key={`dlg-${item.turn.id}`} data-studio-turn-group={isUser ? item.groupId : undefined}>
+                {item.ephemeral ? (
+                  <StudioEphemeralHint text={item.turn.content} ttlMs={4000} />
+                ) : (
+                  <StudioAgentMessage
+                    turn={item.turn}
+                    userAnchor={isUser ? item.userAnchor : undefined}
+                    streamingPhase={item.turn.streaming ? streamingPhase : undefined}
+                    canEdit={isUser ? canEdit : undefined}
+                    onEditUserTurn={isUser ? onEditUserTurn : undefined}
+                  />
+                )}
+                {isUser && item.isActive && activeAgentStatus ? (
                   <div className="mt-2">{activeAgentStatus}</div>
                 ) : null}
               </div>
