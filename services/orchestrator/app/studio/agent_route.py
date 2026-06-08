@@ -14,7 +14,7 @@ PROMO_DETAIL_SIGNAL = re.compile(
 )
 REVISE_SIGNAL = re.compile(r"改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化")
 BLOCK_PATCH_SIGNAL = re.compile(r"【块级改版】|块级改版")
-WRITE_INTENT = re.compile(r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作")
+WRITE_INTENT = re.compile(r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写")
 ASK_SIGNAL = re.compile(r"[?？]$|怎么(写|改|搭)|如何(写|改)|钩子|开头|结构|^(帮我)?(分析|解读|看看|讲讲)")
 
 

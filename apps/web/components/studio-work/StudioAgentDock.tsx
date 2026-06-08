@@ -7,7 +7,7 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
-import { studioComposerProgressLabel } from "../../lib/studioComposeProgress";
+import { studioStreamPhaseLabel } from "../../lib/studioComposeProgress";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
@@ -191,7 +191,7 @@ export default function StudioAgentDock({
       Boolean(ephemeralHint) ||
       agentBusy ||
       jobRunning);
-  const composeProgressLabel = studioComposerProgressLabel({
+  const composeProgressLabel = studioStreamPhaseLabel({
     runPhase: work.runPhase,
     hasStream: Boolean(streamingBlocks?.length || streamingBodyText?.trim()),
     isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
@@ -726,7 +726,6 @@ export default function StudioAgentDock({
       placeholder={agentPlaceholder(work.status)}
       menuOpen={corpusMenuOpen}
       generating={jobRunning}
-      progressLabel={jobRunning ? composeProgressLabel : undefined}
       onCancel={jobRunning ? onCancelStream : undefined}
       footerRight={
         <StudioCorpusBar
@@ -764,6 +763,7 @@ export default function StudioAgentDock({
       scrollRef={dialogueScrollRef}
       canEdit={canEditTurns}
       onEditUserTurn={(turnId, text) => void handleEditUserTurn(turnId, text)}
+      onSuggestedReply={(text) => void handleSend(text)}
       emptyHint={dialogueEmptyHint}
       busy={agentBusy || jobBusy}
       hideManuscript={false}

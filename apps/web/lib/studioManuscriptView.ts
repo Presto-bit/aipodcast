@@ -107,14 +107,19 @@ export function splitXhsBodyParagraphs(text: string): string[] {
 /** 与生成 prompt 约定的 3 个标题方向（痛点 / 好奇 / 数字） */
 export const STUDIO_TITLE_DIRECTION_LABELS = ["痛点向", "好奇向", "数字向"] as const;
 
-export function studioTitleDirectionLabel(index: number): string {
+export function studioTitleDirectionLabel(index: number, titleBlock?: TitleBlock): string {
+  const fromBlock = titleBlock?.directionLabel?.trim();
+  if (fromBlock) return fromBlock;
   return STUDIO_TITLE_DIRECTION_LABELS[index] ?? `方向 ${index + 1}`;
 }
 
-/** 方向 Tab 副文案，增强可读性 */
+/** 旧稿 fallback：生成未带 directionLabel 时使用 */
 export const STUDIO_TITLE_DIRECTION_HINTS = ["直击用户痛点", "激发好奇心", "用数字说话"] as const;
 
-export function studioTitleDirectionHint(index: number): string {
+/** 方向 Tab 副文案，增强可读性 */
+export function studioTitleDirectionHint(index: number, titleBlock?: TitleBlock): string {
+  const fromBlock = titleBlock?.directionHint?.trim();
+  if (fromBlock) return fromBlock;
   return STUDIO_TITLE_DIRECTION_HINTS[index] ?? "";
 }
 

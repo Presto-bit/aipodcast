@@ -165,11 +165,18 @@ def _reconcile_decision(
     source: RouteSource = "llm"
     reason = f"LLM：{tool}"
 
-    if rule.tool == "compose" and llm_tool == "reply" and not is_ask_only(message):
+    if rule.tool == "compose" and llm_tool == "reply" and not is_ask_only(message, has_manuscript=version_count > 0):
         if not is_insufficient_brief(message):
             tool = "compose"
             source = "mixed"
             reason = "规则+LLM：brief 足够，成稿"
+
+    if rule.tool == "compose" and tool == "reply" and not is_insufficient_brief(message) and not is_ask_only(
+        message, has_manuscript=version_count > 0
+    ):
+        tool = "compose"
+        source = "mixed"
+        reason = "规则：brief 足够，强制成稿"
 
     if rule.tool == "reply" and llm_tool == "compose" and is_ask_only(message):
         tool = "reply"

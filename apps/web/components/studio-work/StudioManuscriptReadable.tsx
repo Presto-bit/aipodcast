@@ -34,14 +34,15 @@ export function StudioVariantTabs({
     >
       {titles.map((t, i) => {
         const active = i === titleIndex;
-        const hint = studioTitleDirectionHint(i);
+        const hint = studioTitleDirectionHint(i, t);
+        const label = studioTitleDirectionLabel(i, t);
         return (
           <button
             key={t.id}
             type="button"
             role="tab"
             aria-selected={active}
-            title={hint ? `${studioTitleDirectionLabel(i)} · ${hint} · ${t.text}` : t.text}
+            title={hint ? `${label} · ${hint} · ${t.text}` : t.text}
             className={[
               "rounded-md px-3 py-1.5 text-left text-xs transition",
               active
@@ -50,7 +51,7 @@ export function StudioVariantTabs({
             ].join(" ")}
             onClick={() => onTitleIndexChange(i)}
           >
-            <span>{studioTitleDirectionLabel(i)}</span>
+            <span>{label}</span>
             {hint ? (
               <span className={`mt-0.5 block text-[10px] leading-snug ${active ? "text-muted" : "text-muted/80"}`}>
                 {hint}

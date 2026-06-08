@@ -1,5 +1,8 @@
+import { buildStudioBriefClarifyTurn } from "./studioBriefClarify";
 import { buildStudioDialogueTurnGroups } from "./studioDialogueTurnGroups";
+import { manuscriptTitleBlocks } from "./studioManuscriptView";
 import type {
+  ManuscriptBlock,
   ManuscriptVersion,
   PendingPatch,
   StudioAgentTurn,
@@ -30,13 +33,45 @@ export function isStudioComposeWrapUpTurn(turn: StudioAgentTurn): boolean {
   );
 }
 
+/** 模板/空泛成稿后：温和追问 brief，而非报错 */
+export function buildStudioBriefClarifyAfterReject(reason: "template" | "empty" = "template"): string {
+  return buildStudioBriefClarifyTurn(reason).content;
+}
+
+export function buildStudioBriefClarifyAssistantTurn(
+  reason: "template" | "empty",
+  userMessage = "",
+  taskSentence = ""
+): StudioAgentTurn {
+  const { content, suggestedReplies } = buildStudioBriefClarifyTurn(reason, userMessage, taskSentence);
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    content,
+    intent: "brief_clarify",
+    suggestedReplies,
+    createdAt: Date.now()
+  };
+}
+
 /** Cursor 式收尾：结果 → 看哪里 → 下一步（单行，各一句） */
-export function buildStudioComposeWrapUp(tool: "compose" | "revise", variantCount = 3): string {
+export function buildStudioComposeWrapUp(
+  tool: "compose" | "revise",
+  blocks: ManuscriptBlock[] = [],
+  variantCount = 3
+): string {
   if (tool === "revise") {
     return "已按你的意见改完成稿。还不满意就继续在下方说；可以了就用复制按钮带走。";
   }
-  if (variantCount > 1) {
-    return "已生成痛点 / 好奇 / 数字三个方向成稿。先切换上方标签挑选，选中后直接在下方说怎么改。";
+  const titles = manuscriptTitleBlocks(blocks);
+  const labels = titles
+    .map((t) => t.directionLabel?.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const count = Math.max(variantCount, titles.length) || variantCount;
+  if (count > 1) {
+    const dirText = labels.length >= 2 ? labels.join(" / ") : "多个写作方向";
+    return `已生成 ${dirText} 成稿。先切换上方标签挑选，选中后直接在下方说怎么改。`;
   }
   return "成稿已就绪。要改语气或结构，直接在下方说；满意就复制带走。";
 }

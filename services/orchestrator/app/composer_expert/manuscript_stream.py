@@ -34,6 +34,7 @@ def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[d
     bodies = content.get("bodies") if isinstance(content.get("bodies"), list) else []
     interactions = content.get("interactions") if isinstance(content.get("interactions"), list) else []
     interaction = str(content.get("interaction") or "").strip()
+    directions = content.get("directions") if isinstance(content.get("directions"), list) else []
     return partial_social_to_manuscript_blocks(
         {
             "titles": titles,
@@ -43,6 +44,7 @@ def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[d
             "interactions": interactions,
             "interaction": interaction,
             "cover_hook": cover_hook,
+            "directions": directions,
         }
     )
 
@@ -50,6 +52,20 @@ def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[d
 def partial_social_to_manuscript_blocks(partial: dict[str, Any]) -> list[dict[str, Any]]:
     """将流式 JSON 片段转为前端 ManuscriptBlock 形状。"""
     blocks: list[dict[str, Any]] = []
+    direction_meta: list[dict[str, str]] = []
+    directions_raw = partial.get("directions")
+    if isinstance(directions_raw, list):
+        for item in directions_raw[:3]:
+            if isinstance(item, dict):
+                direction_meta.append(
+                    {
+                        "label": str(item.get("label") or "").strip()[:8],
+                        "hint": str(item.get("hint") or "").strip()[:16],
+                    }
+                )
+            elif isinstance(item, str) and item.strip():
+                direction_meta.append({"label": item.strip()[:8], "hint": ""})
+
     titles: list[str] = []
     titles_raw = partial.get("titles")
     if isinstance(titles_raw, list):
@@ -57,7 +73,20 @@ def partial_social_to_manuscript_blocks(partial: dict[str, Any]) -> list[dict[st
             text = str(raw or "").strip()
             if text:
                 titles.append(text)
-                blocks.append({"id": f"title-{i}", "kind": "title", "text": text, "evidence": "model"})
+                title_block: dict[str, Any] = {
+                    "id": f"title-{i}",
+                    "kind": "title",
+                    "text": text,
+                    "evidence": "model",
+                }
+                if i < len(direction_meta):
+                    label = direction_meta[i].get("label")
+                    hint = direction_meta[i].get("hint")
+                    if label:
+                        title_block["directionLabel"] = label
+                    if hint:
+                        title_block["directionHint"] = hint
+                blocks.append(title_block)
     bodies_count = 0
     bodies_raw = partial.get("bodies")
     if isinstance(bodies_raw, list) and any(str(b).strip() for b in bodies_raw):
@@ -264,7 +293,7 @@ def iter_studio_manuscript_stream(
                 )
                 content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
                 if _looks_like_xhs_template_body(content, task_sentence):
-                    event_q.put(("error", "成稿像是通用模板，请补充受众、卖点与场景后重试"))
+                    event_q.put(("error", "NEEDS_BRIEF"))
                     return
                 event_q.put(("done", deliverable))
                 return

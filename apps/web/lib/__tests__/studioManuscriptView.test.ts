@@ -23,8 +23,8 @@ assert(
 );
 
 const blocks: ManuscriptBlock[] = [
-  { id: "title-0", kind: "title", text: "标题A" },
-  { id: "title-1", kind: "title", text: "标题B" },
+  { id: "title-0", kind: "title", text: "标题A", directionLabel: "避坑向", directionHint: "列常见错误" },
+  { id: "title-1", kind: "title", text: "标题B", directionLabel: "案例向", directionHint: "讲真实经历" },
   { id: "body-0", kind: "body", text: "正文A\n\n第二段" },
   { id: "body-1", kind: "body", text: "正文B" }
 ];
@@ -39,8 +39,10 @@ assert(
     "标题A 行1 行2 评论区聊聊",
   "flatten flow with interaction"
 );
-assert(studioTitleDirectionLabel(0) === "痛点向", "direction label");
-assert(studioTitleDirectionHint(1) === "激发好奇心", "direction hint");
+assert(studioTitleDirectionLabel(0, blocks[0] as Extract<ManuscriptBlock, { kind: "title" }>) === "避坑向", "direction from block");
+assert(studioTitleDirectionHint(1, blocks[1] as Extract<ManuscriptBlock, { kind: "title" }>) === "讲真实经历", "hint from block");
+assert(studioTitleDirectionLabel(0) === "痛点向", "fallback direction label");
+assert(studioTitleDirectionHint(1) === "激发好奇心", "fallback direction hint");
 const segs = parseManuscriptBodySegments("第一段。\n\n第二段。\n\n· 要点一\n· 要点二");
 assert(segs.length === 3 && segs[2]?.kind === "list", "list segments");
 

@@ -157,7 +157,9 @@ export async function streamStudioAgent(
         } else if (type === "done") {
           const dt = String(ev.tool || "");
           if (dt === "reply") {
-            return { status: "reply", text: replyText || "好的。" };
+            const text = (replyText || "好的。").trim();
+            if (text) input.onReply?.(text);
+            return { status: "reply", text };
           }
           doneTool = dt === "revise" ? "revise" : "compose";
           doneBlocks = normalizeStreamManuscriptBlocks(ev.blocks);

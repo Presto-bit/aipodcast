@@ -20,6 +20,8 @@ export type StudioAgentTurn = {
   createdAt: number;
   streaming?: boolean;
   intent?: StudioAgentIntent;
+  /** brief 澄清：可点选补全（Cursor todo chips） */
+  suggestedReplies?: string[];
   /** RAG 问答角标来源（对话区 [n] 点击预览） */
   askSources?: NotesAskSource[];
 };
@@ -38,7 +40,15 @@ export type WorkStatus =
 export type BlockEvidence = "corpus" | "model" | "verify";
 
 export type ManuscriptBlock =
-  | { id: string; kind: "title"; text: string; evidence?: BlockEvidence }
+  | {
+      id: string;
+      kind: "title";
+      text: string;
+      evidence?: BlockEvidence;
+      /** 成稿方向 Tab 主标签（由生成推断，非固定痛点/好奇/数字） */
+      directionLabel?: string;
+      directionHint?: string;
+    }
   | { id: string; kind: "body"; text: string; evidence?: BlockEvidence }
   | { id: string; kind: "hashtags"; tags: string[] }
   | { id: string; kind: "interaction"; text: string }

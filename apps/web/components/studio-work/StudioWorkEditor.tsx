@@ -21,7 +21,12 @@ import {
 import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
-import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE, buildStudioComposeWrapUp } from "../../lib/studioTimeline";
+import {
+  STUDIO_ACK_GENERATE,
+  STUDIO_ACK_REVISE,
+  buildStudioBriefClarifyAssistantTurn,
+  buildStudioComposeWrapUp
+} from "../../lib/studioTimeline";
 import { manuscriptTitleBlocks } from "../../lib/studioManuscriptView";
 import { composeTaskSentenceFromTurns } from "../../lib/studioWorkTask";
 import type {
@@ -211,16 +216,16 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onRoute: (route) => setAgentRouteHint(studioAgentRouteHint(route, "write")),
           onReply: (text) => {
             const live = getStudioWork(workId);
-            if (!live) return;
+            if (!live || !text.trim()) return;
             const assistantTurn: StudioAgentTurn = {
               id: crypto.randomUUID(),
               role: "assistant",
-              content: text,
+              content: text.trim(),
               createdAt: Date.now()
             };
             persist({
               ...live,
-              agentTurns: [...params.prefixTurns, assistantTurn],
+              agentTurns: [...(live.agentTurns ?? []), assistantTurn],
               error: undefined
             });
           },
@@ -264,10 +269,69 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         if (!after) return;
 
         if (result.status === "reply") {
+          const text = result.text.trim();
+          const lastAssistant = after.agentTurns?.filter((t) => t.role === "assistant").at(-1);
+          if (text && lastAssistant?.content !== text) {
+            persist({
+              ...after,
+              agentTurns: [
+                ...(after.agentTurns ?? []),
+                {
+                  id: crypto.randomUUID(),
+                  role: "assistant",
+                  content: text,
+                  createdAt: Date.now()
+                }
+              ],
+              status: runTool === "generate" && !after.versions.length ? "draft" : after.status,
+              error: undefined,
+              runPhase: undefined
+            });
+          }
+          if (runId && ackAppended) {
+            persist(
+              finishStudioRun(
+                {
+                  ...getStudioWork(workId)!,
+                  status: after.versions.length ? after.status : "draft",
+                  runPhase: undefined,
+                  error: undefined
+                },
+                runId,
+                "error",
+                "已转为对话"
+              )
+            );
+          }
           return;
         }
 
         if (result.status === "error") {
+          const softReject =
+            /NEEDS_BRIEF|通用模板|validation_failed|成稿像是|补充受众/.test(result.error) ||
+            result.error.includes("模板");
+          if (runId && softReject) {
+            const clarifyTurn = buildStudioBriefClarifyAssistantTurn(
+              "template",
+              params.userText,
+              effectiveTaskSentence
+            );
+            persist(
+              finishStudioRun(
+                {
+                  ...after,
+                  agentTurns: [...(after.agentTurns ?? []), clarifyTurn],
+                  status: "draft",
+                  error: undefined,
+                  runPhase: undefined
+                },
+                runId,
+                "error",
+                "需补充 brief"
+              )
+            );
+            return;
+          }
           if (runId) {
             persist(
               finishStudioRun(
@@ -291,17 +355,23 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         const blocks = result.blocks;
         const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
         if (!blocks.length || shouldRejectDeliverableBody(result.tool, bodyText)) {
+          const clarifyTurn = buildStudioBriefClarifyAssistantTurn(
+            !blocks.length ? "empty" : "template",
+            params.userText,
+            effectiveTaskSentence
+          );
           persist(
             finishStudioRun(
               {
                 ...after,
+                agentTurns: [...(after.agentTurns ?? []), clarifyTurn],
                 status: runTool === "generate" ? "draft" : "ready",
-                error: "成稿像是通用模板，请补充受众、卖点与使用场景后重试。",
+                error: undefined,
                 runPhase: undefined
               },
               runId,
               "error",
-              "成稿校验失败"
+              "需补充 brief"
             )
           );
           return;
@@ -324,6 +394,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           role: "assistant",
           content: buildStudioComposeWrapUp(
             result.tool === "revise" ? "revise" : "compose",
+            blocks,
             variantCount
           ),
           intent: "compose_wrap_up",

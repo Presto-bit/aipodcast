@@ -182,9 +182,10 @@ def _compose_expert_writer_instructions(
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
-        "titles 数组须恰好 3 个备选标题（痛点型/好奇型/数字型各一，每个≤20字）。",
-        "bodies 数组须恰好 3 个正文变体，与 titles 顺序一一对应（痛点向/好奇向/数字向），每篇须是独立成稿，正文角度与写法须明显不同，禁止只改标题。",
-        "interactions 数组须恰好 3 个互动引导句，与 titles/bodies 一一对应，语气随各方向变化。",
+        "directions 数组须恰好 3 个对象：每项含 label(≤6字)、hint(≤12字)、title(≤20字)、body(完整正文)、interaction；"
+        "三个 label 须按任务推断（如清单体→避坑/案例/工具，推广→场景/数字/故事），禁止固定痛点/好奇/数字。",
+        "bodies 数组须恰好 3 个正文变体，与 directions/titles 顺序一一对应；每篇须独立成稿，角度与写法须明显不同，禁止只改标题或只加前缀。",
+        "interactions 数组须恰好 3 个互动引导句，与 directions 一一对应，语气随各方向变化。",
         "开头前两行须有强钩子：具体场景、痛点问句、数字结果或反常识，禁止「很多人/近年来」式空泛开场。",
         "正文段内用句号衔接，避免连续空行；可用 sections 或 body，但优先输出 bodies 数组。",
         f"任务核心：{task_sentence.strip()[:300]}",
@@ -302,30 +303,101 @@ def _count_body_list_items(body: str) -> int:
     return marked
 
 
-def _expand_bodies_to_three(bodies: list[str], titles: list[str], fallback: str) -> list[str]:
-    """模型常只回 1 个 body：按方向补齐 3 套完整正文变体。"""
-    cleaned = [str(b).strip() for b in bodies if str(b).strip()]
-    seed = cleaned[0] if cleaned else str(fallback or "").strip()
-    if not seed:
+def _char_ngram_set(text: str, n: int = 3) -> set[str]:
+    s = re.sub(r"\s+", "", str(text or ""))
+    if len(s) < n:
+        return {s} if s else set()
+    return {s[i : i + n] for i in range(len(s) - n + 1)}
+
+
+def _body_similarity_ratio(a: str, b: str) -> float:
+    sa = _char_ngram_set(a)
+    sb = _char_ngram_set(b)
+    if not sa or not sb:
+        return 0.0
+    inter = len(sa & sb)
+    union = len(sa | sb)
+    return inter / union if union else 0.0
+
+
+def _xhs_bodies_similarity_errors(content: dict[str, Any], *, threshold: float = 0.72) -> list[str]:
+    bodies = content.get("bodies")
+    if not isinstance(bodies, list):
         return []
-    title_list = [str(t).strip() for t in titles if str(t).strip()][:3]
-    while len(title_list) < 3:
-        title_list.append(title_list[0] if title_list else "")
-    out: list[str] = []
-    for i in range(3):
-        if i < len(cleaned):
-            out.append(cleaned[i])
-            continue
-        title = title_list[i]
-        if i == 0:
-            out.append(seed)
-        elif i == 1:
-            hook = title or "这件事"
-            out.append(f"先别划走——{hook}到底怎么回事？{seed}")
-        else:
-            lead = title or "这3点"
-            out.append(f"{lead}：我踩坑后总结了3条。{seed}")
-    return out[:3]
+    filled = [str(b).strip() for b in bodies if str(b).strip()]
+    if len(filled) < 3:
+        return []
+    for i in range(len(filled)):
+        for j in range(i + 1, len(filled)):
+            if _body_similarity_ratio(filled[i], filled[j]) >= threshold:
+                return [f"bodies 第{i + 1}与第{j + 1}篇过于相似，须用不同角度重写"]
+    return []
+
+
+def _normalize_directions_from_pack(pack: dict[str, Any], single_body: str) -> list[dict[str, str]]:
+    """从 LLM pack 提取 3 个方向；禁止浅拷贝补齐正文。"""
+    out: list[dict[str, str]] = []
+    directions_raw = pack.get("directions")
+    if isinstance(directions_raw, list):
+        for item in directions_raw[:3]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            body = _format_single_xhs_body(str(item.get("body") or ""))
+            if not title and not body:
+                continue
+            label = str(item.get("label") or "").strip() or f"方向{len(out) + 1}"
+            out.append(
+                {
+                    "label": label[:8],
+                    "hint": str(item.get("hint") or "").strip()[:16],
+                    "title": title,
+                    "body": body,
+                    "interaction": str(item.get("interaction") or "").strip(),
+                }
+            )
+    if len(out) >= 3:
+        return out[:3]
+
+    titles: list[str] = []
+    titles_raw = pack.get("titles")
+    if isinstance(titles_raw, list):
+        titles = [str(t).strip() for t in titles_raw if str(t).strip()][:3]
+
+    bodies: list[str] = []
+    bodies_raw = pack.get("bodies")
+    if isinstance(bodies_raw, list):
+        for item in bodies_raw[:3]:
+            b = _format_single_xhs_body(str(item or ""))
+            if b:
+                bodies.append(b)
+    if not bodies and single_body:
+        bodies = [single_body]
+
+    interactions: list[str] = []
+    interactions_raw = pack.get("interactions")
+    if isinstance(interactions_raw, list):
+        interactions = [str(x).strip() for x in interactions_raw if str(x).strip()]
+    interaction_single = str(pack.get("interaction") or "").strip()
+    if not interactions and interaction_single:
+        interactions = [interaction_single]
+
+    count = max(len(titles), len(bodies), len(out), 1)
+    merged: list[dict[str, str]] = []
+    for i in range(min(3, count)):
+        existing = out[i] if i < len(out) else None
+        merged.append(
+            {
+                "label": (existing or {}).get("label") or f"方向{i + 1}",
+                "hint": (existing or {}).get("hint") or "",
+                "title": (existing or {}).get("title")
+                or (titles[i] if i < len(titles) else (titles[0] if titles else "")),
+                "body": (existing or {}).get("body") or (bodies[i] if i < len(bodies) else ""),
+                "interaction": (existing or {}).get("interaction")
+                or (interactions[i] if i < len(interactions) else (interactions[0] if interactions else "")),
+            }
+        )
+    return [d for d in merged if d.get("body") or d.get("title")][:3]
 
 
 def _expand_interactions_to_three(interactions: list[str], fallback: str) -> list[str]:
@@ -349,13 +421,15 @@ def _expand_interactions_to_three(interactions: list[str], fallback: str) -> lis
 
 
 def _xhs_bodies_count_errors(content: dict[str, Any]) -> list[str]:
-    """成稿硬校验：pack 已补齐 3 套，仅无正文时失败。"""
+    """成稿硬校验：须恰好 3 个独立正文变体。"""
     bodies = content.get("bodies")
     if not isinstance(bodies, list):
         return ["bodies 须为数组"]
     filled = [str(b).strip() for b in bodies if str(b).strip()]
     if not filled:
         return ["bodies 不能为空"]
+    if len(filled) < 3:
+        return [f"bodies 须恰好 3 个，当前 {len(filled)} 个"]
     return []
 
 
@@ -878,40 +952,49 @@ def _pack_to_xhs_content(pack: dict[str, Any]) -> dict[str, Any]:
         hook = str(pack.get("cover_hook") or pack.get("title") or "").strip()
         if hook:
             titles = [hook]
-    if not titles:
-        titles = ["笔记标题"]
     body = str(pack.get("body") or "").strip()
     hashtags = _extract_hashtags(pack, body)
-    headline = titles[0][:12]
+    headline = titles[0][:12] if titles else "笔记"
     single_body = _format_xhs_body_readable(_deliverable_body_from_pack(pack, hashtags))
 
-    formatted_bodies: list[str] = []
     raw_bodies_count = 0
     bodies_raw = pack.get("bodies")
     if isinstance(bodies_raw, list):
         raw_bodies_count = len([str(b).strip() for b in bodies_raw if str(b).strip()])
-        for item in bodies_raw[:3]:
-            b = _format_single_xhs_body(str(item or ""))
-            if b:
-                formatted_bodies.append(b)
+
+    directions = _normalize_directions_from_pack(pack, single_body)
+    direction_titles = [d["title"] for d in directions if d.get("title")]
+    if direction_titles:
+        titles = direction_titles[:3]
+    elif not titles:
+        titles = ["笔记标题"]
+
+    formatted_bodies = [d["body"] for d in directions if d.get("body")]
     if not formatted_bodies and single_body:
         formatted_bodies = [single_body]
         if raw_bodies_count == 0:
             raw_bodies_count = 1
-    formatted_bodies = _expand_bodies_to_three(formatted_bodies, titles[:3], single_body)
+
     primary_body = formatted_bodies[0] if formatted_bodies else single_body or titles[0]
     interaction_single = str(pack.get("interaction") or "").strip()
-    formatted_interactions: list[str] = []
-    interactions_raw = pack.get("interactions")
-    if isinstance(interactions_raw, list):
-        formatted_interactions = [str(x).strip() for x in interactions_raw if str(x).strip()]
+    formatted_interactions = [d.get("interaction") or "" for d in directions if d.get("interaction")]
+    if not formatted_interactions:
+        interactions_raw = pack.get("interactions")
+        if isinstance(interactions_raw, list):
+            formatted_interactions = [str(x).strip() for x in interactions_raw if str(x).strip()]
     if not formatted_interactions and interaction_single:
         formatted_interactions = [interaction_single]
     formatted_interactions = _expand_interactions_to_three(formatted_interactions, interaction_single)
+
+    direction_meta = [{"label": d.get("label") or "", "hint": d.get("hint") or ""} for d in directions[:3]]
+    while len(direction_meta) < len(formatted_bodies[:3]):
+        direction_meta.append({"label": f"方向{len(direction_meta) + 1}", "hint": ""})
+
     return {
         "titles": titles[:3],
         "body": primary_body,
         "bodies": formatted_bodies[:3],
+        "directions": direction_meta[:3],
         "_rawBodiesCount": raw_bodies_count or len(formatted_bodies),
         "hashtags": hashtags,
         "interactions": formatted_interactions[:3],
@@ -1057,6 +1140,9 @@ def generate_xhs_expert_deliverable(
     bodies_errors = _xhs_bodies_count_errors(content)
     if bodies_errors:
         raise ValueError("validation_failed:" + "|".join(bodies_errors[:2]))
+    similarity_errors = _xhs_bodies_similarity_errors(content)
+    if similarity_errors:
+        raise ValueError("validation_failed:" + "|".join(similarity_errors[:2]))
     hook_errors = _xhs_opening_hook_errors(content)
     if hook_errors:
         raise ValueError("validation_failed:" + "|".join(hook_errors[:2]))
@@ -1208,7 +1294,7 @@ def run_composer_expert_deliverable_job(
             if title_count < 3 and attempt < max_attempts - 1:
                 last_errors = [f"titles 须恰好 3 个备选，当前 {title_count} 个"]
                 persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
-                retry_note = "【重试】titles 数组须恰好 3 个备选标题（痛点/好奇/数字型）。"
+                retry_note = "【重试】titles 数组须恰好 3 个备选标题，且与 directions 一致。"
                 persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
                 options["persona"] = persona
                 if on_progress:
@@ -1218,11 +1304,21 @@ def run_composer_expert_deliverable_job(
             if bodies_errors and attempt < max_attempts - 1:
                 last_errors = bodies_errors
                 persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
-                retry_note = "【重试】bodies 须恰好 3 个正文变体，与 titles 痛点/好奇/数字方向一一对应。"
+                retry_note = "【重试】directions/bodies 须恰好 3 个，且三篇正文角度须明显不同。"
                 persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
                 options["persona"] = persona
                 if on_progress:
                     on_progress("正文变体不足，正在补全…", 73.5)
+                continue
+            similarity_errors = _xhs_bodies_similarity_errors(content)
+            if similarity_errors and attempt < max_attempts - 1:
+                last_errors = similarity_errors
+                persona = options.get("persona") if isinstance(options.get("persona"), dict) else {}
+                retry_note = "【重试】三篇正文过于相似，须按 directions 用不同结构与角度重写。"
+                persona["otherRequirements"] = f"{persona.get('otherRequirements') or ''}\n{retry_note}"[:1600]
+                options["persona"] = persona
+                if on_progress:
+                    on_progress("正文变体差异不足，正在重写…", 74.0)
                 continue
             hook_errors = _xhs_opening_hook_errors(content)
             if hook_errors and attempt < max_attempts - 1:

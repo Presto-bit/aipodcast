@@ -17,6 +17,7 @@ export default function StudioTimelinePanel({
   emptyHint,
   busy,
   hideManuscript,
+  onSuggestedReply,
   onTitleIndexChange,
   onBlocksChange,
   showFeatureNudge,
@@ -32,6 +33,7 @@ export default function StudioTimelinePanel({
   scrollRef: RefObject<HTMLDivElement>;
   canEdit?: boolean;
   onEditUserTurn?: (turnId: string, newText: string) => void;
+  onSuggestedReply?: (text: string) => void;
   emptyHint?: string;
   busy: boolean;
   hideManuscript?: boolean;
@@ -68,6 +70,7 @@ export default function StudioTimelinePanel({
                     streamingPhase={item.turn.streaming ? streamingPhase : undefined}
                     canEdit={isUser ? canEdit : undefined}
                     onEditUserTurn={isUser ? onEditUserTurn : undefined}
+                    onSuggestedReply={!isUser ? onSuggestedReply : undefined}
                   />
                 )}
                 {isUser && item.isActive && activeAgentStatus ? (

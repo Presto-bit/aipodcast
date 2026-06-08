@@ -20,13 +20,15 @@ export default function StudioAgentMessage({
   streamingPhase,
   userAnchor,
   canEdit,
-  onEditUserTurn
+  onEditUserTurn,
+  onSuggestedReply
 }: {
   turn: StudioAgentTurn;
   streamingPhase?: string;
   userAnchor?: "active" | "history";
   canEdit?: boolean;
   onEditUserTurn?: (turnId: string, newText: string) => void;
+  onSuggestedReply?: (text: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(turn.content);
@@ -145,6 +147,20 @@ export default function StudioAgentMessage({
           <p>{text}</p>
         ) : null}
       </div>
+      {turn.suggestedReplies?.length && onSuggestedReply && !turn.streaming ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {turn.suggestedReplies.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              className="rounded-full border border-line/70 bg-fill/40 px-2.5 py-1 text-[11px] text-ink/90 transition hover:border-brand/40 hover:bg-brand/5"
+              onClick={() => onSuggestedReply(chip)}
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <StudioAskCitationModal
         source={citationSource}
         open={Boolean(citationSource)}

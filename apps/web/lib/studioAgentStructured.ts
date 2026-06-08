@@ -1,6 +1,8 @@
 import { promoBriefClarifyText } from "./studioGenerateStream";
+import { isOpsStrategyQuestion, opsStrategyFallbackReply } from "./studioOpsStrategy";
 import { needsPromoBriefClarification, wouldAutoGenerate } from "./studioOrchestrator";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
+import { taskSentenceFromWork } from "./studioWorkTask";
 import type { StudioWork } from "./studioWorkTypes";
 
 /** Studio 对话区 ask：Cursor 式结构化收尾（仅 JSON，无自由附言） */
@@ -29,6 +31,7 @@ export function buildStudioStructuredOutputPrompt(work: StudioWork): string {
     "- 一次最多一个 ask_user，禁止连环追问；禁止问语气/篇幅/钩子等非 blocking 项。",
     "- 禁止「刚看完你这篇」「最好的一点是」等旁观者点评口吻。",
     "- text / question 内勿重复粘贴完整稿件全文。",
+    "- 用户问运营/发布/推广/什么时候发/怎么推：必须用 reply 给分点建议，禁止 ask_user 要求提供画布或稿件主题。",
     ready
       ? "- 稿件已在产物区：用户未明确提问时用 silent；不要主动点评或建议下一步。"
       : "- 信息不足（缺主题/形式/受众任一项）必须用 ask_user 追问一句，禁止 silent；信息已够开工时才 silent；用户明确提问用 reply 简答。"
@@ -94,9 +97,23 @@ export function resolveStudioStructuredResponse(
   structured: StudioAgentStructuredResponse,
   latestUserMessage?: string
 ): StudioAgentStructuredResponse {
+  const q = latestUserMessage?.trim() ?? "";
+  const noManuscript = work.versions.length === 0;
+
+  if (q && isOpsStrategyQuestion(q) && noManuscript) {
+    if (structured.kind === "ask_user") {
+      return { kind: "reply", text: opsStrategyFallbackReply(q, taskSentenceFromWork(work)) };
+    }
+    if (structured.kind === "silent") {
+      return { kind: "reply", text: opsStrategyFallbackReply(q, taskSentenceFromWork(work)) };
+    }
+    if (structured.kind === "reply" && /画布|稿件的主题|内容方向/.test(structured.text)) {
+      return { kind: "reply", text: opsStrategyFallbackReply(q, taskSentenceFromWork(work)) };
+    }
+  }
+
   if (structured.kind !== "ask_user") return structured;
   if (!isDraftLikeStatus(work.status)) return structured;
-  const q = latestUserMessage?.trim();
   if (!q) return structured;
   if (!wouldAutoGenerate(work, q)) return structured;
   return { kind: "silent" };
@@ -111,6 +128,13 @@ export function draftAskFallbackText(
   latestUserMessage: string,
   rawAnswer?: string
 ): string | null {
+  if (isOpsStrategyQuestion(latestUserMessage) && work.versions.length === 0) {
+    const trimmed = rawAnswer?.trim();
+    if (trimmed && !trimmed.startsWith("{") && !/画布|稿件的主题|内容方向/.test(trimmed)) {
+      return trimmed;
+    }
+    return opsStrategyFallbackReply(latestUserMessage, taskSentenceFromWork(work));
+  }
   if (!isDraftLikeStatus(work.status)) return null;
   if (wouldAutoGenerate(work, latestUserMessage)) return null;
   const trimmed = rawAnswer?.trim();

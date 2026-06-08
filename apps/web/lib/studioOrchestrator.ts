@@ -34,6 +34,9 @@ const TOPIC_FORM_SIGNAL =
 const PROMO_DETAIL_SIGNAL =
   /受众|人群|读者|卖点|场景|功能|材质|主打|痛点|提醒|便携|保温|职场|新人|白领|品牌|价格|差异化|清单体|教程|测评|故事/;
 
+const WRITE_INTENT =
+  /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写/;
+
 /** 推广/种草句仅有品类名、缺受众或卖点时先走 ask 确认需求 */
 export function needsPromoBriefClarification(userMessage: string): boolean {
   const text = userMessage.trim();
@@ -50,7 +53,7 @@ export function isInsufficientBrief(userMessage: string): boolean {
   if (!text) return true;
   if (text.length < 8) return true;
   if (needsPromoBriefClarification(text)) return true;
-  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作/.test(text);
+  const hasWriteIntent = WRITE_INTENT.test(text);
   const hasTopicOrForm = TOPIC_FORM_SIGNAL.test(text);
   if (hasWriteIntent && hasTopicOrForm) return false;
   if (hasWriteIntent && text.length >= 14) return false;
@@ -61,7 +64,7 @@ export function isInsufficientBrief(userMessage: string): boolean {
 
 /** 纯问答（无写稿意图）时不触发自动 generate */
 function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
-  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作/.test(q);
+  const hasWriteIntent = WRITE_INTENT.test(q);
   if (intent === "manuscript_coach") return true;
   if (intent === "ops_strategy" && !hasWriteIntent) return true;
   if (hasWriteIntent) return false;

@@ -80,7 +80,9 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
         : [
             "你是内容运营策略顾问，按用户提出的渠道与目标作答（勿默认假定平台）。",
             "用户问运营、增长、发布节奏、互动、数据复盘、起号、对标时：给出可执行、分点的建议。",
-            "禁止推脱；不要代替 Job 产出完整成稿；任务清楚后提示回复「确认任务」。"
+            "无稿件时：结合用户任务句与当前问题直接作答，先给假设再列发布时间/推广动作。",
+            "禁止出现「画布」「稿件主题」「内容方向」等让用户困惑的术语；改说「在下方补充成稿需求」。",
+            "禁止推脱；不要代替 Job 产出完整成稿；禁止连环 ask_user。"
           ].join("\n");
     case "brief_clarify":
       return work.status === "ready" || work.status === "shipped"
