@@ -8,7 +8,7 @@ from typing import Any
 
 from .social_compliance import apply_compliance_to_mp_fields
 from .social_llm_utils import invoke_and_parse_social_json, normalize_tags
-from .social_xhs import build_persona_prompt_block, finalize_xhs_pack
+from .social_xhs import build_persona_prompt_block, build_xhs_native_readability_block, finalize_xhs_pack
 
 logger = logging.getLogger(__name__)
 
@@ -588,8 +588,7 @@ def generate_social_publish_draft(
                 "你是首页 Composer 红书搭子。用户已在【创作任务】中描述具体产品/主题/场景，"
                 "须围绕该任务写可发布的小红书笔记 JSON，正文像真人种草而非填空模板。\n"
                 "禁止：📌先说结论/💡展开/✅最后 分段、要点一二三、与任务无关的通用案例、复述【创作任务】标签。\n"
-                "正文用自然段表达，可带 1～2 个小标题，每段须含任务相关的具体信息。\n"
-                "正文每段不超过 80 字，段间 \\n\\n；清单用 · 或 ①②③ 分行，禁止整屏大段。\n\n"
+                f"{build_xhs_native_readability_block(composer_mode=True)}\n\n"
                 f"请根据下列素材输出 JSON。\n\n【素材】\n{llm_material}"
             )
         else:

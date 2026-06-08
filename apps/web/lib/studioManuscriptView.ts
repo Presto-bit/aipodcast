@@ -1,4 +1,5 @@
 import type { ManuscriptBlock } from "./studioWorkTypes";
+import { xhsBodyDisplayParagraphs } from "./xhsBodyFormat";
 
 export type TitleBlock = Extract<ManuscriptBlock, { kind: "title" }>;
 export type BodyBlock = Extract<ManuscriptBlock, { kind: "body" }>;
@@ -97,11 +98,9 @@ export function bodyHasCorpusAnchors(text: string): boolean {
   return CORPUS_ANCHOR_RE.test(text);
 }
 
+/** 小红书正文拆段：复用 xhsBodyFormat，长段按句号自动换行以提升阅读性 */
 export function splitXhsBodyParagraphs(text: string): string[] {
-  return text
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
+  return xhsBodyDisplayParagraphs(text);
 }
 
 /** 与生成 prompt 约定的 3 个标题方向（痛点 / 好奇 / 数字） */

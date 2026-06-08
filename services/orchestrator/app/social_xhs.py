@@ -216,6 +216,25 @@ def _resolve_occupation_labels(persona: dict[str, Any], platform: str = "xiaohon
     return "、".join(out) if out else "泛读者人群"
 
 
+def build_xhs_native_readability_block(*, composer_mode: bool = False) -> str:
+    """小红书原生可读性：短句、留白、口语，供生成 prompt 注入。"""
+    emoji_line = (
+        "Emoji：全文 4～8 个，段首可点缀 1 个，禁止用 📌💡✅ 当小标题或固定分段。"
+        if composer_mode
+        else "Emoji：全文 4～10 个，段首/清单优先，禁止用 📌💡✅ 当固定分段标题。"
+    )
+    return "\n".join(
+        [
+            "【小红书原生可读性】",
+            "口吻：第一人称（我/姐妹/打工人），口语亲切，禁论文腔与「首先/其次/最后」机械排比。",
+            "节奏：2～4 行一段，单段≤80 字，句长宜短（多数≤25 字）；段间空一行（\\n\\n）。",
+            "结构：开头 1 句具体场景或痛点问句 → 展开 2～4 段 → 产品/解法；互动引导写入 interaction 字段，勿塞进 body。",
+            "清单：好物/职场类优先「·」或「①②③」一行一点，一行只讲一个信息。",
+            emoji_line,
+        ]
+    )
+
+
 def _emoji_prompt_line(persona: dict[str, Any], extras: dict[str, Any], *, composer_mode: bool = False) -> str:
     if composer_mode:
         return "Emoji：适度点缀即可，禁止用 📌💡✅ 作固定分段标题"
@@ -329,6 +348,8 @@ def build_persona_prompt_block(options: dict[str, Any]) -> str:
         "合规：禁止绝对化（第一/顶级/最好）、医疗化承诺、硬引流（微信/私信领取/外链）；"
         "输出前自检并改写。"
     )
+    if platform != "wechat_mp":
+        lines.append(build_xhs_native_readability_block(composer_mode=composer_mode))
     return "\n".join(lines)
 
 

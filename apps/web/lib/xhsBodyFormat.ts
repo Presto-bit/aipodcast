@@ -41,6 +41,25 @@ function splitLongParagraph(text: string): string[] {
   return parts.length ? parts : [trimmed];
 }
 
+function splitBlockForXhsDisplay(block: string): string[] {
+  const line = block.trim();
+  if (!line) return [];
+  if (line.startsWith("·") || line.startsWith("-") || line.startsWith("•")) {
+    return [line.replace(/^[\-*•]\s*/, "· ")];
+  }
+  if (/^[①②③④⑤⑥⑦⑧⑨⑩]/.test(line)) {
+    return [line];
+  }
+  if (line.length > MAX_PARA_CHARS) {
+    return splitLongParagraph(line);
+  }
+  const sentences = line.split(/(?<=[。！？；])\s*/).map((s) => s.trim()).filter(Boolean);
+  if (sentences.length >= 2 && line.length >= 36) {
+    return sentences;
+  }
+  return [line];
+}
+
 /** 将正文拆为适合 UI 渲染的段落列表 */
 export function xhsBodyDisplayParagraphs(body: string): string[] {
   const normalized = xhsBodyPlainText(body);
@@ -49,13 +68,7 @@ export function xhsBodyDisplayParagraphs(body: string): string[] {
   const blocks = normalized.split(/\n{2,}/);
   const out: string[] = [];
   for (const block of blocks) {
-    const line = block.trim();
-    if (!line) continue;
-    if (line.startsWith("·") || line.startsWith("-") || line.startsWith("•")) {
-      out.push(line.replace(/^[\-*•]\s*/, "· "));
-      continue;
-    }
-    out.push(...splitLongParagraph(line));
+    out.push(...splitBlockForXhsDisplay(block));
   }
   return out;
 }

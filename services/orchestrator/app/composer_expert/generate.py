@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from ..social_llm_utils import invoke_and_parse_social_json
 from ..social_publish_draft import generate_social_publish_draft, resolve_social_publish_material
+from ..social_xhs import build_xhs_native_readability_block
 from .intake import _infer_xhs
 from .schema import validate_expert_deliverable
 
@@ -180,6 +181,7 @@ def _compose_expert_writer_instructions(
         "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
         "输出必须是可直接发布的种草/推广笔记正文，禁止写「怎么写钩子/步骤拆解/同行可套用/今天拆解写法」类创作课或方法论。",
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
+        build_xhs_native_readability_block(composer_mode=True),
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
         "directions 数组须恰好 3 个对象：每项含 label(≤6字)、hint(≤12字)、title(≤20字)、body(完整正文)、interaction；"
@@ -479,9 +481,11 @@ def _composer_anti_template_extras(intake: dict[str, Any]) -> dict[str, Any]:
             "与创作任务无关的通用护肤/熬夜等案例",
             "复述【创作任务】标签或说明文字",
             "单段超过80字的密集文字墙",
+            "论文腔、第三人称说明书语气",
         ],
         "emojiLevel": "light",
         "openingMode": "scene" if note_type == "story" else "pain_question",
+        "voice": "first_person_casual",
     }
     skeleton = _XHS_NOTE_SKELETON.get(note_type)
     if skeleton:
@@ -712,7 +716,11 @@ def _format_xhs_body_readable(body: str, *, max_para_chars: int = 80) -> str:
             out_blocks.append(chunk)
             continue
         if len(chunk) <= max_para_chars:
-            out_blocks.append(chunk)
+            sentences = [s.strip() for s in re.split(r"(?<=[。！？；])\s*", chunk) if s.strip()]
+            if len(sentences) >= 2 and len(chunk) >= 36:
+                out_blocks.extend(sentences)
+            else:
+                out_blocks.append(chunk)
             continue
         sentences = re.split(r"(?<=[。！？；])\s*", chunk)
         buf = ""
