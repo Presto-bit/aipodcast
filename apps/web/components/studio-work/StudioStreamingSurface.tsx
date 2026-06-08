@@ -1,18 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
 import {
   manuscriptTitleBlocks,
-  resolveBodyForTitleIndex,
   resolveManuscriptVariant
 } from "../../lib/studioManuscriptView";
+import { studioStreamPhaseLabel } from "../../lib/studioComposeProgress";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
-import StudioEphemeralHint from "./StudioEphemeralHint";
 import StudioManuscriptReadable, { StudioVariantTabs } from "./StudioManuscriptReadable";
 
 export type StudioStreamingVariant = "idle" | "active" | "ready" | "diff";
+
+function StreamPhaseHint({ label }: { label: string }) {
+  if (!label.trim()) return null;
+  return (
+    <p className="mb-2 flex items-center gap-2 text-[11px] text-brand">
+      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
+      {label}
+    </p>
+  );
+}
 
 /** Cursor 式 Agent 输出面：流式 / 成稿（flowLayout 时参与页面全局滚动） */
 export default function StudioStreamingSurface({
@@ -24,7 +32,8 @@ export default function StudioStreamingSurface({
   variant = "active",
   version = null,
   onTitleIndexChange,
-  flowLayout = false
+  flowLayout = false,
+  isRevise = false
 }: {
   phase?: string;
   taskSentence?: string;
@@ -35,8 +44,9 @@ export default function StudioStreamingSurface({
   version?: ManuscriptVersion | null;
   onTitleIndexChange?: (index: number) => void;
   flowLayout?: boolean;
+  isRevise?: boolean;
 }) {
-  const [streamHint, setStreamHint] = useState("");
+  void taskSentence;
   const [previewIndex, setPreviewIndex] = useState(0);
 
   const isActive = variant === "active";
@@ -46,28 +56,22 @@ export default function StudioStreamingSurface({
     return version?.blocks ?? [];
   }, [blocks, version?.blocks]);
 
-  const blockBody = resolveBodyForTitleIndex(displayBlocks, previewIndex)?.text ?? "";
-  const targetBody = (bodyText ?? blockBody).trim();
-  const displayBody = isReadyLike ? blockBody.trim() : targetBody;
   const titles = useMemo(() => manuscriptTitleBlocks(displayBlocks), [displayBlocks]);
-  const hasContent = Boolean(displayBody || titles.length);
+  const hasContent = Boolean(
+    bodyText?.trim() ||
+      titles.length ||
+      displayBlocks.some((b) => b.kind === "body" && b.text.trim())
+  );
   const titleIndex = version ? (version.primaryTitleIndex ?? previewIndex) : previewIndex;
   const activeIndex = onTitleIndexChange ? titleIndex : previewIndex;
+
+  const streamPhase = isActive
+    ? studioStreamPhaseLabel({ runPhase: phase, hasStream: hasContent, isRevise })
+    : "";
 
   useEffect(() => {
     if (previewIndex >= titles.length) setPreviewIndex(0);
   }, [previewIndex, titles.length]);
-
-  useEffect(() => {
-    if (isReadyLike) return;
-    const label = phase?.trim();
-    if (!label) return;
-    const taskLine = taskSentence?.trim()
-      ? `任务 · ${taskSentence.trim().slice(0, 120)}`
-      : null;
-    const phaseLine = phaseToGenerateStreamLine(label);
-    setStreamHint([taskLine, phaseLine].filter(Boolean).join(" · "));
-  }, [phase, taskSentence, isReadyLike]);
 
   if (isReadyLike && version) {
     return (
@@ -77,29 +81,24 @@ export default function StudioStreamingSurface({
 
   if (flowLayout) {
     if (!hasContent) {
-      return (
+      return isActive ? (
         <div className="text-left">
-          {streamHint ? <StudioEphemeralHint text={streamHint} ttlMs={4000} /> : null}
-          {isActive ? (
-            <p className="mt-2 text-[13px] text-muted/70">正在撰写…</p>
-          ) : (
-            <p className="text-[13px] text-muted">准备根据你的需求撰写笔记…</p>
-          )}
+          <StreamPhaseHint label={streamPhase} />
+          <div className="min-h-[3rem]" aria-hidden />
         </div>
-      );
+      ) : null;
     }
 
     const slice = resolveManuscriptVariant(displayBlocks, activeIndex);
-    const streamVariant = {
-      ...slice,
-      body: displayBody || slice.body
-    };
+    const streamingBody = bodyText?.trim();
+    const streamVariant =
+      isActive && streamingBody && activeIndex === 0
+        ? { ...slice, body: streamingBody }
+        : slice;
 
     return (
       <div className="text-left">
-        {streamHint ? (
-          <StudioEphemeralHint text={streamHint} ttlMs={4000} className="mb-2" />
-        ) : null}
+        <StreamPhaseHint label={streamPhase} />
 
         {titles.length > 1 ? (
           <StudioVariantTabs
@@ -112,7 +111,7 @@ export default function StudioStreamingSurface({
           />
         ) : null}
 
-        <StudioManuscriptReadable variant={streamVariant} trailingCursor={isActive} />
+        <StudioManuscriptReadable key={activeIndex} variant={streamVariant} trailingCursor={isActive} />
 
         {onCancel && isActive ? (
           <button
@@ -127,11 +126,5 @@ export default function StudioStreamingSurface({
     );
   }
 
-  return (
-    <StudioOutputManuscript
-      version={null}
-      generatingPhase={phase || "写稿中…"}
-      generatingTask={taskSentence}
-    />
-  );
+  return <StudioOutputManuscript version={null} generatingPhase={phase || "写稿中…"} />;
 }

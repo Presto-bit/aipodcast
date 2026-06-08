@@ -20,32 +20,25 @@ export function isStudioComposeAckTurn(turn: StudioAgentTurn): boolean {
 
 export function isStudioComposeWrapUpTurn(turn: StudioAgentTurn): boolean {
   if (turn.intent === "compose_wrap_up") return true;
-  const head = turn.content.trim().slice(0, 8);
-  return head.startsWith("写稿完成") || head.startsWith("改版完成");
+  const head = turn.content.trim().slice(0, 16);
+  return (
+    head.startsWith("写稿完成") ||
+    head.startsWith("改版完成") ||
+    head.startsWith("已按你的意见") ||
+    head.startsWith("已生成") ||
+    head.startsWith("成稿已就绪")
+  );
 }
 
-/** Cursor 式写稿/改版收尾（按时间线排在成稿之后） */
+/** Cursor 式收尾：结果 → 看哪里 → 下一步（单行，各一句） */
 export function buildStudioComposeWrapUp(tool: "compose" | "revise", variantCount = 3): string {
   if (tool === "revise") {
-    return [
-      "改版完成。",
-      "你可以继续用一句话微调，例如：",
-      "· 「再短一点，保留卖点」",
-      "· 「语气更像博主聊天」",
-      "· 「只改标题，正文别动」"
-    ].join("\n");
+    return "已按你的意见改完成稿。还不满意就继续在下方说；可以了就用复制按钮带走。";
   }
-  const n = Math.max(variantCount, 2);
-  const tabHint =
-    n > 1 ? "点上方「痛点向 / 好奇向 / 数字向」可切换整篇文案，" : "";
-  return [
-    "写稿完成。",
-    `${tabHint}标题、正文、互动与话题会一起切换。`,
-    "接下来你可以：",
-    "· 选一个方向继续改，例如「好奇向再口语一点」",
-    "· 点击复制按钮带走成稿",
-    "· 说「再写一版偏故事型」换全新方向"
-  ].join("\n");
+  if (variantCount > 1) {
+    return "已生成痛点 / 好奇 / 数字三个方向成稿。先切换上方标签挑选，选中后直接在下方说怎么改。";
+  }
+  return "成稿已就绪。要改语气或结构，直接在下方说；满意就复制带走。";
 }
 
 export type StudioTimelineDialogueItem = {

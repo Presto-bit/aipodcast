@@ -68,7 +68,7 @@ const wrapWork: StudioWork = {
     {
       id: "wrap-1",
       role: "assistant",
-      content: "写稿完成。\n接下来你可以：",
+      content: "写稿完成。切换方向可看三篇成稿。",
       intent: "compose_wrap_up",
       createdAt: 3
     }

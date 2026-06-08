@@ -1,18 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { STUDIO_MANUSCRIPT_BODY } from "../../lib/studioOutputTypography";
 import {
   manuscriptTitleBlocks,
   resolveManuscriptVariant,
   resolvePrimaryTitleIndex
 } from "../../lib/studioManuscriptView";
-import { phaseToGenerateStreamLine } from "../../lib/studioGenerateStream";
-import { studioComposeProgressLabel } from "../../lib/studioComposeProgress";
-import { humanizeComposePhase } from "../../lib/studioAgentReadable";
 import type { ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
-import StudioEphemeralHint from "./StudioEphemeralHint";
 import StudioManuscriptReadable, { StudioVariantTabs } from "./StudioManuscriptReadable";
 
 function IconCopy({ className }: { className?: string }) {
@@ -33,61 +28,33 @@ function IconCopy({ className }: { className?: string }) {
   );
 }
 
-/** 输出区稿件：标题 chip 切换变体，结构化只读排版 */
+/** 输出区稿件：方向 Tab 切换三篇成稿，结构化只读排版 */
 export default function StudioOutputManuscript({
   version,
   onTitleIndexChange,
-  generatingPhase,
-  generatingTask
+  generatingPhase
 }: {
   version: ManuscriptVersion | null;
   onTitleIndexChange?: (index: number) => void;
+  /** 写稿进度仅展示在输入框 footer，此处仅占位 */
   generatingPhase?: string;
   generatingTask?: string;
 }) {
   const sourceBlocks = version?.blocks ?? [];
-  const [progressHint, setProgressHint] = useState("");
+  const titles = manuscriptTitleBlocks(sourceBlocks);
+  const persistedIndex = resolvePrimaryTitleIndex(version, titles.length);
+  const [titleIndex, setTitleIndex] = useState(persistedIndex);
 
   useEffect(() => {
-    if (!generatingPhase) {
-      setProgressHint("");
-      return;
-    }
-    const taskLine = generatingTask?.trim()
-      ? `任务：${generatingTask.trim().slice(0, 160)}`
-      : "";
-    const phaseLine = phaseToGenerateStreamLine(generatingPhase);
-    setProgressHint([taskLine, phaseLine].filter(Boolean).join(" · "));
-  }, [generatingPhase, generatingTask]);
+    setTitleIndex(persistedIndex);
+  }, [persistedIndex, version?.id]);
 
   if (generatingPhase) {
-    const label =
-      studioComposeProgressLabel({ runPhase: generatingPhase }) ||
-      humanizeComposePhase(generatingPhase) ||
-      "写稿中…";
-    return (
-      <div className="text-left">
-        <p className="flex items-center gap-2 text-sm text-brand">
-          <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-brand" aria-hidden />
-          {label}
-        </p>
-        {progressHint ? (
-          <StudioEphemeralHint text={progressHint} ttlMs={4000} className="mt-1.5" />
-        ) : (
-          <StudioEphemeralHint
-            text="通常需要 30 秒到 2 分钟，成稿会出现在下方"
-            ttlMs={4000}
-            className="mt-1.5"
-          />
-        )}
-      </div>
-    );
+    return <div className="min-h-[4rem]" aria-hidden />;
   }
 
   if (!sourceBlocks.length) return null;
 
-  const titles = manuscriptTitleBlocks(sourceBlocks);
-  const titleIndex = resolvePrimaryTitleIndex(version, titles.length);
   const variant = resolveManuscriptVariant(sourceBlocks, titleIndex);
   const showTabs = titles.length > 1 && Boolean(onTitleIndexChange);
 
@@ -97,11 +64,14 @@ export default function StudioOutputManuscript({
         <StudioVariantTabs
           titles={titles}
           titleIndex={titleIndex}
-          onTitleIndexChange={onTitleIndexChange!}
+          onTitleIndexChange={(index) => {
+            setTitleIndex(index);
+            onTitleIndexChange?.(index);
+          }}
         />
       ) : null}
 
-      <StudioManuscriptReadable variant={variant} />
+      <StudioManuscriptReadable key={titleIndex} variant={variant} />
 
       {version ? (
         <div className="mt-3 flex justify-start">

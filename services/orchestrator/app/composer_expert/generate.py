@@ -183,7 +183,7 @@ def _compose_expert_writer_instructions(
         "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
         "titles 数组须恰好 3 个备选标题（痛点型/好奇型/数字型各一，每个≤20字）。",
-        "bodies 数组须恰好 3 个正文变体，与 titles 顺序一一对应（痛点向/好奇向/数字向），每篇角度与写法须明显不同。",
+        "bodies 数组须恰好 3 个正文变体，与 titles 顺序一一对应（痛点向/好奇向/数字向），每篇须是独立成稿，正文角度与写法须明显不同，禁止只改标题。",
         "interactions 数组须恰好 3 个互动引导句，与 titles/bodies 一一对应，语气随各方向变化。",
         "开头前两行须有强钩子：具体场景、痛点问句、数字结果或反常识，禁止「很多人/近年来」式空泛开场。",
         "正文段内用句号衔接，避免连续空行；可用 sections 或 body，但优先输出 bodies 数组。",
@@ -303,7 +303,7 @@ def _count_body_list_items(body: str) -> int:
 
 
 def _expand_bodies_to_three(bodies: list[str], titles: list[str], fallback: str) -> list[str]:
-    """模型常只回 1 个 body：用 titles 方向补齐 3 套，避免校验失败。"""
+    """模型常只回 1 个 body：按方向补齐 3 套完整正文变体。"""
     cleaned = [str(b).strip() for b in bodies if str(b).strip()]
     seed = cleaned[0] if cleaned else str(fallback or "").strip()
     if not seed:
@@ -319,25 +319,32 @@ def _expand_bodies_to_three(bodies: list[str], titles: list[str], fallback: str)
         title = title_list[i]
         if i == 0:
             out.append(seed)
-        elif title and title not in seed[: min(len(title) + 8, len(seed))]:
-            out.append(f"{title} {seed}")
+        elif i == 1:
+            hook = title or "这件事"
+            out.append(f"先别划走——{hook}到底怎么回事？{seed}")
         else:
-            out.append(seed)
+            lead = title or "这3点"
+            out.append(f"{lead}：我踩坑后总结了3条。{seed}")
     return out[:3]
 
 
 def _expand_interactions_to_three(interactions: list[str], fallback: str) -> list[str]:
-    """模型常只回 1 个 interaction：补齐 3 套以配合 best-of Tab。"""
+    """模型常只回 1 个 interaction：按方向补齐 3 套互动句。"""
     cleaned = [str(x).strip() for x in interactions if str(x).strip()]
     seed = cleaned[0] if cleaned else str(fallback or "").strip()
-    if not seed:
-        return []
+    defaults = (
+        seed or "你最怕哪一步？评论区说说。",
+        "还想看后续吗？评论告诉我你最关心什么。",
+        "你踩过几个坑？评论报数字，我帮你对号入座。",
+    )
     out: list[str] = []
     for i in range(3):
         if i < len(cleaned):
             out.append(cleaned[i])
-        else:
+        elif i == 0 and seed:
             out.append(seed)
+        else:
+            out.append(defaults[i])
     return out[:3]
 
 

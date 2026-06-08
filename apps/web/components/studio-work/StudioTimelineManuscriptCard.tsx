@@ -51,17 +51,14 @@ export default function StudioTimelineManuscriptCard({
             phase={phase}
             taskSentence={taskSentence}
             flowLayout
+            isRevise={run.tool === "revise"}
           />
         </div>
       );
     }
     return (
       <div className="mt-2">
-        <StudioOutputManuscript
-          version={run.tool === "revise" ? baseVersion : null}
-          generatingPhase={phase}
-          generatingTask={taskSentence}
-        />
+        <StudioOutputManuscript version={run.tool === "revise" ? baseVersion : null} generatingPhase={phase} />
       </div>
     );
   }

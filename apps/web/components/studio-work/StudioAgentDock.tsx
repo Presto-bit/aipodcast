@@ -7,7 +7,7 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
-import { studioComposeProgressLabel } from "../../lib/studioComposeProgress";
+import { studioComposerProgressLabel } from "../../lib/studioComposeProgress";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
@@ -191,7 +191,7 @@ export default function StudioAgentDock({
       Boolean(ephemeralHint) ||
       agentBusy ||
       jobRunning);
-  const composeProgressLabel = studioComposeProgressLabel({
+  const composeProgressLabel = studioComposerProgressLabel({
     runPhase: work.runPhase,
     hasStream: Boolean(streamingBlocks?.length || streamingBodyText?.trim()),
     isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
@@ -749,12 +749,7 @@ export default function StudioAgentDock({
         {agentRouteHint || ephemeralHint ? (
           <StudioEphemeralHint text={agentRouteHint || ephemeralHint} ttlMs={4000} />
         ) : null}
-        {jobRunning ? (
-          <p className="flex items-center gap-1.5 text-[11px] text-brand">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-brand" aria-hidden />
-            {composeProgressLabel}
-          </p>
-        ) : agentBusy && dockPhase ? (
+        {!jobRunning && agentBusy && dockPhase ? (
           <p className="text-[11px] text-brand">{dockPhase}</p>
         ) : null}
       </StudioEphemeralPanel>
