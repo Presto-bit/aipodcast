@@ -2,13 +2,14 @@ import { describe, expect, it } from "vitest";
 import { studioSemanticPhase } from "../studioPhaseLabel";
 
 describe("studioSemanticPhase", () => {
-  it("humanizes prep phase instead of showing 正在写标题", () => {
+  it("humanizes prep phase without backend direction jargon", () => {
     const label = studioSemanticPhase({
       runPhase: "正在撰写标题与正文…",
       tool: "generate"
     });
     expect(label).not.toBe("正在写标题…");
-    expect(label).toContain("成稿");
+    expect(label).toBe("正在撰写成稿…");
+    expect(label).not.toMatch(/方向|三/);
   });
 
   it("shows stream output label when blocks arrive", () => {
