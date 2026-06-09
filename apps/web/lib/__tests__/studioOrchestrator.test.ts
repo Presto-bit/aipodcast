@@ -72,22 +72,54 @@ describe("studioOrchestrator", () => {
   });
 
   it("routes ready revise intent to revise", () => {
-    const revise = routeStudioAction(
-      baseWork({
-        status: "ready",
-        versions: [
-          {
-            id: "v1",
-            label: "v1",
-            createdAt: 1,
-            blocks: [{ id: "b1", kind: "body", text: "正文" }]
-          }
-        ],
-        activeVersionId: "v1"
-      }),
-      "把标题改得更犀利一点"
-    );
+    const readyWork = baseWork({
+      status: "ready",
+      versions: [
+        {
+          id: "v1",
+          label: "v1",
+          createdAt: 1,
+          blocks: [{ id: "b1", kind: "body", text: "正文" }]
+        }
+      ],
+      activeVersionId: "v1"
+    });
+    const revise = routeStudioAction(readyWork, "把标题改得更犀利一点");
     expect(revise.tool).toBe("revise");
+  });
+
+  it("routes ready length constraint to revise", () => {
+    const readyWork = baseWork({
+      status: "ready",
+      versions: [
+        {
+          id: "v1",
+          label: "v1",
+          createdAt: 1,
+          blocks: [{ id: "b1", kind: "body", text: "正文" }]
+        }
+      ],
+      activeVersionId: "v1"
+    });
+    const lengthEdit = routeStudioAction(readyWork, "写500字");
+    expect(lengthEdit.tool).toBe("revise");
+  });
+
+  it("routes ready explicit question to ask", () => {
+    const readyWork = baseWork({
+      status: "ready",
+      versions: [
+        {
+          id: "v1",
+          label: "v1",
+          createdAt: 1,
+          blocks: [{ id: "b1", kind: "body", text: "正文" }]
+        }
+      ],
+      activeVersionId: "v1"
+    });
+    const ask = routeStudioAction(readyWork, "这段为什么这样写？");
+    expect(ask.tool).toBe("ask");
   });
 
   it("routes merged chip brief to generate", () => {

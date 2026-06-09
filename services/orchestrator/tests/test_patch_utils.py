@@ -6,6 +6,11 @@ def test_title_only_scope():
     assert "title" in scopes
 
 
+def test_length_constraint_scope():
+    scopes = infer_patch_scope("写500字")
+    assert "body" in scopes
+
+
 def test_pending_patch_title_only():
     base = [
         {"id": "t1", "kind": "title", "text": "旧标题"},

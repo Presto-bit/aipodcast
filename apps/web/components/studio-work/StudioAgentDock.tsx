@@ -44,7 +44,6 @@ import { STUDIO_REVISE_INTENT_RE } from "../../lib/studioReviseIntent";
 import { appendFollowUp, followUpHint } from "../../lib/studioFollowUpQueue";
 import { studioCommandPlaceholder } from "../../lib/studioCommandBar";
 import StudioEmptyState from "./StudioEmptyState";
-import StudioTrustBar from "./StudioTrustBar";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
@@ -770,15 +769,6 @@ export default function StudioAgentDock({
           />
         }
       />
-      {!centerEmptyComposer && (turns.length > 0 || pendingPatch) ? (
-        <div className="mt-1.5">
-          <StudioTrustBar
-            work={work}
-            taskSummary={work.brief}
-            onCorpusClick={() => setCorpusMenuOpen(true)}
-          />
-        </div>
-      ) : null}
     </>
   );
   const loginNotice =
@@ -824,7 +814,6 @@ export default function StudioAgentDock({
       onTogglePatchKey={onTogglePatchKey}
       onUndo={onUndoApply}
       onRetryError={onRetryLast}
-      onCorpusMenuOpen={() => setCorpusMenuOpen(true)}
       selectionHighlight={selectedSnippet || undefined}
       onTextSelect={onSelectionChange}
       activeAgentStatus={agentOutputStatus}

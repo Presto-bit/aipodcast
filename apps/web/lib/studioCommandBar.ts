@@ -14,7 +14,7 @@ export function studioCommandPlaceholder(params: {
   if (params.generating) return "可继续输入约束，或点 Stop 停止…";
   if (params.hasPendingPatch) return "说怎么改，或在上方勾选后采纳…";
   if (params.status === "ready" || params.status === "shipped") {
-    return "选中文字后说怎么改，或直接描述改版…";
+    return "将按你的要求修改当前稿件（如：写500字、扩写、改语气）· 纯提问请加？";
   }
   return "描述想写什么，或提问结构、语气、资料…";
 }

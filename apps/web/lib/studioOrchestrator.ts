@@ -1,5 +1,10 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
-import { STUDIO_REVISE_INTENT_RE } from "./studioReviseIntent";
+import {
+  isExplicitAskWhileReady,
+  looksLikeManuscriptEditRequest,
+  STUDIO_LENGTH_CONSTRAINT_RE,
+  STUDIO_REVISE_INTENT_RE
+} from "./studioReviseIntent";
 import { composeTaskSentenceFromTurns, hasTaskContext } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type {
@@ -92,18 +97,28 @@ export function routeStudioAction(
     };
   }
 
-  if (
-    (work.status === "ready" || work.status === "shipped") &&
-    (work.versions?.length ?? 0) > 0 &&
-    (/改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化/.test(q) ||
-      STUDIO_REVISE_INTENT_RE.test(q))
-  ) {
-    return {
-      tool: "revise",
-      intent: "revise_coach",
-      note: "Editing… · 将局部改版",
-      askContext: { includeManuscript: true, includeMemory: true }
-    };
+  const hasMs = (work.versions?.length ?? 0) > 0;
+  if ((work.status === "ready" || work.status === "shipped") && hasMs) {
+    if (isExplicitAskWhileReady(q)) {
+      return {
+        tool: "ask",
+        intent,
+        note: "Answering… · 问答",
+        askContext: { includeManuscript: true, includeMemory: true }
+      };
+    }
+    if (
+      looksLikeManuscriptEditRequest(q, true) ||
+      STUDIO_REVISE_INTENT_RE.test(q) ||
+      STUDIO_LENGTH_CONSTRAINT_RE.test(q)
+    ) {
+      return {
+        tool: "revise",
+        intent: "revise_coach",
+        note: "Editing… · 修改当前稿件",
+        askContext: { includeManuscript: true, includeMemory: true }
+      };
+    }
   }
 
   if (

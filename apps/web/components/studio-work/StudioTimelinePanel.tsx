@@ -34,7 +34,6 @@ export default function StudioTimelinePanel({
   onTogglePatchKey,
   onUndo,
   onRetryError,
-  onCorpusMenuOpen,
   selectionHighlight,
   onTextSelect,
   activeAgentStatus = null
@@ -65,7 +64,6 @@ export default function StudioTimelinePanel({
   onTogglePatchKey?: (key: string) => void;
   onUndo?: () => void;
   onRetryError?: () => void;
-  onCorpusMenuOpen?: () => void;
   selectionHighlight?: string;
   onTextSelect?: (text: string) => void;
   activeAgentStatus?: ReactNode;
@@ -123,7 +121,6 @@ export default function StudioTimelinePanel({
               onDiscardPatch={onDiscardPatch}
               onTogglePatchKey={onTogglePatchKey}
               onRetryError={onRetryError}
-              onCorpusMenuOpen={onCorpusMenuOpen}
               selectionHighlight={selectionHighlight}
               onTextSelect={onTextSelect}
             />

@@ -4,7 +4,7 @@ import { parseStudioPlannerDecision, studioPlannerGhostLabelZh } from "../studio
 import { buildStudioEvidenceBar } from "../studioEvidenceBar";
 import { classifyStudioFailure } from "../studioAgentFailure";
 import { shouldAutoApplyPatch } from "../studioEditorMode";
-import { looksLikeReviseRequest } from "../studioReviseIntent";
+import { looksLikeReviseRequest, buildLengthPatchOpinion } from "../studioReviseIntent";
 import { diffLines } from "../studioLineDiff";
 import { STUDIO_WORK_SCHEMA_VERSION, migrateStudioWorkToV3 } from "../studioWorkMigrate";
 import type { StudioWork } from "../studioWorkTypes";
@@ -53,6 +53,13 @@ describe("studio V2", () => {
   it("style revise intent", () => {
     expect(looksLikeReviseRequest("写的更小红书体一些", true)).toBe(true);
     expect(looksLikeReviseRequest("我想写一篇小红书推广", false)).toBe(false);
+  });
+
+  it("length constraint maps to patch opinion", () => {
+    expect(looksLikeReviseRequest("写500字", true)).toBe(true);
+    const opinion = buildLengthPatchOpinion("写500字");
+    expect(opinion).toContain("500");
+    expect(opinion).toContain("【块级改版】");
   });
 
   it("explore mode auto applies", () => {

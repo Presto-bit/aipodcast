@@ -5,12 +5,19 @@ import re
 from typing import Any
 
 
+LENGTH_CONSTRAINT = re.compile(
+    r"写\s*\d+\s*字|约?\s*\d+\s*字|到\s*\d+\s*字|字数|篇幅|扩写|写长|写短|太短|太长|精简|压缩|扩充"
+)
+
+
 def infer_patch_scope(message: str) -> set[str]:
     q = str(message or "").strip()
     scopes: set[str] = set()
     if re.search(r"只改标题|改标题|标题改|别动正文|仅改标题", q):
         scopes.add("title")
     if re.search(r"只改正文|改正文|别动标题|第二段|段落", q):
+        scopes.add("body")
+    if LENGTH_CONSTRAINT.search(q):
         scopes.add("body")
     if re.search(r"话题|hashtag|标签", q) and re.search(r"改|换|优化", q):
         scopes.add("hashtags")

@@ -25,10 +25,11 @@ from ..social_llm_utils import extract_partial_social_json_fields, invoke_social
 from .agent_route import (
     build_compose_task_sentence,
     compose_soft_failure_code,
+    is_ask_only,
     is_insufficient_brief,
     reply_for_blocking,
 )
-from .agent_loop import run_agent_tool_loop
+from .agent_loop import manuscript_plain_from_payload, run_agent_tool_loop
 from .agent_tool_schema import normalize_agent_mode
 from .patch_utils import build_pending_patch_payload
 
@@ -199,6 +200,17 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     intake_raw = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
     if tool == "revise":
         task_sentence = str(payload.get("taskSentence") or decision.brief or message).strip() or message
+        ms_plain = manuscript_plain_from_payload(payload, max_chars=2400)
+        if ms_plain and "【当前稿件】" not in task_sentence:
+            task_sentence = "\n\n".join(
+                [
+                    task_sentence,
+                    f"【当前稿件】\n{ms_plain}",
+                    f"改版意见：{message.strip()}",
+                ]
+            ).strip()
+        if "勿另起新篇" not in task_sentence:
+            task_sentence += "\n\n（在现有正文基础上修改，勿另起新篇；保留主题与结构）"
     elif tool == "compose":
         task_sentence = decision.brief.strip() or build_compose_task_sentence(
             turns, current_message=message

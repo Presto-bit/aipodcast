@@ -21,13 +21,14 @@ export function userMessageLooksLikeQuestion(text: string): boolean {
   return /[?？]$|怎么|如何|为什么|为啥|什么|多少|是否|吗$/.test(q);
 }
 
-/** 成稿后 canvas reply：无明确问句时不插 assistant（Cursor silent） */
+/** 成稿后：非纯问句的 reply 不插入气泡（P2：改稿指令应走 canvas，不走 coach） */
 export function shouldSuppressStudioCanvasReply(work: StudioWork, userMessage: string): boolean {
   const ready = work.status === "ready" || work.status === "shipped";
   if (!ready || work.versions.length === 0) return false;
   const q = userMessage.trim();
   if (!q) return true;
-  return !userMessageLooksLikeQuestion(q) && q.length < 24;
+  if (!userMessageLooksLikeQuestion(q)) return true;
+  return /怎么|如何|为什么|为啥|是否|能不能|可以吗/.test(q) === false;
 }
 
 /** Studio 对话区 ask：Cursor 式结构化收尾（仅 JSON，无自由附言） */

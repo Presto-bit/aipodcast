@@ -185,6 +185,14 @@ def _reconcile_decision(
     if is_ask_only(message, has_manuscript=version_count > 0):
         llm_tool = "reply"
 
+    if (
+        version_count > 0
+        and status in ("ready", "shipped")
+        and rule.tool == "revise"
+        and not is_ask_only(message, has_manuscript=True)
+    ):
+        llm_tool = "revise"
+
     tool: StudioTool = llm_tool
     source: RouteSource = "llm"
     reason = f"LLM：{tool}"
@@ -205,6 +213,17 @@ def _reconcile_decision(
         tool = "reply"
         source = "mixed"
         reason = "护栏：纯问答禁止成稿"
+
+    if (
+        version_count > 0
+        and status in ("ready", "shipped")
+        and rule.tool == "revise"
+        and not is_ask_only(message, has_manuscript=True)
+        and tool in ("reply", "compose")
+    ):
+        tool = "revise"
+        source = "mixed"
+        reason = "护栏：有稿禁止降为 reply/compose"
 
     if rule.tool == tool:
         source = "mixed" if source == "llm" else "rules"

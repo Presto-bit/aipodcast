@@ -42,7 +42,10 @@ import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { classifyStudioFailure } from "../../lib/studioAgentFailure";
 import { mergeDomainContext } from "../../lib/studioDomainProfile";
 import { shouldAutoApplyPatch, shouldShowQualityNote } from "../../lib/studioEditorMode";
-import { looksLikeReviseRequest } from "../../lib/studioReviseIntent";
+import {
+  looksLikeManuscriptEditRequest,
+  wrapManuscriptEditOpinion
+} from "../../lib/studioReviseIntent";
 import {
   abortWorkStream,
   clearWorkStream,
@@ -239,9 +242,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const baseVersion =
         cur0.versions.find((v) => v.id === cur0.activeVersionId) ?? cur0.versions.at(-1);
       const isReviseIntent =
-        looksLikeReviseRequest(params.userText, Boolean(baseVersion)) || Boolean(snippet);
+        looksLikeManuscriptEditRequest(params.userText, Boolean(baseVersion)) || Boolean(snippet);
       if (isReviseIntent && !outgoingText.startsWith("【块级改版】")) {
-        outgoingText = buildBlockPatchOpinion(params.userText);
+        outgoingText = wrapManuscriptEditOpinion(params.userText);
       }
       const forceReviewPatch =
         isReviseIntent && Boolean(baseVersion?.blocks.length);
@@ -433,13 +436,13 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
       const manuscriptBlocks = baseVersion?.blocks ?? [];
 
-      try {
-        const result = await streamStudioAgent({
-          message: outgoingText,
+      const runOneStream = (streamMessage: string, streamTaskSentence: string) =>
+        streamStudioAgent({
+          message: streamMessage,
           agentTurns: params.prefixTurns,
           status: cur.status,
           versionCount: cur.versions.length,
-          taskSentence: effectiveTaskSentence,
+          taskSentence: streamTaskSentence,
           intake,
           notebook: cur.binding.notebook,
           noteIds: cur.binding.noteIds,
@@ -510,6 +513,21 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             patchWorkStreamUi(workId, { streamOptimizing: true });
           }
         });
+
+      try {
+        let result = await runOneStream(outgoingText, effectiveTaskSentence);
+        if (result.status === "reply" && baseVersion) {
+          const liveForRetry = getStudioWork(workId);
+          if (liveForRetry && shouldSuppressStudioCanvasReply(liveForRetry, params.userText)) {
+            const retryMessage = wrapManuscriptEditOpinion(params.userText);
+            const retryTask = buildStudioReviseTaskSentence(
+              composeTask,
+              manuscriptCopyAll(baseVersion.blocks, baseVersion.primaryTitleIndex ?? 0),
+              retryMessage
+            );
+            result = await runOneStream(retryMessage, retryTask);
+          }
+        }
 
         if (ac.signal.aborted || result.status === "aborted") {
           const live = getStudioWork(workId);

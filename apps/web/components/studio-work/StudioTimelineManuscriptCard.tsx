@@ -16,35 +16,29 @@ import type {
 import StudioErrorLine from "./StudioErrorLine";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 import StudioStreamingSurface from "./StudioStreamingSurface";
-import StudioTrustBar from "./StudioTrustBar";
 
 function PatchFooter({
   patch,
   work,
-  taskSummary,
   busy,
   selectedCount,
   onApplyPartial,
   onApplyAll,
-  onDiscard,
-  onCorpusClick
+  onDiscard
 }: {
   patch: PendingPatch;
   work: StudioWork;
-  taskSummary?: string;
   busy: boolean;
   selectedCount: number;
   onApplyPartial?: () => void;
   onApplyAll?: () => void;
   onDiscard?: () => void;
-  onCorpusClick?: () => void;
 }) {
   const showQuality = shouldShowQualityNote(work.editorMode) && patch.qualityNote;
   const hunkCount = (patch.changedKeys ?? patch.selections ?? []).length;
   return (
     <div className="mb-2 space-y-2 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2">
       <p className="text-[12px] font-medium text-ink">待确认 · {hunkCount} 处改动</p>
-      <StudioTrustBar work={work} taskSummary={taskSummary} onCorpusClick={onCorpusClick} />
       {patch.reason ? <p className="text-[10px] text-muted">{patch.reason}</p> : null}
       {showQuality ? (
         <p className="text-[11px] text-amber-800 dark:text-amber-200">{patch.qualityNote}</p>
@@ -223,7 +217,6 @@ export default function StudioTimelineManuscriptCard({
   onDiscardPatch,
   onTogglePatchKey,
   onRetryError,
-  onCorpusMenuOpen,
   selectionHighlight,
   onTextSelect
 }: {
@@ -243,7 +236,6 @@ export default function StudioTimelineManuscriptCard({
   onDiscardPatch?: () => void;
   onTogglePatchKey?: (key: string) => void;
   onRetryError?: () => void;
-  onCorpusMenuOpen?: () => void;
   selectionHighlight?: string;
   onTextSelect?: (text: string) => void;
 }) {
@@ -299,13 +291,11 @@ export default function StudioTimelineManuscriptCard({
         <PatchFooter
           patch={pendingPatch}
           work={work}
-          taskSummary={taskSentence}
           busy={busy}
           selectedCount={patchSelections.size}
           onApplyPartial={onApplyPatch ? () => onApplyPatch(true) : undefined}
           onApplyAll={onApplyPatch ? () => onApplyPatch(false) : undefined}
           onDiscard={onDiscardPatch}
-          onCorpusClick={onCorpusMenuOpen}
         />
         <MinimalPatchBlocks
           baseBlocks={baseVersion?.blocks ?? []}

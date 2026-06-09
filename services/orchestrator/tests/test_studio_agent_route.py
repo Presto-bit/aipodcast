@@ -34,3 +34,23 @@ def test_compose_routes_after_ask_then_promo_brief():
         task_sentence=task,
     )
     assert tool == "compose"
+
+
+def test_ready_length_constraint_routes_revise():
+    tool = route_studio_agent(
+        message="写500字",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert tool == "revise"
+
+
+def test_ready_explicit_ask_routes_reply():
+    tool = route_studio_agent(
+        message="这段为什么这样写？",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert tool == "reply"
