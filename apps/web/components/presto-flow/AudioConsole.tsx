@@ -6,11 +6,11 @@ import { Volume2 } from "../icons";
 import { IconPause, IconPlayFilled } from "../icons";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import ClipMaterialTimelineScrubber from "../clip/ClipMaterialTimelineScrubber";
-import { type ClipWaveformHandle } from "../clip/ClipWaveformPanel";
+import { type ClipAudioHandle } from "../clip/clipAudioHandle";
 import type { MaterialTimelineSlice } from "../../lib/clipVirtualTimeline";
 
 type Props = {
-  waveformRef: RefObject<ClipWaveformHandle | null>;
+  waveformRef: RefObject<ClipAudioHandle | null>;
   /** 以当前焦点词为中心，试听前后各 5 秒（含原片，不跳过剪掉段） */
   clipPreviewAroundLabel?: string;
   onClipPreviewAround?: () => void;
@@ -33,7 +33,9 @@ type Props = {
   /** 多段素材时在主进度条上方展示按段比例上色的总轨分段 */
   materialTimeline?: { slices: readonly MaterialTimelineSlice[]; totalMs: number } | null;
   onSeekMs?: (ms: number) => void;
-  /** 与 ClipWaveformPanel / ClipVirtualAudioTransport 的播放状态同步（由父组件传入） */
+  /** 提供时替代默认 waveformRef.playPause（如剪辑试听需先服务端生成） */
+  onPlayPause?: () => void;
+  /** 与 ClipAudioTransport / ClipVirtualAudioTransport 的播放状态同步（由父组件传入） */
   playing: boolean;
 };
 
@@ -65,6 +67,7 @@ export default function AudioConsole({
   currentTimeMs = 0,
   materialTimeline = null,
   onSeekMs,
+  onPlayPause,
   playing
 }: Props) {
   const [rateMenuOpen, setRateMenuOpen] = useState(false);
@@ -128,8 +131,12 @@ export default function AudioConsole({
   }, [volumeOpen]);
 
   const togglePlay = useCallback(() => {
+    if (onPlayPause) {
+      void onPlayPause();
+      return;
+    }
     waveformRef.current?.playPause();
-  }, [waveformRef]);
+  }, [onPlayPause, waveformRef]);
 
   const rates = DEFAULT_RATES;
   const labels = rateOptionLabels?.length === rates.length ? rateOptionLabels : null;

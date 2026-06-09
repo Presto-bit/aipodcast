@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { ClipWaveformHandle } from "./ClipWaveformPanel";
+import type { ClipAudioHandle } from "./clipAudioHandle";
 import type { VirtualAudioCue } from "../../lib/clipVirtualTimeline";
 import { totalVirtualDurationMs } from "../../lib/clipVirtualTimeline";
 
@@ -24,7 +24,7 @@ function findCueIndex(cues: readonly VirtualAudioCue[], globalMs: number): numbe
   return 0;
 }
 
-const ClipVirtualAudioTransport = forwardRef<ClipWaveformHandle, Props>(function ClipVirtualAudioTransport(
+const ClipVirtualAudioTransport = forwardRef<ClipAudioHandle, Props>(function ClipVirtualAudioTransport(
   { cues, onTimeMs, onLoadError, onPlayStateChange, playbackRate = 1, snapSeekMs, className },
   ref
 ) {

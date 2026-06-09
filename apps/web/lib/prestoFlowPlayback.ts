@@ -1,5 +1,53 @@
 import type { ClipWord } from "./clipTypes";
 
+function keptWordsSorted(words: readonly ClipWord[], excluded: ReadonlySet<string>): ClipWord[] {
+  return words.filter((w) => !excluded.has(w.id)).sort((a, b) => a.s_ms - b.s_ms);
+}
+
+/**
+ * 母带时间 → 剪辑试听轨近似位置（按保留词时长累加，不含短语桥接/crossfade）。
+ */
+export function approximateEditedTimelineMs(
+  words: readonly ClipWord[],
+  excluded: ReadonlySet<string>,
+  masterMs: number
+): number {
+  const kept = keptWordsSorted(words, excluded);
+  if (!kept.length) return 0;
+  const t = Math.max(0, masterMs);
+  let out = 0;
+  for (const w of kept) {
+    if (t >= w.e_ms) {
+      out += Math.max(0, w.e_ms - w.s_ms);
+      continue;
+    }
+    if (t >= w.s_ms) {
+      out += t - w.s_ms;
+      return Math.max(0, Math.round(out));
+    }
+    return Math.max(0, Math.round(out));
+  }
+  return Math.max(0, Math.round(out));
+}
+
+/** 剪辑试听轨时间 → 母带近似位置，供稿面高亮与 scrub 显示。 */
+export function approximateMasterTimelineMs(
+  words: readonly ClipWord[],
+  excluded: ReadonlySet<string>,
+  editedMs: number
+): number {
+  const kept = keptWordsSorted(words, excluded);
+  if (!kept.length) return 0;
+  let remain = Math.max(0, editedMs);
+  for (const w of kept) {
+    const dur = Math.max(0, w.e_ms - w.s_ms);
+    if (remain <= dur) return Math.max(0, Math.round(w.s_ms + remain));
+    remain -= dur;
+  }
+  const last = kept[kept.length - 1]!;
+  return Math.max(0, Math.round(last.e_ms));
+}
+
 /** 当前 ms 落在哪个词区间 [s_ms, e_ms)；否则 -1（仅当时间在某个词块内时命中） */
 export function findActiveWordIndex(words: readonly ClipWord[], ms: number): number {
   if (words.length === 0) return -1;

@@ -22,11 +22,14 @@ import type { ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/cli
 import { useI18n } from "../../lib/I18nContext";
 import {
   adjustPlaybackMsForExcluded,
+  approximateEditedTimelineMs,
+  approximateMasterTimelineMs,
   applyPlaybackPreRollBeforeNextKept,
   findPlaybackHighlightWordIndex,
   rawWithinFocusWordPlaybackHold,
   snapMsNearWordEdges
 } from "../../lib/prestoFlowPlayback";
+import { lameQFromExportOptions } from "../../lib/clipExportQuality";
 import {
   buildClipEditSuggestions,
   buildRuleVerbalReviewRequest,
@@ -45,16 +48,9 @@ import {
   maxEndMsForLineContainingWordId,
   wordIdsBetweenInclusive
 } from "../../lib/prestoFlowTranscript";
-import type { ClipWaveformHandle } from "../clip/ClipWaveformPanel";
-const ClipWaveformPanel = dynamic(() => import("../clip/ClipWaveformPanel"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex min-h-[120px] items-center justify-center rounded-xl border border-line/50 bg-fill/40 text-xs text-muted">
-      加载波形…
-    </div>
-  )
-});
-import ClipVirtualAudioTransport from "../clip/ClipVirtualAudioTransport";
+import type { ClipAudioHandle } from "../clip/clipAudioHandle";
+const ClipAudioTransport = dynamic(() => import("../clip/ClipAudioTransport"), { ssr: false });
+const ClipVirtualAudioTransport = dynamic(() => import("../clip/ClipVirtualAudioTransport"), { ssr: false });
 import {
   perStagingEntryDurationMs,
   sumStagingEntriesDurationMs
@@ -163,10 +159,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [dragSegmentId, setDragSegmentId] = useState<string | null>(null);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [insertingSegmentAudio, setInsertingSegmentAudio] = useState(false);
-  /** 词链试听：与终版导出同 ffmpeg 算法，单独对象键；波形 URL 切换，稿面时间戳仍对原片 */
+  /** 剪辑试听：与终版导出同管线，有删改时自动后台生成并切换波形源 */
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
   const [wordchainPreviewNonce, setWordchainPreviewNonce] = useState(0);
   const [wordchainPreviewBusy, setWordchainPreviewBusy] = useState(false);
+  const editedPreviewInFlightRef = useRef(false);
+  const pendingPlayAfterPreviewRef = useRef(false);
+  const transcriptUsesEditedPreviewRef = useRef(false);
+  const wordchainPreviewOnRef = useRef(false);
+  const needsEditedPreviewRef = useRef(false);
   const [deleteFeedback, setDeleteFeedback] = useState<string>("");
   /** Shift+点击或「整句」选中的词 id，Delete 批量标记删除 */
   const [multiSelectIds, setMultiSelectIds] = useState<Set<string>>(() => new Set());
@@ -206,7 +207,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   >([]);
   const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
-  const waveformRef = useRef<ClipWaveformHandle | null>(null);
+  const waveformRef = useRef<ClipAudioHandle | null>(null);
   const waveformLoadErrDedupRef = useRef<{ msg: string; at: number }>({ msg: "", at: 0 });
   /** 与 focusedWordId 同步，供 playback 回调读取 */
   const focusedWordIdRef = useRef<string | null>(null);
@@ -365,10 +366,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     }
   }, [projectId]);
 
-  useEffect(() => {
-    if (!project?.export_pause_policy?.enabled) setWordchainPreviewOn(false);
-  }, [project?.export_pause_policy?.enabled]);
-
   const rawWords = useMemo(() => {
     const w = project?.transcript_normalized?.words;
     return Array.isArray(w) ? (w as ClipWord[]) : [];
@@ -419,6 +416,25 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     () => new Set(silenceCutRanges.map((x) => `sil:${Math.round(x.start_ms)}-${Math.round(x.end_ms)}`)),
     [silenceCutRanges]
   );
+
+  /** 有删词或静音压缩即需剪辑试听（与导出同算法） */
+  const needsEditedPreview = excluded.size > 0 || silenceCutRanges.length > 0;
+
+  const editedPreviewFingerprint = useMemo(() => {
+    const pause = project?.export_pause_policy;
+    const pauseKey =
+      pause && typeof pause === "object" && pause.enabled
+        ? `${pause.long_gap_ms ?? ""}:${pause.cap_ms ?? ""}`
+        : "off";
+    return JSON.stringify({
+      excluded: [...excluded].sort(),
+      cuts: silenceCutRanges.map((c) => `${c.start_ms}-${c.end_ms}-${c.cap_ms ?? 0}`),
+      pause: pauseKey,
+      lameQ: lameQFromExportOptions(
+        (project?.export_options ?? null) as import("../../lib/clipExportQuality").ClipExportOptions | null
+      )
+    });
+  }, [excluded, silenceCutRanges, project?.export_pause_policy, project?.export_options]);
 
   const audioEvents = useMemo(() => {
     const tl = project?.timeline_json;
@@ -918,6 +934,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         waveformRef.current?.pause();
         sentenceAutopauseEndMsRef.current = null;
       }
+      if (transcriptUsesEditedPreviewRef.current) {
+        setPlaybackMs(approximateMasterTimelineMs(words, excludedRef.current, raw));
+        return;
+      }
       if (rawWithinFocusWordPlaybackHold(words, excludedRef.current, focusedWordIdRef.current, raw)) {
         setPlaybackMs(raw);
         return;
@@ -1121,21 +1141,44 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/file`
       : undefined;
 
-  const waveformAudioUrl =
-    wordchainPreviewOn && hasServerAudio
-      ? `/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview?cb=${wordchainPreviewNonce}`
-      : masterAudioUrl ?? singleSegmentFileUrl;
+  /** 稿面下方播放器：有删改时仅播剪辑试听 MP3，未生成完成前不回退原片 */
+  const transcriptUsesEditedPreview = needsEditedPreview && wordchainPreviewOn && hasServerAudio;
+
+  const transcriptPlayerAudioUrl = useMemo(() => {
+    if (!hasServerAudio) return undefined;
+    if (needsEditedPreview) {
+      if (!wordchainPreviewOn) return undefined;
+      return `/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview?cb=${wordchainPreviewNonce}`;
+    }
+    return masterAudioUrl ?? singleSegmentFileUrl;
+  }, [
+    hasServerAudio,
+    needsEditedPreview,
+    wordchainPreviewOn,
+    projectId,
+    wordchainPreviewNonce,
+    masterAudioUrl,
+    singleSegmentFileUrl
+  ]);
+
+  const useTranscriptVirtualPlayback = !needsEditedPreview && useVirtualMultiSegmentPlayback;
+
+  useEffect(() => {
+    transcriptUsesEditedPreviewRef.current = transcriptUsesEditedPreview;
+    wordchainPreviewOnRef.current = wordchainPreviewOn;
+    needsEditedPreviewRef.current = needsEditedPreview;
+  }, [transcriptUsesEditedPreview, wordchainPreviewOn, needsEditedPreview]);
 
   useEffect(() => {
     setWaveformPlaying(false);
     setWaveformErr("");
-  }, [waveformAudioUrl]);
+  }, [transcriptPlayerAudioUrl]);
 
-  const generateWordchainPreview = useCallback(async () => {
-    if (!ensureLoggedInForAction("词链试听", "presto.wordchain.preview")) return;
-    if (!hasServerAudio || project?.transcription_status !== "succeeded") return;
+  const generateEditedPreview = useCallback(async (): Promise<boolean> => {
+    if (!loggedIn || !hasServerAudio || project?.transcription_status !== "succeeded") return false;
+    if (editedPreviewInFlightRef.current) return false;
+    editedPreviewInFlightRef.current = true;
     setWordchainPreviewBusy(true);
-    setErr("");
     try {
       const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/audio/wordchain-preview`, {
         method: "POST",
@@ -1145,16 +1188,66 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       });
       const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
       if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `试听生成失败 ${res.status}`);
+        throw new Error(data.detail || `剪辑试听生成失败 ${res.status}`);
       }
       setWordchainPreviewNonce((n) => n + 1);
       setWordchainPreviewOn(true);
+      return true;
     } catch (e) {
+      pendingPlayAfterPreviewRef.current = false;
       setErr(String(e instanceof Error ? e.message : e));
+      return false;
     } finally {
+      editedPreviewInFlightRef.current = false;
       setWordchainPreviewBusy(false);
     }
-  }, [ensureLoggedInForAction, getAuthHeaders, hasServerAudio, project?.transcription_status, projectId]);
+  }, [getAuthHeaders, hasServerAudio, loggedIn, project?.transcription_status, projectId]);
+
+  /** 删改后使缓存试听失效，仅在用户按播放/空格时再生成 */
+  useEffect(() => {
+    if (!needsEditedPreview) {
+      setWordchainPreviewOn(false);
+      return;
+    }
+    setWordchainPreviewOn(false);
+  }, [editedPreviewFingerprint, needsEditedPreview]);
+
+  const handleTranscriptPlayPause = useCallback(async () => {
+    if (!hasServerAudio) return;
+    if (waveformPlaying) {
+      waveformRef.current?.pause();
+      return;
+    }
+    if (needsEditedPreview) {
+      if (!loggedIn || project?.transcription_status !== "succeeded") return;
+      if (!wordchainPreviewOn) {
+        pendingPlayAfterPreviewRef.current = true;
+        if (editedPreviewInFlightRef.current) return;
+        await generateEditedPreview();
+        return;
+      }
+    }
+    void waveformRef.current?.play();
+  }, [
+    generateEditedPreview,
+    hasServerAudio,
+    loggedIn,
+    needsEditedPreview,
+    project?.transcription_status,
+    waveformPlaying,
+    wordchainPreviewOn
+  ]);
+
+  useEffect(() => {
+    if (!pendingPlayAfterPreviewRef.current || !transcriptPlayerAudioUrl) return;
+    pendingPlayAfterPreviewRef.current = false;
+    void waveformRef.current?.play();
+  }, [transcriptPlayerAudioUrl]);
+
+  const generateWordchainPreview = useCallback(async () => {
+    if (!ensureLoggedInForAction("剪辑试听", "presto.wordchain.preview")) return;
+    await generateEditedPreview();
+  }, [ensureLoggedInForAction, generateEditedPreview]);
 
   /** 主音频 object_key 就绪即可拉静音分析，不依赖转写完成 */
   const loadSilenceSegments = useCallback(async () => {
@@ -1185,6 +1278,17 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     void loadSilenceSegments();
   }, [loadSilenceSegments]);
 
+  const resolveWaveformSeekMs = useCallback(
+    (masterMs: number, word?: ClipWord) => {
+      if (transcriptUsesEditedPreviewRef.current) {
+        return approximateEditedTimelineMs(words, excludedRef.current, word?.s_ms ?? masterMs);
+      }
+      if (word) return clipWordGlobalPlaybackMs(word, jumpPlaybackCuesForSeek);
+      return Math.round(masterMs);
+    },
+    [words, jumpPlaybackCuesForSeek]
+  );
+
   const jumpToWordInTranscript = useCallback(
     (wid: string, opts?: { lineEndAutopause?: boolean }) => {
       focusedWordIdRef.current = wid;
@@ -1199,18 +1303,23 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       transcriptRef.current?.scrollToWordId(wid);
       const w = words.find((x) => x.id === wid);
       if (w) {
-        const g = clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek);
+        const g = resolveWaveformSeekMs(w.s_ms, w);
         waveformRef.current?.seekToMs(g, { snap: false });
       }
       if (opts?.lineEndAutopause && w && lines.length) {
-        const end = maxEndMsForLineContainingWordId(lines, wid, words);
-        const g = clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek);
-        sentenceAutopauseEndMsRef.current = end != null && end > g + 40 ? end : null;
+        const endMaster = maxEndMsForLineContainingWordId(lines, wid, words);
+        const g = resolveWaveformSeekMs(w.s_ms, w);
+        if (transcriptUsesEditedPreviewRef.current && endMaster != null) {
+          const endEdited = approximateEditedTimelineMs(words, excludedRef.current, endMaster);
+          sentenceAutopauseEndMsRef.current = endEdited > g + 40 ? endEdited : null;
+        } else {
+          sentenceAutopauseEndMsRef.current = endMaster != null && endMaster > g + 40 ? endMaster : null;
+        }
       } else {
         sentenceAutopauseEndMsRef.current = null;
       }
     },
-    [words, scriptSearch, excluded, lines, jumpPlaybackCuesForSeek]
+    [words, scriptSearch, excluded, lines, resolveWaveformSeekMs]
   );
 
   const selectWordsFromRoughSheet = useCallback(
@@ -1226,9 +1335,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       setFocusedWordId(first);
       transcriptRef.current?.scrollToWordId(first);
       const w = words.find((x) => x.id === first);
-      if (w) waveformRef.current?.seekToMs(clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek), { snap: false });
+      if (w) waveformRef.current?.seekToMs(resolveWaveformSeekMs(w.s_ms, w), { snap: false });
     },
-    [words, jumpPlaybackCuesForSeek]
+    [words, resolveWaveformSeekMs]
   );
 
   const navigateScriptSearchHit = useCallback(
@@ -1243,11 +1352,11 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       transcriptRef.current?.scrollToWordId(wid);
       const w = words.find((x) => x.id === wid);
       if (w) {
-        waveformRef.current?.seekToMs(clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek), { snap: false });
+        waveformRef.current?.seekToMs(resolveWaveformSeekMs(w.s_ms, w), { snap: false });
         void waveformRef.current?.play();
       }
     },
-    [words, jumpPlaybackCuesForSeek]
+    [words, resolveWaveformSeekMs]
   );
 
   const selectAllScriptSearchHits = useCallback(() => {
@@ -1259,15 +1368,19 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     setFocusedWordId(last);
   }, [scriptSearchHitIdsOrdered]);
 
-  const seekPreviewMs = useCallback((ms: number) => {
-    sentenceAutopauseEndMsRef.current = null;
-    if (!Number.isFinite(ms)) return;
-    if (typeof performance !== "undefined") {
-      playbackExcludedBypassUntilRef.current = performance.now() + 1800;
-    }
-    waveformRef.current?.seekToMs(Math.round(ms), { snap: false });
-    void waveformRef.current?.play();
-  }, []);
+  const seekPreviewMs = useCallback(
+    (ms: number) => {
+      sentenceAutopauseEndMsRef.current = null;
+      if (!Number.isFinite(ms)) return;
+      if (typeof performance !== "undefined") {
+        playbackExcludedBypassUntilRef.current = performance.now() + 1800;
+      }
+      const seekMs = resolveWaveformSeekMs(Math.round(ms));
+      waveformRef.current?.seekToMs(seekMs, { snap: false });
+      void waveformRef.current?.play();
+    },
+    [resolveWaveformSeekMs]
+  );
 
   const pushSegmentHistory = useCallback((prev: EditorAudioSegment[]) => {
     segmentUndoStackRef.current.push(prev.map((s) => ({ ...s, wordIds: [...s.wordIds] })));
@@ -1722,7 +1835,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
         if (isTypingTarget(ae)) return;
         e.preventDefault();
         e.stopPropagation();
-        if (hasServerAudio) void waveformRef.current?.playPause();
+        if (hasServerAudio) void handleTranscriptPlayPause();
         return;
       }
       if (e.key === "Escape" && multiSelectIds.size > 0) {
@@ -1967,6 +2080,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     toggleSilenceCut,
     setAudioEventAction,
     pushEditHistory,
+    handleTranscriptPlayPause,
     t
   ]);
 
@@ -2161,9 +2275,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
       if (typeof performance !== "undefined") {
         playbackExcludedBypassUntilRef.current = performance.now() + 1800;
       }
-      waveformRef.current?.seekToMs(clipWordGlobalPlaybackMs(w, jumpPlaybackCuesForSeek), { snap: false });
+      waveformRef.current?.seekToMs(resolveWaveformSeekMs(w.s_ms, w), { snap: false });
     },
-    [focusedWordId, words, jumpPlaybackCuesForSeek]
+    [focusedWordId, words, resolveWaveformSeekMs]
   );
 
   const deleteSelectionFromToolbar = useCallback(() => {
@@ -3343,12 +3457,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         repairBusyKind={prdRepairBusyKind}
                       />
                     ) : null}
-                    {usePrdLayout && (waveformAudioUrl || useVirtualMultiSegmentPlayback) ? (
-                      <div
-                        className="pointer-events-none fixed bottom-0 left-[-12000px] z-[-1] h-[80px] w-[1200px] overflow-hidden opacity-0"
-                        aria-hidden
-                      >
-                        {useVirtualMultiSegmentPlayback && !wordchainPreviewOn ? (
+                    {usePrdLayout && (transcriptPlayerAudioUrl || useTranscriptVirtualPlayback) ? (
+                      <div className="sr-only" aria-hidden>
+                        {useTranscriptVirtualPlayback ? (
                           <ClipVirtualAudioTransport
                             key={`v:${virtualAudioCues.map((c) => c.objectKey).join("|")}`}
                             ref={waveformRef}
@@ -3358,21 +3469,16 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             onPlayStateChange={handleWaveformPlayState}
                             playbackRate={playbackRate}
                             snapSeekMs={snapSeekMs}
-                            className="!border-0 !bg-transparent"
                           />
-                        ) : waveformAudioUrl ? (
-                          <ClipWaveformPanel
+                        ) : transcriptPlayerAudioUrl ? (
+                          <ClipAudioTransport
+                            key={transcriptPlayerAudioUrl}
                             ref={waveformRef}
-                            variant="panel"
-                            waveHeight={72}
-                            audioUrl={waveformAudioUrl}
+                            audioUrl={transcriptPlayerAudioUrl}
                             onTimeMs={handlePlaybackTimeMs}
                             onLoadError={handleWaveformLoadError}
                             onPlayStateChange={handleWaveformPlayState}
                             playbackRate={playbackRate}
-                            snapSeekMs={snapSeekMs}
-                            zoomLevel={waveZoomLevel}
-                            className="!border-0 !bg-transparent"
                           />
                         ) : null}
                       </div>
@@ -3395,142 +3501,40 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           transcriptionSucceeded={project.transcription_status === "succeeded"}
                         />
                       ) : null}
-                      {!usePrdLayout && wordchainPreviewOn ? (
-                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-brand/25 bg-brand/10 px-2.5 py-1.5 text-[10px] text-ink">
-                          <span className="min-w-0 flex-1 leading-snug">{t("presto.flow.roughCut.wordchainPreviewBanner")}</span>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-md border border-line bg-surface px-2 py-0.5 text-[10px] font-semibold text-brand shadow-soft hover:bg-fill"
-                            onClick={() => setWordchainPreviewOn(false)}
-                          >
-                            {t("presto.flow.roughCut.wordchainPreviewExit")}
-                          </button>
+                      {wordchainPreviewBusy ? (
+                        <div
+                          className="mb-2 rounded-lg border border-brand/25 bg-brand/10 px-2.5 py-1.5 text-[10px] text-ink"
+                          role="status"
+                        >
+                          {t("presto.flow.editedPreviewUpdating")}
                         </div>
                       ) : null}
-                      <div className="mb-2 h-[69px] overflow-hidden rounded-lg border border-line bg-track/40">
-                        {waveformAudioUrl || useVirtualMultiSegmentPlayback ? (
-                          <div className="group relative h-full w-full">
-                            {!usePrdLayout ? (
-                              <button
-                                type="button"
-                                className="absolute left-0 top-0 z-[3] h-full w-5 -translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
-                                aria-label="在开头插入音频"
-                                title="在开头插入音频"
-                                disabled={segmentEditLocked}
-                                onClick={() => {
-                                  insertBoundaryIndexRef.current = 0;
-                                  insertAudioInputRef.current?.click();
-                                }}
-                              >
-                                <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
-                                  +
-                                </span>
-                              </button>
-                            ) : null}
-                            {useVirtualMultiSegmentPlayback && !wordchainPreviewOn ? (
-                              <ClipVirtualAudioTransport
-                                key={`v:${virtualAudioCues.map((c) => c.objectKey).join("|")}`}
-                                ref={waveformRef}
-                                cues={virtualAudioCues}
-                                onTimeMs={handlePlaybackTimeMs}
-                                onLoadError={handleWaveformLoadError}
-                                onPlayStateChange={handleWaveformPlayState}
-                                playbackRate={playbackRate}
-                                snapSeekMs={snapSeekMs}
-                                className="!border-0 !bg-transparent"
-                              />
-                            ) : waveformAudioUrl ? (
-                              <ClipWaveformPanel
-                                ref={waveformRef}
-                                variant="panel"
-                                waveHeight={72}
-                                audioUrl={waveformAudioUrl}
-                                onTimeMs={handlePlaybackTimeMs}
-                                onLoadError={handleWaveformLoadError}
-                                onPlayStateChange={handleWaveformPlayState}
-                                playbackRate={playbackRate}
-                                snapSeekMs={snapSeekMs}
-                                zoomLevel={waveZoomLevel}
-                                className="!border-0 !bg-transparent"
-                              />
-                            ) : null}
-                            {!usePrdLayout ? (
-                              <>
-                                <div className="pointer-events-none absolute inset-0 z-[2]">
-                                  {timelineSegments.map(({ seg, idx, leftPct, widthPct }) => (
-                                    <button
-                                      key={`seg-overlay-${seg.id}`}
-                                      type="button"
-                                      draggable={!segmentEditLocked}
-                                      onDragStart={() => setDragSegmentId(seg.id)}
-                                      onDragEnd={() => setDragSegmentId(null)}
-                                      onDragOver={(e) => e.preventDefault()}
-                                      onDrop={(e) => {
-                                        e.preventDefault();
-                                        if (!dragSegmentId) return;
-                                        reorderAudioSegment(dragSegmentId, idx);
-                                        setDragSegmentId(null);
-                                      }}
-                                      onClick={(e) => {
-                                        const el = e.currentTarget;
-                                        const rect = el.getBoundingClientRect();
-                                        const ratio = rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0;
-                                        const clamped = Math.max(0, Math.min(1, ratio));
-                                        const seekMs = seg.startMs + (seg.endMs - seg.startMs) * clamped;
-                                        focusSegment(seg.id, seekMs);
-                                      }}
-                                      onDoubleClick={() => focusSegment(seg.id)}
-                                      className={[
-                                        "pointer-events-auto absolute top-[6px] h-[56px] rounded-md border transition",
-                                        selectedSegmentId === seg.id
-                                          ? "border-brand bg-brand/20 shadow-[0_0_0_1px_rgba(99,102,241,0.45)]"
-                                          : "border-line/70 bg-slate-300/10 hover:bg-slate-300/20",
-                                        dragSegmentId === seg.id ? "opacity-70" : ""
-                                      ].join(" ")}
-                                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                                      title="单击选中定位；双击高亮该音频段；拖拽可重排"
-                                    />
-                                  ))}
-                                </div>
-                                {middleInsertBoundaries.map((b) => (
-                                  <button
-                                    key={`mid-insert-${b.index}`}
-                                    type="button"
-                                    className="absolute top-1/2 z-[4] h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-brand/60 bg-brand/95 text-[10px] leading-none text-brand-foreground shadow-soft opacity-0 transition group-hover:opacity-90 hover:opacity-100 focus-visible:opacity-100 pointer-events-none group-hover:pointer-events-auto focus-visible:pointer-events-auto disabled:pointer-events-none disabled:opacity-30"
-                                    style={{ left: `${b.leftPct}%` }}
-                                    aria-label={`在第 ${b.index} 处衔接插入音频`}
-                                    title={`在第 ${b.index} 处衔接插入音频`}
-                                    disabled={segmentEditLocked}
-                                    onClick={() => {
-                                      insertBoundaryIndexRef.current = b.index;
-                                      insertAudioInputRef.current?.click();
-                                    }}
-                                  >
-                                    +
-                                  </button>
-                                ))}
-                                <button
-                                  type="button"
-                                  className="absolute right-0 top-0 z-[3] h-full w-5 translate-x-1/2 opacity-30 transition hover:opacity-100 group-hover:opacity-100 focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-25"
-                                  aria-label="在结尾插入音频"
-                                  title="在结尾插入音频"
-                                  disabled={segmentEditLocked}
-                                  onClick={() => {
-                                    insertBoundaryIndexRef.current = audioSegments.length;
-                                    insertAudioInputRef.current?.click();
-                                  }}
-                                >
-                                  <span className="absolute left-1/2 top-1/2 inline-flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-brand/50 bg-brand text-[10px] text-brand-foreground">
-                                    +
-                                  </span>
-                                </button>
-                              </>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="flex h-full items-center justify-center text-[10px] text-muted">—</div>
-                        )}
-                      </div>
+                      {(transcriptPlayerAudioUrl || useTranscriptVirtualPlayback) ? (
+                        <div className="sr-only" aria-hidden>
+                          {useTranscriptVirtualPlayback ? (
+                            <ClipVirtualAudioTransport
+                              key={`v:${virtualAudioCues.map((c) => c.objectKey).join("|")}`}
+                              ref={waveformRef}
+                              cues={virtualAudioCues}
+                              onTimeMs={handlePlaybackTimeMs}
+                              onLoadError={handleWaveformLoadError}
+                              onPlayStateChange={handleWaveformPlayState}
+                              playbackRate={playbackRate}
+                              snapSeekMs={snapSeekMs}
+                            />
+                          ) : transcriptPlayerAudioUrl ? (
+                            <ClipAudioTransport
+                              key={transcriptPlayerAudioUrl}
+                              ref={waveformRef}
+                              audioUrl={transcriptPlayerAudioUrl}
+                              onTimeMs={handlePlaybackTimeMs}
+                              onLoadError={handleWaveformLoadError}
+                              onPlayStateChange={handleWaveformPlayState}
+                              playbackRate={playbackRate}
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
                       <input
                         ref={insertAudioInputRef}
                         type="file"
@@ -3717,6 +3721,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       <AudioConsole
                         waveformRef={waveformRef}
                         playing={waveformPlaying}
+                        keyboardHint={t("presto.flow.audioConsoleSpaceHint")}
                         playbackRate={playbackRate}
                         onPlaybackRateChange={setPlaybackRate}
                         rateOptionLabels={[
@@ -3730,9 +3735,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         currentTimeMs={playbackMs}
                         materialTimeline={audioConsoleMaterialTimeline}
                         onSeekMs={(ms) => {
-                          waveformRef.current?.seekToMs(ms);
+                          waveformRef.current?.seekToMs(resolveWaveformSeekMs(ms));
                         }}
+                        onPlayPause={() => void handleTranscriptPlayPause()}
                       />
+                    ) : null}
+                    {usePrdLayout && wordchainPreviewBusy ? (
+                      <p className="shrink-0 border-t border-line/60 px-3 py-1.5 text-[10px] text-muted" role="status">
+                        {t("presto.flow.editedPreviewUpdating")}
+                      </p>
                     ) : null}
                   </section>
                 </div>
@@ -3927,6 +3938,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               dockEmbed
               waveformRef={waveformRef}
               playing={waveformPlaying}
+              keyboardHint={t("presto.flow.audioConsoleSpaceHint")}
               playbackRate={playbackRate}
               onPlaybackRateChange={setPlaybackRate}
               rateOptionLabels={[
@@ -3940,8 +3952,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               currentTimeMs={playbackMs}
               materialTimeline={audioConsoleMaterialTimeline}
               onSeekMs={(ms) => {
-                waveformRef.current?.seekToMs(ms);
+                waveformRef.current?.seekToMs(resolveWaveformSeekMs(ms));
               }}
+              onPlayPause={() => void handleTranscriptPlayPause()}
             />
           ) : null}
         </div>

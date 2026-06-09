@@ -312,10 +312,10 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.searchCutAll": "一键剪掉全部命中",
     "presto.flow.roughCut.pauseTitle": "缩短停顿",
     "presto.flow.roughCut.pauseBody":
-      "启用后：成片导出时若相邻保留词之间静音超过阈值，词链路径下仅保留约 0.5 秒桥接（稿面词与时间戳仍对应原主音频）。也可在下方生成「词链试听」在波形区直接听与终版导出相同的处理结果，无需先走顶部导出。",
+      "启用后：成片导出与剪辑试听时，若相邻保留词之间静音超过阈值，仅保留约 0.5 秒桥接（稿面词与时间戳仍对应原主音频）。按播放或空格试听剪辑效果时再生成试听。",
     "presto.flow.roughCut.pauseToggle": "启用「长静音 → 0.5 秒」导出策略",
     "presto.flow.roughCut.pauseHintExport":
-      "已启用。可点「生成词链试听」在上方波形试听（与导出同算法）；正式交付仍可用顶部「导出」下载 MP3。试听轨时长与原片不同，稿面高亮仍以原片时间为准。",
+      "已启用：长停顿会在导出与剪辑试听中压缩为约 0.5s 桥接；按播放或空格试听时再生成剪辑版。",
     "presto.flow.roughCut.moreSuggestions": "更多（规则 / 模型）",
     "presto.flow.roughCut.fillerAiTitle": "去口癖与 AI 剪辑建议",
     "presto.flow.roughCut.ticJump": "跳转",
@@ -367,6 +367,8 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.wordchainPreviewExit": "恢复原片波形",
     "presto.flow.roughCut.wordchainPreviewBanner":
       "当前为词链试听轨（含长静音压缩等导出算法），与主素材时长不同；稿面时间轴仍对应原片。",
+    "presto.flow.editedPreviewUpdating": "正在更新剪辑试听…",
+    "presto.flow.editedPreviewActive": "剪辑试听（与导出一致；稿面时间轴仍对应原片）",
     "presto.flow.roughCut.pauseAllSilencesDismissed": "长静音条目均已隐藏；可重新检测静音后再次出现。",
     "presto.flow.roughCut.ticRowTitle": "该词在稿面约出现 {n} 次",
     "presto.flow.roughCut.ticSectionTitle": "口癖",
@@ -1001,10 +1003,10 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.searchCutAll": "Cut all search hits",
     "presto.flow.roughCut.pauseTitle": "Shorten long pauses",
     "presto.flow.roughCut.pauseBody":
-      "When enabled, the word-chain export path shortens very long gaps between kept words to about 0.5s of bridge from the master (transcript timestamps still refer to the original master). Use “Generate word-chain preview” below to hear the same processing in the waveform without running the header export first.",
+      "When enabled, long gaps between kept words are bridged to ~0.5s in export and edited preview (transcript timestamps still refer to the master). The player refreshes edited preview automatically after cuts.",
     "presto.flow.roughCut.pauseToggle": "Enable long-pause → 0.5s export policy",
     "presto.flow.roughCut.pauseHintExport":
-      "Enabled — tap “Generate word-chain preview” to audition in the waveform (same algorithm as export), or use header export for a downloadable MP3. Preview duration differs from the master; transcript sync stays on master time.",
+      "Enabled — long pauses are compressed to ~0.5s bridges in export and edited preview; the player refreshes preview automatically after cuts.",
     "presto.flow.roughCut.moreSuggestions": "More (rules / model)",
     "presto.flow.roughCut.fillerAiTitle": "Fillers & AI clip suggestions",
     "presto.flow.roughCut.ticJump": "Jump",
@@ -1058,6 +1060,8 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "presto.flow.roughCut.wordchainPreviewExit": "Back to master waveform",
     "presto.flow.roughCut.wordchainPreviewBanner":
       "Playing word-chain preview audio (export-style processing). Duration differs from the master; transcript timing still follows the master file.",
+    "presto.flow.editedPreviewUpdating": "Updating edited preview…",
+    "presto.flow.editedPreviewActive": "Edited preview (matches export; transcript timing follows the master file)",
     "presto.flow.roughCut.pauseAllSilencesDismissed": "All long-silence rows are hidden; re-run silence detection to refresh.",
     "presto.flow.roughCut.ticRowTitle": "About {n} hits in the transcript",
     "presto.flow.roughCut.ticSectionTitle": "Fillers",

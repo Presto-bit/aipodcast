@@ -1018,27 +1018,6 @@ export default function ClipRoughCutPanel({
             {pauseEnabled ? (
               <div className="mt-2 space-y-2">
                 <p className="text-[10px] leading-relaxed text-brand/95">{t("presto.flow.roughCut.pauseHintExport")}</p>
-                {transcriptionSucceeded && hasServerAudio && onGenerateWordchainPreview ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      disabled={wordchainPreviewBusy || pauseBusy}
-                      className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[10px] font-semibold text-ink shadow-soft hover:bg-fill disabled:pointer-events-none disabled:opacity-45"
-                      onClick={() => void onGenerateWordchainPreview()}
-                    >
-                      {wordchainPreviewBusy ? "…" : t("presto.flow.roughCut.wordchainPreviewGenerate")}
-                    </button>
-                    {wordchainPreviewActive && onExitWordchainPreview ? (
-                      <button
-                        type="button"
-                        className="rounded-lg border border-line bg-fill px-2.5 py-1.5 text-[10px] font-semibold text-ink hover:bg-fill/80"
-                        onClick={() => onExitWordchainPreview()}
-                      >
-                        {t("presto.flow.roughCut.wordchainPreviewExit")}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
               </div>
             ) : null}
           </div>
