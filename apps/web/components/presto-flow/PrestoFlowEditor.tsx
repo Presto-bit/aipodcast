@@ -67,7 +67,6 @@ import {
 } from "../../lib/clipVirtualTimeline";
 import AudioConsole from "./AudioConsole";
 import ClipStagingTracksBar from "./ClipStagingTracksBar";
-import ClipExportQcGateModal from "./ClipExportQcGateModal";
 import ClipRepairPanel from "./ClipRepairPanel";
 import ClipRoughCutPanel from "./ClipRoughCutPanel";
 import ClipScriptSearchPanel from "./ClipScriptSearchPanel";
@@ -102,10 +101,10 @@ function friendlyWaveformError(msg: string): string {
   const raw = msg.trim();
   if (!raw) return "波形加载失败";
   if (/DEMUXER_ERROR|no supported streams|FFmpegDemuxer/i.test(raw)) {
-    return "浏览器无法解码该音频（波形/试听不可用）。请确认文件为 MP3 或 M4A（AAC 编码），或重新上传。";
+    return "音频预览加载失败，请稍后重试；若持续失败请联系支持。";
   }
   if (/MEDIA_ERR_SRC_NOT_SUPPORTED|MEDIA_ERR_DECODE/i.test(raw)) {
-    return "浏览器不支持该音频格式，请转为 MP3 或 M4A（AAC）后重试。";
+    return "音频预览解码失败，请刷新页面后重试。";
   }
   if (raw === "waveform_error" || /^无法(播放|加载)/.test(raw)) {
     return raw;
@@ -166,9 +165,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [wordchainPreviewOn, setWordchainPreviewOn] = useState(false);
   const [wordchainPreviewNonce, setWordchainPreviewNonce] = useState(0);
   const [wordchainPreviewBusy, setWordchainPreviewBusy] = useState(false);
-  const [exportGateOpen, setExportGateOpen] = useState(false);
-  const [exportGatePhase, setExportGatePhase] = useState<"idle" | "analyze" | "export">("idle");
-  const [exportGateErr, setExportGateErr] = useState<string | null>(null);
   const [deleteFeedback, setDeleteFeedback] = useState<string>("");
   /** Shift+点击或「整句」选中的词 id，Delete 批量标记删除 */
   const [multiSelectIds, setMultiSelectIds] = useState<Set<string>>(() => new Set());
@@ -191,6 +187,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   });
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevExportStatusRef = useRef<string | null>(null);
   const deleteFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const actionHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyApplyingRef = useRef(false);
@@ -2298,54 +2295,63 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     }
   }, [ensureLoggedInForAction, getAuthHeaders, projectId, load]);
 
-  const openExportGate = useCallback(() => {
-    if (!ensureLoggedInForAction("导出成片", "presto.export")) return;
-    setExportGateErr(null);
-    setExportGatePhase("idle");
-    setExportGateOpen(true);
-  }, [ensureLoggedInForAction]);
+  const downloadExportFile = useCallback(() => {
+    const u = project?.export_download_url;
+    if (u) window.open(u, "_blank", "noopener,noreferrer");
+  }, [project?.export_download_url]);
 
-  const runAnalyzeFromExportGate = useCallback(async () => {
-    if (!ensureLoggedInForAction("导出前质检", "presto.export.analyze")) return;
-    setExportGateErr(null);
-    setExportGatePhase("analyze");
-    try {
-      const res = await pageFetch(`/api/clip/projects/${encodeURIComponent(projectId)}/qc/analyze`, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json", ...getAuthHeaders() },
-        body: "{}"
-      });
-      const data = (await res.json().catch(() => ({}))) as { success?: boolean; detail?: string };
-      if (!res.ok || data.success === false) {
-        throw new Error(data.detail || `质检失败 ${res.status}`);
-      }
-      await load();
-    } catch (e) {
-      setExportGateErr(String(e instanceof Error ? e.message : e));
-    } finally {
-      setExportGatePhase("idle");
+  const handleExportClick = useCallback(() => {
+    if (!ensureLoggedInForAction("导出成片", "presto.export")) return;
+    if (project?.export_status === "succeeded" && project.export_download_url) {
+      downloadExportFile();
+      return;
     }
-  }, [ensureLoggedInForAction, getAuthHeaders, projectId, load]);
+    void performExport();
+  }, [downloadExportFile, ensureLoggedInForAction, performExport, project?.export_download_url, project?.export_status]);
+
+  const exportButtonLabel = useMemo(() => {
+    if (!project) return t("clip.editor.export");
+    if (project.export_status === "queued") return t("clip.editor.exportStatus.queued");
+    if (project.export_status === "running") return t("clip.editor.exportStatus.running");
+    if (project.export_status === "succeeded" && project.export_download_url) {
+      return t("clip.editor.downloadExport");
+    }
+    return t("clip.editor.export");
+  }, [project, t]);
+
+  const exportButtonDisabled = useMemo(() => {
+    if (!project) return true;
+    if (actionBusy || audioMergeBusy) return true;
+    if (project.transcription_status !== "succeeded") return true;
+    if (exportActive) return true;
+    return false;
+  }, [actionBusy, audioMergeBusy, exportActive, project]);
 
   useEffect(() => {
     if (!loggedIn) return;
     const action = consumePostAuthActionForCurrentPath([
       "presto.transcribe",
       "presto.export",
-      "presto.export.analyze",
       "presto.wordchain.preview"
     ]);
     if (action === "presto.transcribe") {
       void startTranscribe();
     } else if (action === "presto.export") {
-      openExportGate();
-    } else if (action === "presto.export.analyze") {
-      void runAnalyzeFromExportGate();
+      void performExport();
     } else if (action === "presto.wordchain.preview") {
       void generateWordchainPreview();
     }
-  }, [generateWordchainPreview, loggedIn, openExportGate, runAnalyzeFromExportGate, startTranscribe]);
+  }, [generateWordchainPreview, loggedIn, performExport, startTranscribe]);
+
+  useEffect(() => {
+    const cur = project?.export_status ?? null;
+    const prev = prevExportStatusRef.current;
+    prevExportStatusRef.current = cur;
+    if (cur !== "succeeded") return;
+    if (prev !== "running" && prev !== "queued") return;
+    if (!project?.export_download_url) return;
+    downloadExportFile();
+  }, [downloadExportFile, project?.export_download_url, project?.export_status]);
 
   const clearMarkersForSuggestion = useCallback((s: ClipEditSuggestion) => {
     const ex = s.execute;
@@ -2442,10 +2448,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
           execute_kind: "startExport",
           title: s.title.slice(0, 120)
         });
-        openExportGate();
+        void performExport();
       }
     },
-    [words, onKeepStutterFirst, scheduleSaveExcluded, postSuggestionFeedback, openExportGate]
+    [words, onKeepStutterFirst, scheduleSaveExcluded, postSuggestionFeedback, performExport]
   );
 
   const loadDeepseekStructured = useCallback(async () => {
@@ -2777,40 +2783,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       {loginPromptNode}
-      <ClipExportQcGateModal
-        open={exportGateOpen}
-        title={t("presto.flow.exportGate.title")}
-        bodyIntro={t("presto.flow.exportGate.body")}
-        hasReport={Boolean(project?.qc_report && Object.keys(project.qc_report as object).length > 0)}
-        reportSummary={
-          project?.qc_report ? JSON.stringify(project.qc_report, null, 2).slice(0, 2000) : ""
-        }
-        cancelLabel={t("presto.flow.exportGate.cancel")}
-        analyzeLabel={t("presto.flow.exportGate.analyze")}
-        skipExportLabel={t("presto.flow.exportGate.skip")}
-        busyAnalyze={exportGatePhase === "analyze"}
-        busyExport={exportGatePhase === "export"}
-        error={exportGateErr}
-        onCancel={() => {
-          setExportGateOpen(false);
-          setExportGateErr(null);
-        }}
-        onAnalyze={() => void runAnalyzeFromExportGate()}
-        onSkipExport={() => {
-          void (async () => {
-            setExportGateErr(null);
-            setExportGatePhase("export");
-            try {
-              await performExport();
-              setExportGateOpen(false);
-            } catch {
-              /* performExport 已 setErr */
-            } finally {
-              setExportGatePhase("idle");
-            }
-          })();
-        }}
-      />
       <SmallConfirmModal
         open={transcribeConfirmOpen}
         title={t("clip.editor.transcribeConfirmTitle")}
@@ -2898,15 +2870,9 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                     </h1>
                   )
                 }
-                exportDisabled={
-                  actionBusy ||
-                  audioMergeBusy ||
-                  project.transcription_status !== "succeeded" ||
-                  project.export_status === "running" ||
-                  project.export_status === "queued"
-                }
-                exportLabel={t("clip.editor.export")}
-                onExport={() => openExportGate()}
+                exportDisabled={exportButtonDisabled}
+                exportLabel={exportButtonLabel}
+                onExport={handleExportClick}
               />
             ) : (
               <PrestoFlowHeader
@@ -3002,7 +2968,6 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   </div>
                 }
                 transcribeLabel={t("clip.editor.transcribeShort")}
-                exportLabel={t("clip.editor.export")}
                 transcribeDisabled={
                   actionBusy ||
                   insertingSegmentAudio ||
@@ -3012,15 +2977,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   project.transcription_status === "queued" ||
                   (project.transcription_status === "succeeded" && pendingInsertedSegments.length === 0)
                 }
-                exportDisabled={
-                  actionBusy ||
-                  audioMergeBusy ||
-                  project.transcription_status !== "succeeded" ||
-                  project.export_status === "running" ||
-                  project.export_status === "queued"
-                }
+                exportDisabled={exportButtonDisabled}
+                exportLabel={exportButtonLabel}
                 onTranscribe={() => setTranscribeConfirmOpen(true)}
-                onExport={() => openExportGate()}
+                onExport={handleExportClick}
               />
             )}
             {!usePrdLayout && dualInterview ? (
@@ -3042,6 +3002,29 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               </p>
             ) : null}
             {project.export_error ? <p className="px-4 text-sm text-danger-ink">{project.export_error}</p> : null}
+            {exportActive ? (
+              <p className="border-b border-line bg-brand/5 px-4 py-2 text-sm text-ink" role="status">
+                {project.export_status === "queued"
+                  ? t("clip.editor.exportStatus.queued")
+                  : t("clip.editor.exportStatus.running")}
+              </p>
+            ) : null}
+            {project.export_status === "succeeded" && project.export_download_url ? (
+              <p className="border-b border-line bg-success-soft px-4 py-2 text-sm text-ink" role="status">
+                {t("clip.editor.exportReadyBanner")}
+                <button type="button" className="ml-2 font-medium underline" onClick={downloadExportFile}>
+                  {t("clip.editor.downloadExport")}
+                </button>
+                <button
+                  type="button"
+                  className="ml-3 text-muted underline"
+                  disabled={actionBusy || exportActive}
+                  onClick={() => void performExport()}
+                >
+                  {t("clip.editor.exportAgain")}
+                </button>
+              </p>
+            ) : null}
             {audioMergeBusy ? (
               <p className="border-b border-line bg-fill/30 px-4 py-1.5 text-[11px] text-muted">
                 {project.audio_merge_status === "queued"

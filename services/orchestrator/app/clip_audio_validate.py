@@ -26,6 +26,11 @@ _BROWSER_FRIENDLY_AUDIO_CODECS = frozenset(
 _UPLOAD_ALLOWED_AUDIO_CODECS = _BROWSER_FRIENDLY_AUDIO_CODECS | frozenset({"alac"})
 
 
+def is_browser_friendly_codec(codec: str) -> bool:
+    """Chrome/Safari 与 WaveSurfer 常见可解码音频编码。"""
+    return (codec or "").strip().lower() in _BROWSER_FRIENDLY_AUDIO_CODECS
+
+
 def _codec_display_name(codec: str) -> str:
     c = (codec or "").strip().lower()
     aliases = {

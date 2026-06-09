@@ -193,9 +193,26 @@ def _clip_stream_audio_object(
     filename_hint: str,
     mime_raw: str,
 ) -> StreamingResponse | Response:
-    media_type = _effective_audio_media_type(filename_hint, mime_raw)
+    from ..clip_browser_preview import ensure_browser_playback_object_key
+
+    stream_key = object_key
+    stream_filename = filename_hint
+    stream_mime = mime_raw
     try:
-        total = head_object_byte_length(object_key)
+        stream_key = ensure_browser_playback_object_key(object_key)
+        if stream_key != object_key:
+            base = Path(filename_hint or "audio.m4a").stem or "audio"
+            stream_filename = f"{base}-preview.m4a"
+            stream_mime = "audio/mp4"
+    except Exception as exc:
+        logger.warning(
+            "clip browser preview resolve failed key_tail=%s err=%s",
+            object_key[-48:],
+            exc,
+        )
+    media_type = _effective_audio_media_type(stream_filename, stream_mime)
+    try:
+        total = head_object_byte_length(stream_key)
     except Exception as exc:
         logger.warning("clip audio head_object failed key_tail=%s err=%s", object_key[-48:], exc)
         raise HTTPException(status_code=503, detail=f"读取音频元数据失败: {exc}") from exc
@@ -214,7 +231,7 @@ def _clip_stream_audio_object(
             )
         part_len = end - start + 1
         return StreamingResponse(
-            iter_object_byte_range(object_key, start, end),
+            iter_object_byte_range(stream_key, start, end),
             media_type=media_type,
             status_code=206,
             headers={
@@ -226,7 +243,7 @@ def _clip_stream_audio_object(
         )
 
     return StreamingResponse(
-        iter_object_chunks(object_key),
+        iter_object_chunks(stream_key),
         media_type=media_type,
         headers={
             "Content-Length": str(total),
