@@ -35,6 +35,7 @@ from ..clip_audio_repair import (
     sniff_suffix_from_filename,
 )
 from ..clip_export import resolve_export_loudnorm_i_lufs
+from ..clip_export_options import sanitize_clip_export_options
 from ..clip_store import (
     append_clip_audio_source_segment,
     prepend_current_main_as_source_segment_if_empty_sources,
@@ -66,6 +67,7 @@ from ..clip_store import (
     update_clip_project_audio,
     update_clip_project_meta,
     update_clip_repair_loudness_i_lufs,
+    update_clip_project_export_options,
     update_clip_shownotes_markdown,
     update_clip_silence_analysis,
     update_clip_timeline_json,
@@ -451,6 +453,7 @@ def _serialize_clip_row(row: dict[str, Any]) -> dict[str, Any]:
         "rough_cut_lexicon_exempt",
         "asr_corpus_hotwords",
         "asr_corpus_scene",
+        "export_options",
     ):
         if isinstance(d.get(key), str):
             try:
@@ -736,6 +739,11 @@ def clip_title_suggestions(project_id: str, request: Request):
 @router.post("/clip/projects/{project_id}")
 def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
     uid = _owner_uuid(request)
+    if auth_bridge.is_auth_enabled() and not uid:
+        raise HTTPException(
+            status_code=400,
+            detail="当前登录未关联到用户库 UUID，无法更新剪辑工程。请重新登录或联系管理员同步账户。",
+        )
     row = get_clip_project(project_id=project_id, user_uuid=uid)
     if not row:
         raise HTTPException(status_code=404, detail="工程不存在")
@@ -848,10 +856,16 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
             spk = max(1, min(8, int(b.get("speaker_count"))))
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="speaker_count 无效")
+    if "export_options" in b:
+        clean_opts = sanitize_clip_export_options(b.get("export_options"))
+        if not update_clip_project_export_options(
+            project_id=project_id, user_uuid=uid, export_options=clean_opts
+        ):
+            raise HTTPException(status_code=404, detail="工程不存在或无权修改导出选项")
     title_up: str | None = None
     if "title" in b:
         title_up = str(b.get("title") or "").strip()[:200] or "未命名剪辑"
-    update_clip_project_meta(
+    meta_ok = update_clip_project_meta(
         project_id=project_id,
         user_uuid=uid,
         title=title_up,
@@ -859,6 +873,8 @@ def clip_patch_project(project_id: str, request: Request, body: dict[str, Any] =
         speaker_count=spk,
         channel_ids=ch_ids,
     )
+    if "title" in b and not meta_ok:
+        raise HTTPException(status_code=404, detail="工程不存在或无权修改标题")
     row2 = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
 
@@ -897,8 +913,16 @@ def _clip_upload_source_audio_sync(
             _apply_channel_ids_from_audio_file(project_id=project_id, user_uuid=uid, file_path=Path(tf.name))
     except Exception:
         logger.exception("clip upload ffprobe channel_detect failed project_id=%s", project_id)
+    from ..clip_browser_preview import schedule_prewarm_browser_playback_object_key
+
+    schedule_prewarm_browser_playback_object_key(key)
     row2 = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
+
+
+@router.patch("/clip/projects/{project_id}")
+def clip_patch_project_via_patch(project_id: str, request: Request, body: dict[str, Any] = Body(default_factory=dict)):
+    return clip_patch_project(project_id, request, body)
 
 
 @router.post("/clip/projects/{project_id}/audio")
@@ -1047,6 +1071,9 @@ def _clip_stage_audio_segment_sync(
     if not ok:
         delete_object_key(sk)
         raise ValueError("append_segment_failed")
+    from ..clip_browser_preview import schedule_prewarm_browser_playback_object_key
+
+    schedule_prewarm_browser_playback_object_key(sk)
     _clip_retime_transcript_after_segments_change(project_id=project_id, uid=uid)
     row2 = get_clip_project(project_id=project_id, user_uuid=uid)
     return {"success": True, "project": _serialize_clip_row(row2 or {})}
@@ -1282,6 +1309,9 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             raw = concat_ordered_source_segments_to_bytes(segs_wc)
         else:
             raw = get_object_bytes(audio_key)
+        from ..clip_export_options import lame_q_from_export_options
+
+        lame_q = lame_q_from_export_options(row.get("export_options"))
         out = export_clip_mp3_from_bytes(
             audio_bytes=raw,
             normalized=norm,
@@ -1291,7 +1321,8 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             long_pause_cap_ms=long_pause_cap_ms,
             silence_cut_ranges=silence_cuts,
             duck_ranges=None,
-            loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
+            skip_loudnorm=True,
+            final_lame_q=lame_q,
         )
     except Exception as exc:
         logger.warning("clip wordchain_preview build failed project_id=%s err=%s", project_id, exc)
@@ -1897,6 +1928,65 @@ def clip_start_export(project_id: str, request: Request):
         )
         logger.exception("clip export enqueue failed project_id=%s", project_id)
         raise HTTPException(status_code=503, detail="导出任务入队失败，请稍后重试") from None
+
+
+@router.get("/clip/projects/{project_id}/export/file")
+def clip_get_export_file(project_id: str, request: Request):
+    """下载导出 MP3（attachment），供 BFF 代理后由浏览器 blob 保存到本地。"""
+    uid = _owner_uuid(request)
+    row = get_clip_project(project_id=project_id, user_uuid=uid)
+    if not row:
+        raise HTTPException(status_code=404, detail="工程不存在")
+    if str(row.get("export_status") or "").strip() != "succeeded":
+        raise HTTPException(status_code=404, detail="尚未导出成功")
+    key = str(row.get("export_object_key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=404, detail="无导出文件")
+    title_raw = str(row.get("title") or "export").strip()[:80]
+    safe_stem = _SAFE_NAME.sub("_", title_raw).strip("._")[:80] or "export"
+    filename = f"{safe_stem}.mp3"
+    media_type = "audio/mpeg"
+    try:
+        total = head_object_byte_length(key)
+    except Exception as exc:
+        logger.warning("clip export file head_object failed key_tail=%s err=%s", key[-48:], exc)
+        raise HTTPException(status_code=503, detail=f"读取导出文件失败: {exc}") from exc
+    if total <= 0:
+        raise HTTPException(status_code=400, detail="导出文件无效")
+
+    from urllib.parse import quote
+
+    cd = f"attachment; filename=\"{safe_stem}.mp3\"; filename*=UTF-8''{quote(filename)}"
+    range_hdr = (request.headers.get("range") or request.headers.get("Range") or "").strip()
+    br = _parse_single_byte_range(range_hdr, total)
+    cache = "private, no-store"
+    if br:
+        start, end = br
+        if start >= total:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+        part_len = end - start + 1
+        return StreamingResponse(
+            iter_object_byte_range(key, start, end),
+            media_type=media_type,
+            status_code=206,
+            headers={
+                "Content-Length": str(part_len),
+                "Content-Range": f"bytes {start}-{end}/{total}",
+                "Accept-Ranges": "bytes",
+                "Cache-Control": cache,
+                "Content-Disposition": cd,
+            },
+        )
+    return StreamingResponse(
+        iter_object_chunks(key),
+        media_type=media_type,
+        headers={
+            "Content-Length": str(total),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": cache,
+            "Content-Disposition": cd,
+        },
+    )
 
 
 @router.delete("/clip/projects/{project_id}")

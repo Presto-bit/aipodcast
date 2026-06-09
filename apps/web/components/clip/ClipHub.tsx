@@ -271,9 +271,6 @@ export default function ClipHub() {
                           className="min-w-[12rem] flex-1 rounded-lg border border-line bg-surface px-2 py-1.5 text-sm text-ink"
                           autoComplete="off"
                           autoFocus
-                          onBlur={() => {
-                            if (!renameBusy) setRenamingId(null);
-                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
@@ -285,6 +282,24 @@ export default function ClipHub() {
                             }
                           }}
                         />
+                        <button
+                          type="button"
+                          disabled={renameBusy}
+                          className="rounded-lg bg-brand px-2.5 py-1.5 text-xs font-semibold text-brand-foreground disabled:opacity-40"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => void saveRename(p.id)}
+                        >
+                          {renameBusy ? "…" : t("clip.hub.renameSave")}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={renameBusy}
+                          className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs text-ink disabled:opacity-40"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => setRenamingId(null)}
+                        >
+                          {t("clip.hub.renameCancel")}
+                        </button>
                       </div>
                     ) : (
                       <Link

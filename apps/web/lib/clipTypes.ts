@@ -111,7 +111,9 @@ export type ClipProjectRow = {
   transcription_status: string;
   export_status: string;
   export_pause_policy?: ClipExportPausePolicy | null;
-  /** 修音 / 导出 loudnorm 整合响度 I（LUFS）；null 表示用 CLIP_EXPORT_LOUDNORM_I 或默认 -16 */
+  /** 导出 MP3 音质（lame_q）；loudnorm 不在导出阶段执行 */
+  export_options?: { encoding?: { lame_q?: number } } | null;
+  /** 修音「一键响度」目标 I（LUFS）；仅修音写入主素材，导出不再重复 loudnorm */
   repair_loudness_i_lufs?: number | null;
   /** 嘉宾名 / 公司名 / 专业词：整词匹配时不做口癖高亮与规则建议 */
   rough_cut_lexicon_exempt?: string[];

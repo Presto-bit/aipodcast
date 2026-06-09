@@ -103,8 +103,8 @@ def _read_float_env(name: str, default: float) -> float:
 
 def resolve_export_loudnorm_i_lufs(project_value: Any) -> float:
     """
-    工程列 repair_loudness_i_lufs 优先，否则 CLIP_EXPORT_LOUDNORM_I，否则 -16。
-    限制在 [-24, -10] 内，避免误配导致 ffmpeg 异常。
+    「一键响度」修音目标 I（LUFS）；工程列 repair_loudness_i_lufs 优先。
+    导出成片不再调用；保留供 clip_audio_repair 使用。
     """
     if project_value is not None:
         try:
@@ -123,6 +123,29 @@ def _afade_ms_for_duration(dur_ms: int, fade_ms: int) -> str | None:
     st_out = max(0.0, (dur_ms - fade_ms) / 1000.0)
     d = fade_ms / 1000.0
     return f"afade=t=in:st=0:d={d:.4f},afade=t=out:st={st_out:.4f}:d={d:.4f}"
+
+
+def _decode_source_to_pcm_wav(ffmpeg_bin: str, inp: str | Path, out_wav: Path) -> None:
+    """将任意源音频解码为 48kHz PCM WAV，供切分/拼接全程无损中转。"""
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(inp),
+        "-vn",
+        "-ar",
+        "48000",
+        "-c:a",
+        "pcm_s16le",
+        str(out_wav),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
+    if not out_wav.is_file() or out_wav.stat().st_size < 44:
+        raise RuntimeError("源音频解码为 PCM 失败")
 
 
 def _read_filter_batch_max() -> int:
@@ -205,15 +228,12 @@ def _build_atrim_concat_filter_script(segments: list[tuple[int, int]], afade_ms:
     return ";".join(branches) + ";" + tail
 
 
-def _run_filter_complex_script_to_mp3(
+def _run_filter_complex_script_to_wav(
     ffmpeg_bin: str,
     inp: str,
     out_path: Path,
     script_path: Path,
-    *,
-    lame_q: int,
 ) -> None:
-    q = max(0, min(9, int(lame_q)))
     cmd = [
         ffmpeg_bin,
         "-hide_banner",
@@ -228,14 +248,12 @@ def _run_filter_complex_script_to_mp3(
         "-map",
         "[out]",
         "-c:a",
-        "libmp3lame",
-        "-q:a",
-        str(q),
+        "pcm_s16le",
         str(out_path),
     ]
     subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
-    if not out_path.is_file() or out_path.stat().st_size < 32:
-        raise RuntimeError("ffmpeg filter_complex 未生成有效 MP3")
+    if not out_path.is_file() or out_path.stat().st_size < 44:
+        raise RuntimeError("ffmpeg filter_complex 未生成有效 WAV")
 
 
 def _export_segments_filter_concat(
@@ -245,12 +263,10 @@ def _export_segments_filter_concat(
     segments: list[tuple[int, int]],
     afade_ms: int,
     *,
-    segment_lame_q: int,
-    out_mp3: Path,
+    out_wav: Path,
 ) -> None:
     """
-    从同一输入一次性切出多段并编码为单轨 MP3（替代每段起一个 ffmpeg 子进程）。
-    段数过多时分批写入多个中间文件再 concat 协议拼接（流复制）。
+    从 PCM 源一次性切出多段并无损 concat 为单轨 WAV；段数过多时分批 WAV 再 concat。
     """
     if not segments:
         raise RuntimeError("无分段可导出")
@@ -258,7 +274,7 @@ def _export_segments_filter_concat(
     if batch_cap == 0 or len(segments) <= batch_cap:
         script_path = td_path / "fc_export.txt"
         script_path.write_text(_build_atrim_concat_filter_script(segments, afade_ms), encoding="utf-8")
-        _run_filter_complex_script_to_mp3(ffmpeg_bin, inp, out_mp3, script_path, lame_q=segment_lame_q)
+        _run_filter_complex_script_to_wav(ffmpeg_bin, inp, out_wav, script_path)
         return
 
     chunk_paths: list[Path] = []
@@ -266,13 +282,13 @@ def _export_segments_filter_concat(
         batch = segments[b_start : b_start + batch_cap]
         script_path = td_path / f"fc_export_{b_start}.txt"
         script_path.write_text(_build_atrim_concat_filter_script(batch, afade_ms), encoding="utf-8")
-        chunk = td_path / f"fc_chunk_{b_start:05d}.mp3"
-        _run_filter_complex_script_to_mp3(ffmpeg_bin, inp, chunk, script_path, lame_q=segment_lame_q)
+        chunk = td_path / f"fc_chunk_{b_start:05d}.wav"
+        _run_filter_complex_script_to_wav(ffmpeg_bin, inp, chunk, script_path)
         chunk_paths.append(chunk)
-    _concat_demuxer_mp3(ffmpeg_bin, td_path, chunk_paths, out_mp3)
+    _concat_demuxer_wav(ffmpeg_bin, td_path, chunk_paths, out_wav)
 
 
-def _concat_demuxer_mp3(ffmpeg_bin: str, td_path: Path, parts: list[Path], out_mp3: Path) -> None:
+def _concat_demuxer_wav(ffmpeg_bin: str, td_path: Path, parts: list[Path], out_wav: Path) -> None:
     list_file = td_path / "concat.txt"
     lines = "\n".join([f"file '{p.name}'" for p in parts])
     list_file.write_text(lines + "\n", encoding="utf-8")
@@ -290,11 +306,34 @@ def _concat_demuxer_mp3(ffmpeg_bin: str, td_path: Path, parts: list[Path], out_m
         str(list_file),
         "-c",
         "copy",
-        str(out_mp3),
+        str(out_wav),
     ]
     subprocess.run(cmd2, check=True, cwd=str(td_path), capture_output=True, timeout=600)
-    if not out_mp3.is_file():
-        raise RuntimeError("ffmpeg 拼接失败")
+    if not out_wav.is_file():
+        raise RuntimeError("ffmpeg WAV 拼接失败")
+
+
+def _encode_pcm_wav_to_mp3(ffmpeg_bin: str, wav: Path, out_mp3: Path, *, lame_q: int) -> None:
+    """终稿唯一一次有损编码。"""
+    q = max(0, min(9, int(lame_q)))
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(wav),
+        "-c:a",
+        "libmp3lame",
+        "-q:a",
+        str(q),
+        str(out_mp3),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+    if not out_mp3.is_file() or out_mp3.stat().st_size < 32:
+        raise RuntimeError("MP3 终稿编码失败")
 
 
 def _loudnorm_mp3(
@@ -435,9 +474,8 @@ def _export_word_chain_with_bridges(
     long_pause_ms: int = 0,
     long_pause_cap_ms: int = 500,
     silence_cut_ranges: list[tuple[int, int, int]] | None = None,
-    segment_lame_q: int = 4,
 ) -> Path:
-    """逐词切段，词间仅保留源音频中最多 max_bridge_ms 的「桥接」静音（含自然 room tone），再拼接。"""
+    """逐词切段，词间保留有限桥接静音，输出 PCM WAV。"""
     segments = _word_chain_segments(
         kept,
         max_bridge_ms=max_bridge_ms,
@@ -447,15 +485,14 @@ def _export_word_chain_with_bridges(
     )
     if not segments:
         raise RuntimeError("词链导出：无有效片段")
-    raw = td_path / "chain_raw.mp3"
+    raw = td_path / "chain_raw.wav"
     _export_segments_filter_concat(
         ffmpeg_bin,
         td_path,
         inp,
         segments,
         afade_ms,
-        segment_lame_q=segment_lame_q,
-        out_mp3=raw,
+        out_wav=raw,
     )
     return raw
 
@@ -516,7 +553,7 @@ def export_clip_mp3_from_bytes(
     loudnorm_i_lufs: float | None = None,
     loudnorm_tp: float | None = None,
     loudnorm_lra: float | None = None,
-    skip_loudnorm: bool = False,
+    skip_loudnorm: bool = True,
     segment_lame_q: int = 4,
     final_lame_q: int = 2,
     range_start_ms: int | None = None,
@@ -526,9 +563,8 @@ def export_clip_mp3_from_bytes(
     metadata: dict[str, str] | None = None,
 ) -> bytes:
     """
-    将未排除的词按时间合并后切段再编码为单轨 MP3；可选词间桥接上限、分段淡入淡出、loudnorm。
-    切段阶段使用单次（或分批）ffmpeg filter_complex（atrim + concat），避免逐段起子进程。
-    依赖系统 PATH 中的 ffmpeg（需 libavfilter loudnorm）。
+    将未排除的词按时间合并后切段，PCM 中转拼接，终稿单次 MP3 编码。
+    loudnorm 默认关闭；响度归一请使用「一键响度」修音后再导出。
     """
     kept = _kept_words_sorted(normalized, excluded_word_ids)
     kept = _clip_kept_to_time_range(kept, range_start_ms, range_end_ms)
@@ -538,7 +574,7 @@ def export_clip_mp3_from_bytes(
     merge_gap_ms = max(0, int(merge_gap_ms))
     max_bridge_ms = _read_int_env("CLIP_EXPORT_MAX_BRIDGE_MS", 420)
     word_chain_max = _read_int_env("CLIP_EXPORT_WORD_CHAIN_MAX", 180)
-    afade_ms = _read_int_env("CLIP_EXPORT_AFADE_MS", 8)
+    afade_ms = _read_int_env("CLIP_EXPORT_AFADE_MS", 18)
     if loudnorm_i_lufs is not None and math.isfinite(float(loudnorm_i_lufs)):
         i_lufs = max(-24.0, min(-10.0, float(loudnorm_i_lufs)))
     else:
@@ -554,7 +590,6 @@ def export_clip_mp3_from_bytes(
     skip_env = (os.getenv("CLIP_EXPORT_SKIP_LOUDNORM") or "").strip() in ("1", "true", "yes")
     do_skip_loudnorm = bool(skip_loudnorm) or skip_env
 
-    seg_q = max(0, min(9, int(segment_lame_q)))
     fin_q = max(0, min(9, int(final_lame_q)))
 
     has_silence_cuts = bool(silence_cut_ranges)
@@ -565,7 +600,7 @@ def export_clip_mp3_from_bytes(
         td_path = Path(td)
         src = td_path / "source.bin"
         src.write_bytes(audio_bytes)
-        inp = str(src)
+        src_inp = str(src)
         if duck_ranges:
             dr = [(max(0, int(s)), max(0, int(e))) for s, e in duck_ranges if int(e) > int(s)]
             if dr:
@@ -590,7 +625,7 @@ def export_clip_mp3_from_bytes(
                         "-ac",
                         "1",
                         "-ar",
-                        "44100",
+                        "48000",
                         "-c:a",
                         "pcm_s16le",
                         str(ducked),
@@ -598,9 +633,16 @@ def export_clip_mp3_from_bytes(
                     try:
                         subprocess.run(cmd_duck, check=True, capture_output=True, timeout=900)
                         if ducked.is_file() and ducked.stat().st_size > 44:
-                            inp = str(ducked)
+                            src_inp = str(ducked)
                     except Exception:
                         logger.warning("clip export duck preprocess failed, fallback raw source")
+
+        pcm_src = td_path / "source_pcm.wav"
+        if src_inp.endswith(".wav") and Path(src_inp).is_file():
+            pcm_src = Path(src_inp)
+        else:
+            _decode_source_to_pcm_wav(ffmpeg_bin, src_inp, pcm_src)
+        inp = str(pcm_src)
 
         if use_word_chain:
             raw_concat = _export_word_chain_with_bridges(
@@ -613,29 +655,29 @@ def export_clip_mp3_from_bytes(
                 long_pause_ms=max(0, int(long_pause_ms)),
                 long_pause_cap_ms=max(50, min(5000, int(long_pause_cap_ms))),
                 silence_cut_ranges=silence_cut_ranges,
-                segment_lame_q=seg_q,
             )
         else:
             segs = _merge_segments(kept, gap_ms=merge_gap_ms)
             if not segs:
                 raise RuntimeError("没有可导出的语音片段（可能已删除全部词）")
             segments = [(s_ms, max(50, e_ms - s_ms)) for s_ms, e_ms in segs]
-            raw_concat = td_path / "seg_raw.mp3"
+            raw_concat = td_path / "seg_raw.wav"
             _export_segments_filter_concat(
                 ffmpeg_bin,
                 td_path,
                 inp,
                 segments,
                 afade_ms,
-                segment_lame_q=seg_q,
-                out_mp3=raw_concat,
+                out_wav=raw_concat,
             )
 
+        out_mp3 = td_path / "export_final.mp3"
         if do_skip_loudnorm:
-            out_b = raw_concat.read_bytes()
+            _encode_pcm_wav_to_mp3(ffmpeg_bin, raw_concat, out_mp3, lame_q=fin_q)
         else:
-            normed = td_path / "out_loudnorm.mp3"
-            _loudnorm_mp3(ffmpeg_bin, raw_concat, normed, i_lufs=i_lufs, tp=tp, lra=lra, lame_q=fin_q)
-            out_b = normed.read_bytes()
+            tmp_mp3 = td_path / "pre_loudnorm.mp3"
+            _encode_pcm_wav_to_mp3(ffmpeg_bin, raw_concat, tmp_mp3, lame_q=fin_q)
+            _loudnorm_mp3(ffmpeg_bin, tmp_mp3, out_mp3, i_lufs=i_lufs, tp=tp, lra=lra, lame_q=fin_q)
+        out_b = out_mp3.read_bytes()
         meta = metadata or {}
         return _tag_mp3_metadata(ffmpeg_bin, out_b, meta)

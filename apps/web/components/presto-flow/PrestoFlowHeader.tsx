@@ -22,6 +22,8 @@ type Props = {
   exportLabel: string;
   transcribeDisabled: boolean;
   exportDisabled: boolean;
+  /** 导出按钮左侧，如音质选项 */
+  beforeExport?: ReactNode;
   onTranscribe: () => void;
   onExport: () => void;
   trailing?: ReactNode;
@@ -40,6 +42,7 @@ export default function PrestoFlowHeader({
   exportLabel,
   transcribeDisabled,
   exportDisabled,
+  beforeExport,
   onTranscribe,
   onExport,
   trailing
@@ -78,6 +81,7 @@ export default function PrestoFlowHeader({
         >
           {transcribeLabel}
         </button>
+        {beforeExport}
         <button
           type="button"
           disabled={exportDisabled}

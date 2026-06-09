@@ -7,6 +7,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+import threading
 from pathlib import Path
 
 from .clip_audio_merge import ffprobe_audio_stream_signature
@@ -86,3 +87,18 @@ def ensure_browser_playback_object_key(source_object_key: str) -> str:
     _playback_key_cache[key] = preview_key
     logger.info("clip browser preview cached source_tail=%s preview_tail=%s", key[-48:], preview_key[-48:])
     return preview_key
+
+
+def schedule_prewarm_browser_playback_object_key(source_object_key: str) -> None:
+    """上传/合并后后台预热浏览器试听缓存，避免首次波形请求长时间阻塞。"""
+    key = (source_object_key or "").strip()
+    if not key:
+        return
+
+    def _run() -> None:
+        try:
+            ensure_browser_playback_object_key(key)
+        except Exception:
+            logger.exception("clip browser preview prewarm failed key_tail=%s", key[-48:])
+
+    threading.Thread(target=_run, daemon=True, name="clip-browser-preview-prewarm").start()

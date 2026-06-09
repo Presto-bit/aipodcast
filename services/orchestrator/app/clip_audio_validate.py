@@ -22,13 +22,27 @@ _BROWSER_FRIENDLY_AUDIO_CODECS = frozenset(
     }
 )
 
+# ffprobe 常见别名：浏览器仍可能无法解码，走服务端转 AAC
+_BROWSER_TRANSCODE_CODEC_ALIASES = frozenset(
+    {
+        "alac",
+        "aac_latm",
+        "wmalossless",
+        "wmav2",
+        "wmav1",
+    }
+)
+
 # 上传允许：ffprobe 可读且云端 ASR 可转写；不要求浏览器可预览（如 ALAC）
 _UPLOAD_ALLOWED_AUDIO_CODECS = _BROWSER_FRIENDLY_AUDIO_CODECS | frozenset({"alac"})
 
 
 def is_browser_friendly_codec(codec: str) -> bool:
     """Chrome/Safari 与 WaveSurfer 常见可解码音频编码。"""
-    return (codec or "").strip().lower() in _BROWSER_FRIENDLY_AUDIO_CODECS
+    c = (codec or "").strip().lower()
+    if c in _BROWSER_TRANSCODE_CODEC_ALIASES:
+        return False
+    return c in _BROWSER_FRIENDLY_AUDIO_CODECS
 
 
 def _codec_display_name(codec: str) -> str:

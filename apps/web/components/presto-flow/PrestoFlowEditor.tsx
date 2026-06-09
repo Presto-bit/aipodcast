@@ -76,11 +76,12 @@ import VirtualizedTranscript, { type VirtualizedTranscriptHandle } from "./Virtu
 import WaveformSegmentEditor from "./WaveformSegmentEditor";
 import { useLoginRequiredAction } from "../../lib/useLoginRequiredAction";
 import { isAbortError, usePageAbortSignal, usePageFetch } from "../../lib/usePageAbortSignal";
-import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
+import { downloadClipExportMp3 } from "../../lib/clipExportDownload";
 import { clipEditorUsesPrdLayout } from "../../lib/clipEditorPrdUi";
 import ClipEditorPrdLeftRail from "./ClipEditorPrdLeftRail";
 import ClipEditorPrdScriptToolbar from "./ClipEditorPrdScriptToolbar";
 import ClipEditorPrdTopBar from "./ClipEditorPrdTopBar";
+import ClipExportQualitySelect from "./ClipExportQualitySelect";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import {
@@ -2295,15 +2296,23 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     }
   }, [ensureLoggedInForAction, getAuthHeaders, projectId, load]);
 
-  const downloadExportFile = useCallback(() => {
-    const u = project?.export_download_url;
-    if (u) window.open(u, "_blank", "noopener,noreferrer");
-  }, [project?.export_download_url]);
+  const downloadExportFile = useCallback(async () => {
+    if (!project) return;
+    try {
+      await downloadClipExportMp3({
+        projectId,
+        title: project.title || projectId,
+        headers: getAuthHeaders()
+      });
+    } catch (e) {
+      setErr(String(e instanceof Error ? e.message : e));
+    }
+  }, [getAuthHeaders, project, projectId]);
 
   const handleExportClick = useCallback(() => {
     if (!ensureLoggedInForAction("导出成片", "presto.export")) return;
-    if (project?.export_status === "succeeded" && project.export_download_url) {
-      downloadExportFile();
+    if (project?.export_status === "succeeded") {
+      void downloadExportFile();
       return;
     }
     void performExport();
@@ -2313,7 +2322,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     if (!project) return t("clip.editor.export");
     if (project.export_status === "queued") return t("clip.editor.exportStatus.queued");
     if (project.export_status === "running") return t("clip.editor.exportStatus.running");
-    if (project.export_status === "succeeded" && project.export_download_url) {
+    if (project.export_status === "succeeded") {
       return t("clip.editor.downloadExport");
     }
     return t("clip.editor.export");
@@ -2349,9 +2358,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     prevExportStatusRef.current = cur;
     if (cur !== "succeeded") return;
     if (prev !== "running" && prev !== "queued") return;
-    if (!project?.export_download_url) return;
-    downloadExportFile();
-  }, [downloadExportFile, project?.export_download_url, project?.export_status]);
+    void downloadExportFile();
+  }, [downloadExportFile, project?.export_status]);
 
   const clearMarkersForSuggestion = useCallback((s: ClipEditSuggestion) => {
     const ex = s.execute;
@@ -2780,6 +2788,17 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     onError: (msg: string) => setErr(msg)
   };
 
+  const exportQualityControl = (
+    <ClipExportQualitySelect
+      projectId={projectId}
+      exportOptions={project.export_options}
+      getAuthHeaders={getAuthHeaders}
+      disabled={!loggedIn || exportActive || actionBusy}
+      onUpdated={(opts) => setProject((prev) => (prev ? { ...prev, export_options: opts } : prev))}
+      onError={(msg) => setErr(msg)}
+    />
+  );
+
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] min-h-0 flex-col overflow-hidden bg-canvas text-ink">
       {loginPromptNode}
@@ -2873,6 +2892,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 exportDisabled={exportButtonDisabled}
                 exportLabel={exportButtonLabel}
                 onExport={handleExportClick}
+                beforeExport={exportQualityControl}
               />
             ) : (
               <PrestoFlowHeader
@@ -2981,6 +3001,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 exportLabel={exportButtonLabel}
                 onTranscribe={() => setTranscribeConfirmOpen(true)}
                 onExport={handleExportClick}
+                beforeExport={exportQualityControl}
               />
             )}
             {!usePrdLayout && dualInterview ? (
@@ -3009,10 +3030,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                   : t("clip.editor.exportStatus.running")}
               </p>
             ) : null}
-            {project.export_status === "succeeded" && project.export_download_url ? (
+            {project.export_status === "succeeded" ? (
               <p className="border-b border-line bg-success-soft px-4 py-2 text-sm text-ink" role="status">
                 {t("clip.editor.exportReadyBanner")}
-                <button type="button" className="ml-2 font-medium underline" onClick={downloadExportFile}>
+                <button type="button" className="ml-2 font-medium underline" onClick={() => void downloadExportFile()}>
                   {t("clip.editor.downloadExport")}
                 </button>
                 <button
@@ -3759,11 +3780,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                       type="button"
                       aria-label={t("clip.editor.downloadExport")}
                       title={t("clip.editor.downloadExport")}
-                      disabled={!project.export_download_url}
-                      onClick={() => {
-                        const u = project.export_download_url;
-                        if (u) window.open(u, "_blank", "noopener,noreferrer");
-                      }}
+                      disabled={project.export_status !== "succeeded"}
+                      onClick={() => void downloadExportFile()}
                       className="flex h-10 w-10 items-center justify-center rounded-lg text-muted transition hover:bg-fill hover:text-ink disabled:pointer-events-none disabled:opacity-35"
                     >
                       <Download className="h-4 w-4" aria-hidden />

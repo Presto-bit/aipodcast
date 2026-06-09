@@ -904,7 +904,7 @@ def update_clip_repair_loudness_i_lufs(
     user_uuid: str | None,
     i_lufs: float | None,
 ) -> bool:
-    """修音 / 导出 loudnorm 目标整合响度 I（LUFS）；NULL 表示使用环境变量 CLIP_EXPORT_LOUDNORM_I 或默认 -16。"""
+    """修音「一键响度」目标 I（LUFS）；导出阶段不再重复 loudnorm。"""
     pid = _parse_uuid(project_id)
     if not pid:
         return False

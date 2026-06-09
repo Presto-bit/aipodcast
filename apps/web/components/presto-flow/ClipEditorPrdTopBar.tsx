@@ -10,9 +10,10 @@ type Props = {
   exportDisabled: boolean;
   exportLabel: string;
   onExport: () => void;
+  beforeExport?: ReactNode;
 };
 
-export default function ClipEditorPrdTopBar({ title, exportDisabled, exportLabel, onExport }: Props) {
+export default function ClipEditorPrdTopBar({ title, exportDisabled, exportLabel, onExport, beforeExport }: Props) {
   return (
     <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-line bg-surface/90 px-3 py-2 backdrop-blur-md sm:min-h-16 sm:gap-3 sm:px-4">
       <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-2.5">
@@ -30,6 +31,7 @@ export default function ClipEditorPrdTopBar({ title, exportDisabled, exportLabel
         <div className="min-w-0 flex-1 truncate">{title}</div>
       </div>
       <div className="flex w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:ml-auto sm:w-auto">
+        {beforeExport}
         <button
           type="button"
           disabled={exportDisabled}

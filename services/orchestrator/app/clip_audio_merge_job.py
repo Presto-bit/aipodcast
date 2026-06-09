@@ -103,6 +103,9 @@ def run_clip_audio_merge_sync(project_id: str, uid: str | None) -> None:
             keep_keys=[str(m.get("key") or "").strip() for m in meta if str(m.get("key") or "").strip()],
         )
         set_clip_audio_merge_state(project_id=project_id, user_uuid=uid, status="idle", error=None)
+        from .clip_browser_preview import schedule_prewarm_browser_playback_object_key
+
+        schedule_prewarm_browser_playback_object_key(merged_key)
     except Exception as exc:
         if merged_key:
             delete_object_key(merged_key)

@@ -1959,7 +1959,8 @@ def run_clip_transcription_job(
 
 
 def run_clip_export_job(project_id: str) -> dict[str, Any]:
-    from .clip_export import export_clip_mp3_from_bytes, resolve_export_loudnorm_i_lufs
+    from .clip_export import export_clip_mp3_from_bytes
+    from .clip_export_options import lame_q_from_export_options
     from .clip_segment_transcript import parse_audio_source_segments
     from .clip_store import (
         get_clip_project_by_id,
@@ -2061,6 +2062,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
         else:
             update_clip_export_failed(project_id=pid, user_uuid=owner, message="无主素材音频")
             return {"status": "failed", "error": "no_audio"}
+        lame_q = lame_q_from_export_options(row.get("export_options"))
         out = export_clip_mp3_from_bytes(
             audio_bytes=b,
             normalized=norm,
@@ -2070,7 +2072,8 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             long_pause_cap_ms=long_pause_cap_ms,
             silence_cut_ranges=silence_cuts,
             duck_ranges=None,
-            loudnorm_i_lufs=resolve_export_loudnorm_i_lufs(row.get("repair_loudness_i_lufs")),
+            skip_loudnorm=True,
+            final_lame_q=lame_q,
         )
         out_key = f"clip/{owner or 'anon'}/{pid}/export.mp3"
         upload_bytes(out_key, out, "audio/mpeg")

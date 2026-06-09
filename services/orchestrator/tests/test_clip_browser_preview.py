@@ -13,6 +13,7 @@ def test_is_browser_friendly_codec() -> None:
     assert is_browser_friendly_codec("aac")
     assert is_browser_friendly_codec("mp3")
     assert not is_browser_friendly_codec("alac")
+    assert not is_browser_friendly_codec("aac_latm")
     assert not is_browser_friendly_codec("ac3")
 
 

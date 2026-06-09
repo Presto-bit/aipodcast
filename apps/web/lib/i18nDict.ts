@@ -136,6 +136,10 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "clip.editor.uploading": "上传中…",
     "clip.editor.transcribe": "开始转写",
     "clip.editor.export": "导出文件",
+    "clip.editor.exportQuality": "导出音质",
+    "clip.editor.exportQualityHigh": "高（推荐）",
+    "clip.editor.exportQualityMax": "最高",
+    "clip.editor.exportQualityStandard": "标准",
     "clip.editor.downloadExport": "下载导出",
     "clip.editor.multiUploadIntro":
       "可选多段：一次选择多个文件将按各文件的修改时间从早到晚排序后暂存，并在下方列表中自动排队合并；单文件仍直接覆盖主素材（先合成再识别）。",
@@ -817,6 +821,10 @@ export const I18N_DICT: Record<Lang, Record<string, string>> = {
     "clip.editor.uploading": "Uploading…",
     "clip.editor.transcribe": "Start transcription",
     "clip.editor.export": "Export file",
+    "clip.editor.exportQuality": "Export quality",
+    "clip.editor.exportQualityHigh": "High (recommended)",
+    "clip.editor.exportQualityMax": "Maximum",
+    "clip.editor.exportQualityStandard": "Standard",
     "clip.editor.downloadExport": "Download export",
     "clip.editor.multiUploadIntro":
       "Multi-file: files are sorted by last-modified time (oldest first), staged in that order, then merged automatically. A single file still replaces the main asset (merge-then-recognize).",
