@@ -165,6 +165,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [wordchainPreviewBusy, setWordchainPreviewBusy] = useState(false);
   const editedPreviewInFlightRef = useRef(false);
   const pendingPlayAfterPreviewRef = useRef(false);
+  const editedPreviewFingerprintRef = useRef<string | null>(null);
   const transcriptUsesEditedPreviewRef = useRef(false);
   const wordchainPreviewOnRef = useRef(false);
   const needsEditedPreviewRef = useRef(false);
@@ -1163,6 +1164,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   const useTranscriptVirtualPlayback = !needsEditedPreview && useVirtualMultiSegmentPlayback;
 
+  const showTranscriptAudioTransport = hasServerAudio;
+
   useEffect(() => {
     transcriptUsesEditedPreviewRef.current = transcriptUsesEditedPreview;
     wordchainPreviewOnRef.current = wordchainPreviewOn;
@@ -1203,13 +1206,18 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     }
   }, [getAuthHeaders, hasServerAudio, loggedIn, project?.transcription_status, projectId]);
 
-  /** 删改后使缓存试听失效，仅在用户按播放/空格时再生成 */
+  /** 删改后使缓存试听失效；首次加载不重置，避免阻断已有试听状态 */
   useEffect(() => {
     if (!needsEditedPreview) {
       setWordchainPreviewOn(false);
+      editedPreviewFingerprintRef.current = null;
       return;
     }
-    setWordchainPreviewOn(false);
+    const prev = editedPreviewFingerprintRef.current;
+    editedPreviewFingerprintRef.current = editedPreviewFingerprint;
+    if (prev !== null && prev !== editedPreviewFingerprint) {
+      setWordchainPreviewOn(false);
+    }
   }, [editedPreviewFingerprint, needsEditedPreview]);
 
   const handleTranscriptPlayPause = useCallback(async () => {
@@ -1241,7 +1249,10 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     if (!pendingPlayAfterPreviewRef.current || !transcriptPlayerAudioUrl) return;
     pendingPlayAfterPreviewRef.current = false;
-    void waveformRef.current?.play();
+    const id = window.setTimeout(() => {
+      void waveformRef.current?.play();
+    }, 0);
+    return () => window.clearTimeout(id);
   }, [transcriptPlayerAudioUrl]);
 
   const generateWordchainPreview = useCallback(async () => {
@@ -3457,7 +3468,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                         repairBusyKind={prdRepairBusyKind}
                       />
                     ) : null}
-                    {usePrdLayout && (transcriptPlayerAudioUrl || useTranscriptVirtualPlayback) ? (
+                    {usePrdLayout && showTranscriptAudioTransport ? (
                       <div className="sr-only" aria-hidden>
                         {useTranscriptVirtualPlayback ? (
                           <ClipVirtualAudioTransport
@@ -3470,9 +3481,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             playbackRate={playbackRate}
                             snapSeekMs={snapSeekMs}
                           />
-                        ) : transcriptPlayerAudioUrl ? (
+                        ) : (
                           <ClipAudioTransport
-                            key={transcriptPlayerAudioUrl}
                             ref={waveformRef}
                             audioUrl={transcriptPlayerAudioUrl}
                             onTimeMs={handlePlaybackTimeMs}
@@ -3480,7 +3490,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                             onPlayStateChange={handleWaveformPlayState}
                             playbackRate={playbackRate}
                           />
-                        ) : null}
+                        )}
                       </div>
                     ) : null}
                     {!usePrdLayout ? (
@@ -3509,7 +3519,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                           {t("presto.flow.editedPreviewUpdating")}
                         </div>
                       ) : null}
-                      {(transcriptPlayerAudioUrl || useTranscriptVirtualPlayback) ? (
+                      {showTranscriptAudioTransport ? (
                         <div className="sr-only" aria-hidden>
                           {useTranscriptVirtualPlayback ? (
                             <ClipVirtualAudioTransport
@@ -3522,9 +3532,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               playbackRate={playbackRate}
                               snapSeekMs={snapSeekMs}
                             />
-                          ) : transcriptPlayerAudioUrl ? (
+                          ) : (
                             <ClipAudioTransport
-                              key={transcriptPlayerAudioUrl}
                               ref={waveformRef}
                               audioUrl={transcriptPlayerAudioUrl}
                               onTimeMs={handlePlaybackTimeMs}
@@ -3532,7 +3541,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                               onPlayStateChange={handleWaveformPlayState}
                               playbackRate={playbackRate}
                             />
-                          ) : null}
+                          )}
                         </div>
                       ) : null}
                       <input
