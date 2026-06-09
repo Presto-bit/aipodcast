@@ -177,6 +177,30 @@ export function buildStudioTimeline(
   const items: StudioTimelineItem[] = [];
   const activeGroupId = groups[groups.length - 1]?.id;
 
+  const pushManuscriptForRuns = (runs: StudioRun[], isActive: boolean) => {
+    if (options?.hideManuscript) return;
+    for (const run of runs) {
+      if (run.tool !== "generate" && run.tool !== "revise") continue;
+      const version = versions.get(run.id) ?? null;
+      const pendingPatch =
+        work.pendingPatch?.sourceRunId === run.id ? work.pendingPatch : null;
+      const baseVersion = pendingPatch
+        ? work.versions.find((v) => v.id === pendingPatch.fromVersionId) ?? null
+        : run.tool === "revise" && run.status === "running"
+          ? work.versions.find((v) => v.id === work.activeVersionId) ?? null
+          : null;
+
+      items.push({
+        kind: "manuscript",
+        run,
+        version,
+        pendingPatch,
+        baseVersion,
+        isActiveVersion: Boolean(version && version.id === work.activeVersionId)
+      });
+    }
+  };
+
   for (const group of groups) {
     const isActive = group.id === activeGroupId;
 
@@ -188,6 +212,9 @@ export function buildStudioTimeline(
       userAnchor: isActive ? "active" : "history"
     });
 
+    // 无 ack 时 run 锚定在用户 turn
+    pushManuscriptForRuns(anchors.get(group.userTurn.id) ?? [], isActive);
+
     for (const assistantTurn of group.assistantTurns) {
       if (isStudioComposeAckTurn(assistantTurn)) continue;
       items.push({
@@ -198,28 +225,7 @@ export function buildStudioTimeline(
         ephemeral: isStudioComposeAckTurn(assistantTurn)
       });
 
-      if (options?.hideManuscript) continue;
-      const runs = anchors.get(assistantTurn.id) ?? [];
-      for (const run of runs) {
-        if (run.tool !== "generate" && run.tool !== "revise") continue;
-        const version = versions.get(run.id) ?? null;
-        const pendingPatch =
-          work.pendingPatch?.sourceRunId === run.id ? work.pendingPatch : null;
-        const baseVersion = pendingPatch
-          ? work.versions.find((v) => v.id === pendingPatch.fromVersionId) ?? null
-          : run.tool === "revise" && run.status === "running"
-            ? work.versions.find((v) => v.id === work.activeVersionId) ?? null
-            : null;
-
-        items.push({
-          kind: "manuscript",
-          run,
-          version,
-          pendingPatch,
-          baseVersion,
-          isActiveVersion: Boolean(version && version.id === work.activeVersionId)
-        });
-      }
+      pushManuscriptForRuns(anchors.get(assistantTurn.id) ?? [], isActive);
     }
   }
 
