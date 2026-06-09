@@ -31,7 +31,9 @@ export function humanizeComposePhase(phase: string): string {
   const p = phase.trim();
   if (!p) return "准备写稿…";
   if (/检索|资料|准备创作/.test(p)) return "正在阅读资料与任务要点…";
-  if (/撰写|标题与正文|写稿|生成内容/.test(p)) return "正在写 3 个方向的完整成稿…";
+  if (/撰写|标题与正文|完整成稿|写稿|生成内容|模型撰写|首个预览/.test(p)) {
+    return "正在写 3 个方向的完整成稿…";
+  }
   if (/优化|模板|重写/.test(p)) return "正在优化表述，避免空泛模板…";
   if (/润色|钩子|锚点|备选/.test(p)) return "正在润色标题与开头…";
   if (/输出|流式|block/.test(p)) return "正在输出成稿…";

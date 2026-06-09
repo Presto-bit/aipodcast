@@ -28,7 +28,11 @@ import {
   type StudioComposeSoftFailure
 } from "../../lib/studioComposeFailure";
 import { blocksFromComposeStream, hasComposePreviewContent } from "../../lib/studioComposePreview";
-import { applyPendingPatch, discardPendingPatch } from "../../lib/studioPatchApply";
+import {
+  applyPendingPatch,
+  discardPendingPatch,
+  isStudioFirstDraftPatch
+} from "../../lib/studioPatchApply";
 import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { classifyStudioFailure } from "../../lib/studioAgentFailure";
 import { applyDomainHint, resolveStudioDomainContext } from "../../lib/studioDomainProfile";
@@ -312,7 +316,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               : patch.qualityNote
         };
 
-        if (shouldAutoApplyPatch(after.editorMode, { forceReview: forceReviewPatch })) {
+        if (
+          shouldAutoApplyPatch(after.editorMode, {
+            forceReview: forceReviewPatch,
+            isFirstDraft: isStudioFirstDraftPatch(after, fullPatch)
+          })
+        ) {
           const keys = new Set<string>(fullPatch.changedKeys ?? fullPatch.selections ?? []);
           const undoSnap = captureUndoSnapshot(after);
           const withPending = { ...after, pendingPatch: fullPatch, status: "ready" as const };

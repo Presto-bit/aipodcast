@@ -272,6 +272,7 @@ export default function StudioTimelineManuscriptCard({
         runPhase: work.runPhase || run.summary,
         tool: run.tool === "revise" ? "revise" : "generate",
         streamingBlocks,
+        streamingBodyText,
         searchingCorpus: /搜|资料/.test(work.runPhase || "")
       });
     const hasStream = Boolean(

@@ -35,7 +35,7 @@ export default function StudioEditorControls({
             editorMode === "explore" ? "bg-brand/15 text-brand font-medium" : "text-muted hover:text-ink"
           ].join(" ")}
           onClick={() => onEditorModeChange("explore")}
-          title="探索：自动采纳改动"
+          title="探索：首稿与改版均自动采纳"
         >
           探索
         </button>
@@ -46,7 +46,7 @@ export default function StudioEditorControls({
             editorMode === "review" ? "bg-brand/15 text-brand font-medium" : "text-muted hover:text-ink"
           ].join(" ")}
           onClick={() => onEditorModeChange("review")}
-          title="审阅：需确认后采纳"
+          title="审阅：改版需确认，首稿自动落稿"
         >
           审阅
         </button>

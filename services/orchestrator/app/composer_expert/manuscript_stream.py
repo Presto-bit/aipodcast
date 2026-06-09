@@ -22,6 +22,43 @@ from .generate import (
     generate_xhs_expert_deliverable,
 )
 
+_COMPOSE_WAIT_HEARTBEATS = (
+    "正在生成完整成稿…",
+    "模型撰写中，请稍候…",
+    "仍在撰写，首个预览即将出现…",
+)
+_COMPOSE_WAIT_POLL_SECONDS = 5.0
+_COMPOSE_WAIT_HEARTBEAT_SECONDS = 12.0
+_COMPOSE_WAIT_DEADLINE_SECONDS = 180.0
+
+
+def iter_compose_queue_events(
+    event_q: queue.Queue[tuple[str, Any]],
+    *,
+    deadline_seconds: float = _COMPOSE_WAIT_DEADLINE_SECONDS,
+) -> Iterator[tuple[str, Any]]:
+    """轮询 compose worker 队列；空闲时周期性产出 heartbeat phase。"""
+    deadline_at = time.perf_counter() + deadline_seconds
+    heartbeat_idx = 0
+    last_heartbeat_at = time.perf_counter()
+    while True:
+        remaining = deadline_at - time.perf_counter()
+        if remaining <= 0:
+            yield ("error", "生成超时")
+            return
+        try:
+            yield event_q.get(timeout=min(_COMPOSE_WAIT_POLL_SECONDS, remaining))
+        except queue.Empty:
+            now = time.perf_counter()
+            if now - last_heartbeat_at < _COMPOSE_WAIT_HEARTBEAT_SECONDS:
+                continue
+            msg = _COMPOSE_WAIT_HEARTBEATS[
+                min(heartbeat_idx, len(_COMPOSE_WAIT_HEARTBEATS) - 1)
+            ]
+            heartbeat_idx += 1
+            last_heartbeat_at = now
+            yield ("phase", msg)
+
 
 def deliverable_to_manuscript_blocks_dict(deliverable: dict[str, Any]) -> list[dict[str, Any]]:
     """Expert deliverable → 前端 ManuscriptBlock 列表（Studio Agent done 事件）。"""
@@ -212,7 +249,7 @@ def _prepare_material(
             raise ValueError("material_too_short")
 
     if on_progress:
-        on_progress("正在撰写标题与正文…")
+        on_progress("正在撰写完整成稿…")
 
     return material, options, notebook, len(nids), used_rag
 
@@ -258,7 +295,7 @@ def iter_studio_manuscript_stream(
         yield _sse({"type": "error", "message": str(exc)[:500], "requestId": rid})
         return
 
-    yield _sse({"type": "phase", "message": "正在撰写标题与正文…", "requestId": rid})
+    yield _sse({"type": "phase", "message": "正在撰写完整成稿…", "requestId": rid})
 
     event_q: queue.Queue[tuple[str, Any]] = queue.Queue()
     last_blocks_sig = [""]
@@ -314,13 +351,7 @@ def iter_studio_manuscript_stream(
     threading.Thread(target=worker, daemon=True).start()
 
     deliverable: dict[str, Any] | None = None
-    while True:
-        try:
-            kind, payload_item = event_q.get(timeout=180.0)
-        except queue.Empty:
-            yield _sse({"type": "error", "message": "生成超时", "requestId": rid})
-            return
-
+    for kind, payload_item in iter_compose_queue_events(event_q):
         if kind == "phase":
             yield _sse({"type": "phase", "message": str(payload_item), "requestId": rid})
         elif kind == "blocks":

@@ -101,6 +101,7 @@ describe("studio V2", () => {
   it("explore mode auto applies", () => {
     expect(shouldAutoApplyPatch("explore")).toBe(true);
     expect(shouldAutoApplyPatch("review")).toBe(false);
+    expect(shouldAutoApplyPatch("review", { isFirstDraft: true })).toBe(true);
     expect(shouldAutoApplyPatch("explore", { forceReview: true })).toBe(false);
   });
 

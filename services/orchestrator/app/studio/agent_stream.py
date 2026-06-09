@@ -19,6 +19,7 @@ from ..composer_expert.manuscript_stream import (
     _prepare_material,
     _sse,
     deliverable_to_manuscript_blocks_dict,
+    iter_compose_queue_events,
     partial_social_to_manuscript_blocks,
 )
 from ..social_llm_utils import extract_partial_social_json_fields, invoke_social_llm
@@ -372,12 +373,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
 
     threading.Thread(target=worker, daemon=True).start()
 
-    while True:
-        try:
-            kind, item = event_q.get(timeout=180.0)
-        except queue.Empty:
-            yield _sse({"type": "error", "message": "生成超时", "requestId": rid})
-            return
+    for kind, item in iter_compose_queue_events(event_q):
         if kind == "phase":
             yield _sse({"type": "phase", "message": str(item), "requestId": rid, "tool": tool})
         elif kind == "body_delta":
