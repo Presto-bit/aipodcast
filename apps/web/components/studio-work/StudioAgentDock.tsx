@@ -52,6 +52,7 @@ import type {
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
+import { composeThinkingFlashText } from "../../lib/studioComposeThinking";
 import StudioEphemeralHint from "./StudioEphemeralHint";
 
 const QUICK_PROMPTS = [
@@ -192,13 +193,33 @@ export default function StudioAgentDock({
   const centerEmptyComposer =
     canvasMode && turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const useAgentStream = Boolean(onAgentRun);
+  const hasComposeStream = Boolean(streamingBlocks?.length || streamingBodyText?.trim());
+  const thinkingText = useMemo(
+    () => composeThinkingFlashText(agentSteps, work.runPhase),
+    [agentSteps, work.runPhase]
+  );
+  const [thinkingDismissed, setThinkingDismissed] = useState(false);
+  useEffect(() => {
+    if (jobRunning && !hasComposeStream) {
+      setThinkingDismissed(false);
+      const t = window.setTimeout(() => setThinkingDismissed(true), 4200);
+      return () => window.clearTimeout(t);
+    }
+    if (hasComposeStream) setThinkingDismissed(true);
+  }, [jobRunning, hasComposeStream, thinkingText]);
+  const showThinkingFlash = jobRunning && !hasComposeStream && !thinkingDismissed;
   const composeProgressLabel = studioStreamPhaseLabel({
     runPhase: work.runPhase,
-    hasStream: Boolean(streamingBlocks?.length || streamingBodyText?.trim()),
+    hasStream: hasComposeStream,
     isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
   });
+  const agentStatusText = showThinkingFlash
+    ? thinkingText
+    : composeProgressLabel || agentRouteHint || ephemeralHint;
   const showAgentOutputStatus =
-    canvasMode && (jobRunning || agentBusy) && Boolean(composeProgressLabel || agentRouteHint || ephemeralHint);
+    canvasMode &&
+    (jobRunning || agentBusy) &&
+    Boolean(showThinkingFlash || composeProgressLabel || agentRouteHint || ephemeralHint);
   const dockPhase = useAgentStream
     ? phase || undefined
     : phase || (jobRunning ? composeProgressLabel : undefined);
@@ -780,7 +801,8 @@ export default function StudioAgentDock({
 
   const agentOutputStatus = showAgentOutputStatus ? (
     <StudioEphemeralHint
-      text={composeProgressLabel || agentRouteHint || ephemeralHint}
+      text={agentStatusText}
+      ttlMs={showThinkingFlash ? 4200 : 4500}
       className="text-muted"
     />
   ) : null;

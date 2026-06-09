@@ -146,17 +146,26 @@ export function buildStudioBriefClarifyTurn(
   };
 }
 
-/** brief 已够但成稿偏模板/空泛 → 不重问受众；预览稿已保留在画布 */
+/** brief 已够但终检未过 → 不展示低质量正文，引导补 1 项后重写 */
 export function buildStudioRewriteClarifyTurn(
-  _userMessage = "",
-  _taskSentence = ""
+  userMessage = "",
+  taskSentence = ""
 ): StudioBriefClarifyTurn {
+  const context = [taskSentence, userMessage].filter(Boolean).join("\n");
+  const gaps = detectBriefGaps(context);
+  const optional = chipExamples(gaps, context).slice(0, 3);
+  const suggestedReplies = withRetryChip(optional, context, { alwaysRetry: true });
+
   return {
     content: [
-      "上一版预览稿偏模板化（不是 brief 不够），已保留在上方稿件区，可先采纳再改。",
+      "这版还不够贴题，**不会展示为稿件**。补下面 **1 项** 后点「再试一次」，我会重新写一版：",
       "",
-      "若要系统重写，点 **再试一次**；也可直接在下方补充改写意见。"
+      optional.length
+        ? optional.map((c) => `· ${c}`).join("\n")
+        : "· 可补充具体场景、卖点或使用细节",
+      "",
+      "也可直接在下方用一句话说明要改的方向。"
     ].join("\n"),
-    suggestedReplies: [STUDIO_COMPOSE_RETRY_CHIP]
+    suggestedReplies
   };
 }

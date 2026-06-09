@@ -20,9 +20,10 @@ assert(
 );
 
 const rewriteTurn = buildStudioRewriteClarifyTurn(promoBrief, promoBrief);
-assert(rewriteTurn.content.includes("预览稿"), "rewrite mentions preview retained");
-assert(rewriteTurn.suggestedReplies.length === 1, "rewrite chip only retry");
-assert(rewriteTurn.suggestedReplies[0] === STUDIO_COMPOSE_RETRY_CHIP, "retry chip");
+assert(rewriteTurn.content.includes("不会展示"), "rewrite says no manuscript shown");
+assert(!rewriteTurn.content.includes("预览稿"), "rewrite does not mention preview");
+assert(rewriteTurn.suggestedReplies.includes(STUDIO_COMPOSE_RETRY_CHIP), "retry chip on rewrite");
+assert(rewriteTurn.suggestedReplies.length >= 1, "rewrite has supplement chips");
 
 assert(
   classifyComposeSoftFailure("NEEDS_REWRITE", promoBrief) === "needs_rewrite",

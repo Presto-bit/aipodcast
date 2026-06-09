@@ -267,6 +267,14 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         last_errors: list[str] = []
         template_retry_done = False
         for attempt in range(3):
+            stream_live = attempt == 0
+            last_sig[0] = ""
+            last_body[0] = ""
+
+            def on_attempt_delta(acc: str, *, live: bool = stream_live) -> None:
+                if live:
+                    on_stream_delta(acc)
+
             try:
                 deliverable = generate_xhs_expert_deliverable(
                     task_sentence=task_sentence,
@@ -277,7 +285,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     note_count=note_count,
                     used_rag=used_rag,
                     feature_summary=feature_summary,
-                    on_stream_delta=on_stream_delta,
+                    on_stream_delta=on_attempt_delta,
                     validation_errors=last_errors or None,
                 )
                 content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
@@ -287,7 +295,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                         last_errors = [
                             "成稿过于模板化，请换开头钩子、段落结构与用词重写，三方向须明显不同"
                         ]
-                        event_q.put(("phase", "正在按已有信息重写…"))
+                        event_q.put(("stream_reset", None))
                         continue
                     event_q.put(("error", _compose_soft_failure_code(task_sentence)))
                     return
@@ -298,7 +306,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 err = str(exc)
                 if err.startswith("validation_failed:") and attempt < 2:
                     last_errors = err.split(":", 1)[1].split("|")
-                    event_q.put(("phase", "正在优化文稿…"))
+                    event_q.put(("stream_reset", None))
                     continue
                 event_q.put(("error", err[:500]))
                 return
@@ -321,6 +329,8 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             yield _sse({"type": "body_delta", "body": str(item), "requestId": rid, "tool": tool})
         elif kind == "block_delta":
             yield _sse({"type": "block_delta", "blocks": item, "requestId": rid, "tool": tool})
+        elif kind == "stream_reset":
+            yield _sse({"type": "stream_reset", "requestId": rid, "tool": tool})
         elif kind == "error":
             yield _sse({"type": "error", "message": str(item), "requestId": rid})
             return

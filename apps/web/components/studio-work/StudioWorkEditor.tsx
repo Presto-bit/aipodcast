@@ -209,6 +209,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         failureKind: StudioComposeSoftFailure,
         fallbackBlocks: ManuscriptBlock[] = []
       ) => {
+        if (failureKind === "needs_rewrite") return;
         if (!runId) return;
         const previewBlocks = blocksFromComposeStream(
           streamingBlocksRef.current,
@@ -343,6 +344,13 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
             streamingBodyRef.current = body;
             setStreamingBodyText(body);
+          },
+          onStreamReset: (tool) => {
+            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            streamingBlocksRef.current = null;
+            streamingBodyRef.current = null;
+            setStreamingBlocks([]);
+            setStreamingBodyText("");
           }
         });
 
