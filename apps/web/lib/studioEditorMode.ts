@@ -2,7 +2,7 @@
 
 export type StudioEditorMode = "explore" | "review";
 
-export const STUDIO_DEFAULT_EDITOR_MODE: StudioEditorMode = "explore";
+export const STUDIO_DEFAULT_EDITOR_MODE: StudioEditorMode = "review";
 
 export function isExploreMode(mode: StudioEditorMode | undefined): boolean {
   return (mode ?? STUDIO_DEFAULT_EDITOR_MODE) === "explore";

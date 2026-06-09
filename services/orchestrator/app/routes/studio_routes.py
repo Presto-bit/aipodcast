@@ -66,6 +66,8 @@ class StudioAgentStreamBody(BaseModel):
     source_type: str = Field(default="composer_prompt", alias="sourceType")
     agent_mode: str = Field(default="write", alias="agentMode")
     manuscript_blocks: list[dict[str, Any]] = Field(default_factory=list, alias="manuscriptBlocks")
+    domain: str = Field(default="general")
+    content_format: str = Field(default="general", alias="format")
 
     model_config = {"populate_by_name": True}
 

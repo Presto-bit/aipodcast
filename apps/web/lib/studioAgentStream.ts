@@ -7,6 +7,8 @@ import {
   type StudioAgentToolCall
 } from "./studioAgentToolSchema";
 import { parseStudioAgentStep, upsertAgentStep, type StudioAgentStep } from "./studioAgentSteps";
+import { plannerAgentTurns } from "./studioPlannerTurns";
+import type { StudioDomain, StudioFormat } from "./studioDomainProfile";
 import type { ManuscriptBlock, PendingPatch, StudioAgentTurn, WorkStatus } from "./studioWorkTypes";
 
 export type StudioAgentTool = "reply" | "compose" | "revise";
@@ -30,6 +32,8 @@ export type StudioAgentStreamInput = {
   activeVersionId?: string;
   clientRunId?: string;
   forceCompose?: boolean;
+  domain?: StudioDomain;
+  format?: StudioFormat;
   authHeaders: Record<string, string>;
   signal?: AbortSignal;
   onSession?: (requestId: string) => void;
@@ -67,10 +71,7 @@ export async function streamStudioAgent(
     },
     body: JSON.stringify({
       message: input.message.trim(),
-      agentTurns: input.agentTurns.map((t) => ({
-        role: t.role,
-        content: t.content
-      })),
+      agentTurns: plannerAgentTurns(input.agentTurns),
       status: input.status,
       versionCount: input.versionCount,
       taskSentence: input.taskSentence.trim(),
@@ -81,6 +82,8 @@ export async function streamStudioAgent(
       authorPrompt: input.authorPrompt?.trim() || "",
       stylePrompt: input.stylePrompt?.trim() || "",
       agentMode: input.agentMode ?? "write",
+      domain: input.domain ?? "general",
+      format: input.format ?? "general",
       manuscriptBlocks: (input.manuscriptBlocks ?? []).map((b) => ({ ...b })),
       activeVersionId: input.activeVersionId?.trim() || "",
       clientRunId: input.clientRunId?.trim() || "",

@@ -17,14 +17,22 @@ export function isExplicitAskWhileReady(text: string): boolean {
   return userMessageLooksLikeQuestion(q) && /怎么|如何|为什么|为啥|是否|能不能|可以吗/.test(q);
 }
 
-/** 有稿时是否应走改版（含篇幅约束；排除纯问句） */
+/** 解读 / 总结类：有稿时走 reply，不改版 */
+export const STUDIO_MANUSCRIPT_READ_RE =
+  /总结|概括|要点|解读|分析|看看|讲讲|什么意思|怎么样|评价|点评|优缺点|说了什么|讲了什么/;
+
+/** 有稿时是否应走改版（含篇幅约束；排除纯问句与解读） */
 export function looksLikeManuscriptEditRequest(text: string, hasManuscript: boolean): boolean {
   if (!hasManuscript) return false;
   const q = text.trim();
   if (!q) return false;
   if (isExplicitAskWhileReady(q)) return false;
+  if (STUDIO_MANUSCRIPT_READ_RE.test(q) && !STUDIO_REVISE_INTENT_RE.test(q) && !STUDIO_LENGTH_CONSTRAINT_RE.test(q)) {
+    return false;
+  }
   if (STUDIO_REVISE_INTENT_RE.test(q) || STUDIO_LENGTH_CONSTRAINT_RE.test(q)) return true;
-  return true;
+  if (q.length <= 56 && !/[?？]$/.test(q)) return true;
+  return false;
 }
 
 export function looksLikeReviseRequest(text: string, hasManuscript: boolean): boolean {

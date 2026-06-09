@@ -3,6 +3,7 @@ import {
   isExplicitAskWhileReady,
   looksLikeManuscriptEditRequest,
   STUDIO_LENGTH_CONSTRAINT_RE,
+  STUDIO_MANUSCRIPT_READ_RE,
   STUDIO_REVISE_INTENT_RE
 } from "./studioReviseIntent";
 import { composeTaskSentenceFromTurns, hasTaskContext } from "./studioWorkTask";
@@ -99,7 +100,7 @@ export function routeStudioAction(
 
   const hasMs = (work.versions?.length ?? 0) > 0;
   if ((work.status === "ready" || work.status === "shipped") && hasMs) {
-    if (isExplicitAskWhileReady(q)) {
+    if (isExplicitAskWhileReady(q) || STUDIO_MANUSCRIPT_READ_RE.test(q)) {
       return {
         tool: "ask",
         intent,
@@ -107,11 +108,7 @@ export function routeStudioAction(
         askContext: { includeManuscript: true, includeMemory: true }
       };
     }
-    if (
-      looksLikeManuscriptEditRequest(q, true) ||
-      STUDIO_REVISE_INTENT_RE.test(q) ||
-      STUDIO_LENGTH_CONSTRAINT_RE.test(q)
-    ) {
+    if (looksLikeManuscriptEditRequest(q, true)) {
       return {
         tool: "revise",
         intent: "revise_coach",

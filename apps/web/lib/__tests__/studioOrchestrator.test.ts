@@ -105,6 +105,23 @@ describe("studioOrchestrator", () => {
     expect(lengthEdit.tool).toBe("revise");
   });
 
+  it("routes ready summary to ask", () => {
+    const readyWork = baseWork({
+      status: "ready",
+      versions: [
+        {
+          id: "v1",
+          label: "v1",
+          createdAt: 1,
+          blocks: [{ id: "b1", kind: "body", text: "正文" }]
+        }
+      ],
+      activeVersionId: "v1"
+    });
+    const summary = routeStudioAction(readyWork, "总结一下这篇要点");
+    expect(summary.tool).toBe("ask");
+  });
+
   it("routes ready explicit question to ask", () => {
     const readyWork = baseWork({
       status: "ready",

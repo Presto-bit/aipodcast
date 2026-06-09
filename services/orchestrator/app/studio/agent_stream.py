@@ -27,9 +27,12 @@ from .agent_route import (
     compose_soft_failure_code,
     is_ask_only,
     is_insufficient_brief,
+    is_manuscript_edit,
     reply_for_blocking,
 )
+from .agent_tool_router import StudioToolDecision
 from .agent_loop import manuscript_plain_from_payload, run_agent_tool_loop
+from .domain_profile import domain_author_overlay, expert_id_for_payload
 from .agent_tool_schema import normalize_agent_mode
 from .patch_utils import build_pending_patch_payload
 
@@ -173,6 +176,16 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             }
         )
 
+    if tool == "reply" and version_count > 0 and is_manuscript_edit(message, has_manuscript=True):
+        tool = "revise"
+        decision = StudioToolDecision(
+            tool="revise",
+            brief=decision.brief or message,
+            reply_text="",
+            source=decision.source,
+            reason=decision.reason or "护栏：有稿改稿",
+        )
+
     if tool == "reply":
         compose_brief = build_compose_task_sentence(turns, current_message=message)
         if decision.reply_text:
@@ -225,12 +238,17 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         if str(feature_core.get(k) or "").strip()
     )[:80]
 
+    domain_overlay = domain_author_overlay(payload)
+    author_extra = str(payload.get("authorPrompt") or "").strip()
+    merged_author = "\n\n".join(x for x in (author_extra, domain_overlay) if x).strip()
+
     stream_payload = {
         **payload,
         "taskSentence": task_sentence,
         "task_sentence": task_sentence,
         "intake": intake,
-        "expertId": "xhs_ops",
+        "authorPrompt": merged_author,
+        "expertId": expert_id_for_payload(payload),
     }
     if stream_payload.get("noteIds"):
         stream_payload["source_type"] = "notes_rag"

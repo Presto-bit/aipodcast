@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { inferDomainFromText, parseDomainCorrection, mergeDomainContext } from "../studioDomainProfile";
+import {
+  inferDomainFromText,
+  parseDomainCorrection,
+  mergeDomainContext,
+  resolveStudioDomainContext,
+  isUnsetDomain
+} from "../studioDomainProfile";
 import { parseStudioPlannerDecision, studioPlannerGhostLabelZh } from "../studioPlannerContract";
 import { buildStudioEvidenceBar } from "../studioEvidenceBar";
 import { classifyStudioFailure } from "../studioAgentFailure";
-import { shouldAutoApplyPatch } from "../studioEditorMode";
+import { shouldAutoApplyPatch, STUDIO_DEFAULT_EDITOR_MODE } from "../studioEditorMode";
 import { looksLikeReviseRequest, buildLengthPatchOpinion } from "../studioReviseIntent";
 import { diffLines } from "../studioLineDiff";
 import { STUDIO_WORK_SCHEMA_VERSION, migrateStudioWorkToV3 } from "../studioWorkMigrate";
@@ -22,6 +28,32 @@ describe("studio V2", () => {
   it("merges domain context", () => {
     const merged = mergeDomainContext({ domain: "social", format: "short_post" }, "改成科普长文");
     expect(merged.domain).toBe("article");
+  });
+
+  it("resolves domain from task text without early lock", () => {
+    expect(isUnsetDomain("general", "general")).toBe(true);
+    const fromTask = resolveStudioDomainContext({
+      hint: { domain: "general", format: "general" },
+      userMessage: "帮我想想",
+      taskText: "推广水杯，写一篇小红书笔记给职场女性"
+    });
+    expect(fromTask.domain).toBe("social");
+    expect(fromTask.format).toBe("short_post");
+  });
+
+  it("keeps hint on revise without re-inferring", () => {
+    const revise = resolveStudioDomainContext({
+      hint: { domain: "social", format: "short_post" },
+      userMessage: "写500字",
+      taskText: "推广水杯",
+      hasManuscript: true
+    });
+    expect(revise.domain).toBe("social");
+  });
+
+  it("soft correction phrases", () => {
+    expect(parseDomainCorrection("用邮件语气写给客户")?.domain).toBe("business");
+    expect(parseDomainCorrection("更像小红书体")?.domain).toBe("social");
   });
 
   it("parses planner contract", () => {
@@ -62,10 +94,18 @@ describe("studio V2", () => {
     expect(opinion).toContain("【块级改版】");
   });
 
+  it("summary intent is not revise", () => {
+    expect(looksLikeReviseRequest("总结一下这篇要点", true)).toBe(false);
+  });
+
   it("explore mode auto applies", () => {
     expect(shouldAutoApplyPatch("explore")).toBe(true);
     expect(shouldAutoApplyPatch("review")).toBe(false);
     expect(shouldAutoApplyPatch("explore", { forceReview: true })).toBe(false);
+  });
+
+  it("default editor mode is review", () => {
+    expect(STUDIO_DEFAULT_EDITOR_MODE).toBe("review");
   });
 
   it("diff lines", () => {

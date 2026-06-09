@@ -107,6 +107,11 @@ const DOMAIN_SIGNALS: Array<{ domain: StudioDomain; format?: StudioFormat; re: R
   { domain: "academic", format: "summary", re: /摘要|文献|综述|论文|学术/i }
 ];
 
+/** general · 文稿 视为「未选定」，不参与锁定 */
+export function isUnsetDomain(domain?: StudioDomain, format?: StudioFormat): boolean {
+  return (domain ?? "general") === "general" && (format ?? "general") === "general";
+}
+
 /** 从用户句推断 domain/format（零配置） */
 export function inferDomainFromText(text: string): Pick<StudioDomainProfile, "domain" | "format"> {
   const q = text.trim();
@@ -120,27 +125,81 @@ export function inferDomainFromText(text: string): Pick<StudioDomainProfile, "do
   return { domain: "general", format: "general" };
 }
 
-/** 用户纠偏 domain（下一句直接改） */
+/** 用户纠偏 domain（显式或自然说法） */
 export function parseDomainCorrection(text: string): Pick<StudioDomainProfile, "domain" | "format"> | null {
   const q = text.trim();
-  if (/改成.*邮件|邮件语气|商务邮件/.test(q)) return { domain: "business", format: "email" };
-  if (/改成.*科普|科普长文|教程/.test(q)) return { domain: "article", format: "tutorial" };
-  if (/改成.*小红书|社交|种草/.test(q)) return { domain: "social", format: "short_post" };
-  if (/改成.*播客|口播|脚本/.test(q)) return { domain: "script", format: "script_beats" };
-  if (/不要.*话题|不要.*hashtag|去掉标签/.test(q)) return { domain: "article", format: "long_form" };
+  if (/改成.*邮件|邮件语气|商务邮件|对客户|正式对外/.test(q)) {
+    return { domain: "business", format: "email" };
+  }
+  if (/改成.*科普|科普长文|科普一点|教程体|按教程/.test(q)) {
+    return { domain: "article", format: "tutorial" };
+  }
+  if (/改成.*小红书|社交|种草|小红书体|种草笔记|带话题/.test(q)) {
+    return { domain: "social", format: "short_post" };
+  }
+  if (/改成.*播客|口播|脚本|视频稿/.test(q)) {
+    return { domain: "script", format: "script_beats" };
+  }
+  if (/不要.*话题|不要.*hashtag|去掉标签/.test(q)) {
+    return { domain: "article", format: "long_form" };
+  }
   if (/不是小红书|非小红书/.test(q)) return { domain: "article", format: "long_form" };
   return null;
 }
 
+export type ResolveStudioDomainInput = {
+  /** work 上存的上一轮 hint，非锁定值 */
+  hint?: { domain?: StudioDomain; format?: StudioFormat };
+  userMessage: string;
+  /** 累积任务句（优先于单句推断） */
+  taskText?: string;
+  /** 有成稿且在改版：保持 hint，避免改篇幅时误切 domain */
+  hasManuscript?: boolean;
+};
+
+/**
+ * 每轮请求内解析 domain/format；不在 work 上早锁。
+ * 顺序：纠偏句 →（有稿）hint → 从 task/消息推断 → hint 兜底。
+ */
+export function resolveStudioDomainContext(
+  params: ResolveStudioDomainInput
+): { domain: StudioDomain; format: StudioFormat } {
+  const correction = parseDomainCorrection(params.userMessage);
+  if (correction) return correction;
+
+  if (params.hasManuscript) {
+    return {
+      domain: params.hint?.domain ?? "general",
+      format: params.hint?.format ?? "general"
+    };
+  }
+
+  for (const text of [params.taskText, params.userMessage].filter(Boolean) as string[]) {
+    const inferred = inferDomainFromText(text);
+    if (!isUnsetDomain(inferred.domain, inferred.format)) {
+      return inferred;
+    }
+  }
+
+  return {
+    domain: params.hint?.domain ?? "general",
+    format: params.hint?.format ?? "general"
+  };
+}
+
+/** 成稿/改版成功后写回 hint（供 revise 兜底与卡片展示） */
+export function applyDomainHint(
+  work: { domain?: StudioDomain; format?: StudioFormat },
+  ctx: { domain: StudioDomain; format: StudioFormat }
+): { domain: StudioDomain; format: StudioFormat } {
+  if (isUnsetDomain(ctx.domain, ctx.format)) return work as { domain: StudioDomain; format: StudioFormat };
+  return { domain: ctx.domain, format: ctx.format };
+}
+
+/** @deprecated 使用 resolveStudioDomainContext */
 export function mergeDomainContext(
   current: { domain?: StudioDomain; format?: StudioFormat },
   userMessage: string
 ): { domain: StudioDomain; format: StudioFormat } {
-  const correction = parseDomainCorrection(userMessage);
-  if (correction) return correction;
-  if (current.domain && current.format) {
-    return { domain: current.domain, format: current.format };
-  }
-  const inferred = inferDomainFromText(userMessage);
-  return inferred;
+  return resolveStudioDomainContext({ hint: current, userMessage });
 }

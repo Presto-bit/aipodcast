@@ -189,6 +189,7 @@ export function buildStudioTimeline(
     });
 
     for (const assistantTurn of group.assistantTurns) {
+      if (isStudioComposeAckTurn(assistantTurn)) continue;
       items.push({
         kind: "dialogue",
         turn: assistantTurn,

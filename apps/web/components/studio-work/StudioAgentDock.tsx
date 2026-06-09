@@ -7,9 +7,8 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
-import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
-import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
+import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { formatStudioAskError } from "../../lib/studioAskError";
 import { featureCoreToPrompt } from "../../lib/homeComposerFeatureCore";
 import { personalProfileToPrompt } from "../../lib/homeComposerProfile";
@@ -40,8 +39,6 @@ import {
   studioStructuredAddsAssistantTurn,
   userMessageLooksLikeQuestion
 } from "../../lib/studioAgentStructured";
-import { STUDIO_REVISE_INTENT_RE } from "../../lib/studioReviseIntent";
-import { appendFollowUp, followUpHint } from "../../lib/studioFollowUpQueue";
 import { studioCommandPlaceholder } from "../../lib/studioCommandBar";
 import StudioEmptyState from "./StudioEmptyState";
 import type {
@@ -81,23 +78,6 @@ function agentPlaceholder(work: StudioWork, hasPendingPatch: boolean, hasError: 
   });
 }
 
-function appendToolAckTurn(
-  turns: StudioAgentTurn[],
-  tool: "generate" | "revise"
-): StudioAgentTurn[] {
-  const content = tool === "generate" ? STUDIO_ACK_GENERATE : STUDIO_ACK_REVISE;
-  return [
-    ...turns,
-    {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content,
-      intent: "compose_ack",
-      createdAt: Date.now()
-    }
-  ];
-}
-
 export default function StudioAgentDock({
   work,
   isLoggedIn,
@@ -108,7 +88,6 @@ export default function StudioAgentDock({
   onAgentRun,
   onGenerate,
   onReviseFromChat,
-  onQueueRevise,
   onRestoreCanvasBeforeTurn,
   onCancelStream,
   onUndoApply,
@@ -129,7 +108,6 @@ export default function StudioAgentDock({
   onTogglePatchKey,
   selectedSnippet = "",
   onSelectionChange,
-  onParallelAsk,
   onRetryLast
 }: {
   work: StudioWork;
@@ -150,7 +128,6 @@ export default function StudioAgentDock({
   onTogglePatchKey?: (key: string) => void;
   selectedSnippet?: string;
   onSelectionChange?: (text: string) => void;
-  onParallelAsk?: (params: { userText: string; prefixTurns: StudioAgentTurn[] }) => Promise<void>;
   onRetryLast?: () => void;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
@@ -164,7 +141,6 @@ export default function StudioAgentDock({
   }) => void | Promise<void>;
   onGenerate?: () => void | Promise<void>;
   onReviseFromChat?: (opinion: string) => void | Promise<void>;
-  onQueueRevise?: (opinion: string) => void;
   onRestoreCanvasBeforeTurn?: (turnId: string) => void;
   onCancelStream?: () => void;
   onUndoApply?: () => void;
@@ -552,15 +528,8 @@ export default function StudioAgentDock({
     route: StudioRouteDecision,
     base: StudioWork
   ) {
-    if (jobRunning && route.tool === "generate") {
-      setEphemeralHint("当前写稿/改版进行中，请稍候…");
-      return;
-    }
-    if (jobRunning && route.tool === "revise") {
-      onQueueRevise?.(q);
-      setEphemeralHint("已加入改版队列，当前任务完成后执行");
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
-      return;
+    if (jobRunning) {
+      onCancelStream?.();
     }
 
     if (route.tool === "generate") {
@@ -570,7 +539,7 @@ export default function StudioAgentDock({
     }
 
     if (route.tool === "generate" && onGenerate) {
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "generate") });
+      onPersist({ ...base, agentTurns: prefixWithUser });
       try {
         await onGenerate();
       } finally {
@@ -579,7 +548,7 @@ export default function StudioAgentDock({
       return;
     }
     if (route.tool === "revise" && onReviseFromChat) {
-      onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
+      onPersist({ ...base, agentTurns: prefixWithUser });
       try {
         await onReviseFromChat(q);
       } finally {
@@ -603,37 +572,12 @@ export default function StudioAgentDock({
   async function handleSend(overrideText?: string, fromChip = false) {
     const q = resolveOutgoingMessage(overrideText ?? input, fromChip);
     if (!q || !canChat) return;
-    if (useAgentStream && jobRunning && userMessageLooksLikeQuestion(q) && onParallelAsk) {
-      const userTurn: StudioAgentTurn = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: q,
-        createdAt: Date.now()
-      };
-      const prefixWithUser = [...turns, userTurn];
-      onPersist({ ...work, agentTurns: prefixWithUser, error: undefined });
-      setInput("");
-      setEphemeralHint("回答中…");
-      void onParallelAsk({ userText: q, prefixTurns: prefixWithUser }).finally(() =>
-        setEphemeralHint("")
-      );
-      return;
+
+    if (useAgentStream && jobRunning) {
+      onCancelStream?.();
+      setEphemeralHint("已停止上一任务，处理新指令…");
     }
 
-    const isFollowUpConstraint =
-      jobRunning &&
-      !userMessageLooksLikeQuestion(q) &&
-      !/钩子|开头|结构|运营|策略|解读|分析|进度|还要多久/.test(q) &&
-      !shouldForceStudioCompose(q, fromChip) &&
-      !/改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化|只改/.test(q) &&
-      !STUDIO_REVISE_INTENT_RE.test(q);
-
-    if (useAgentStream && isFollowUpConstraint) {
-      const withFollow = appendFollowUp(work, q);
-      onPersist(withFollow);
-      setEphemeralHint(followUpHint(withFollow) ?? "已排队，当前任务完成后执行");
-      return;
-    }
     abortBackgroundStreams();
     setInput("");
 
@@ -649,19 +593,14 @@ export default function StudioAgentDock({
         ...work,
         agentTurns: prefixWithUser,
         error: undefined,
-        allowModelFallback: true
+        allowModelFallback: true,
+        followUps: []
       },
       prefixWithUser
     );
     onPersist(base);
 
     if (useAgentStream) {
-      if (jobRunning && STUDIO_REVISE_INTENT_RE.test(q)) {
-        onQueueRevise?.(q);
-        setEphemeralHint("已加入改版队列，当前任务完成后执行");
-        onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
-        return;
-      }
       setAgentBusyState(true);
       try {
         await onAgentRun!({
@@ -696,6 +635,7 @@ export default function StudioAgentDock({
 
   async function handleEditUserTurn(turnId: string, newText: string) {
     abortBackgroundStreams();
+    onCancelStream?.();
     onRestoreCanvasBeforeTurn?.(turnId);
     const idx = turns.findIndex((t) => t.id === turnId);
     if (idx < 0 || turns[idx]?.role !== "user") return;
@@ -747,6 +687,28 @@ export default function StudioAgentDock({
 
   const composerFooter = (
     <>
+      {selectedSnippet.trim() ? (
+        <div className="mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-brand/30 bg-brand/5 px-3 py-2 text-[11px]">
+          <span className="min-w-0 flex-1 truncate text-muted">
+            已选中：{selectedSnippet.trim().slice(0, 72)}
+            {selectedSnippet.trim().length > 72 ? "…" : ""}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded-md bg-brand px-2.5 py-1 text-brand-foreground"
+            onClick={() => void handleSend(`【块级改版】改这段：${selectedSnippet.trim()}`)}
+          >
+            改这段
+          </button>
+          <button
+            type="button"
+            className="shrink-0 text-muted underline"
+            onClick={() => onSelectionChange?.("")}
+          >
+            取消选区
+          </button>
+        </div>
+      ) : null}
       <StudioAgentComposer
         value={input}
         onChange={setInput}
