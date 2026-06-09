@@ -4,11 +4,26 @@ import { indexByKindForApply } from "./studioPatchApplyMerge";
 import type { ManuscriptBlock, ManuscriptVersion, PendingPatch, StudioWork } from "./studioWorkTypes";
 
 /** 尚无已采纳版本时的首稿 pendingPatch（非相对旧稿的改版 diff） */
-export function isStudioFirstDraftPatch(work: StudioWork, patch: PendingPatch): boolean {
-  if (work.versions.length > 0) {
-    return !work.versions.some((v) => v.id === patch.fromVersionId);
-  }
-  return true;
+export function isStudioFirstDraftPatch(work: StudioWork, _patch?: PendingPatch): boolean {
+  return work.versions.length === 0;
+}
+
+/** 后端 patch 可能缺 fromVersionId；已有版本时对齐到当前 active 基线 */
+export function normalizePendingPatchForWork(
+  work: StudioWork,
+  patch: PendingPatch
+): PendingPatch {
+  if (work.versions.length === 0) return patch;
+  const activeBase =
+    work.versions.find((v) => v.id === work.activeVersionId) ?? work.versions.at(-1);
+  const resolvedFromId =
+    patch.fromVersionId && work.versions.some((v) => v.id === patch.fromVersionId)
+      ? patch.fromVersionId
+      : (activeBase?.id ?? patch.fromVersionId);
+  const summary =
+    patch.summary === "首稿" && resolvedFromId ? "改版提议" : patch.summary;
+  if (resolvedFromId === patch.fromVersionId && summary === patch.summary) return patch;
+  return { ...patch, fromVersionId: resolvedFromId, summary };
 }
 
 export function buildPendingPatchFromBlocks(params: {

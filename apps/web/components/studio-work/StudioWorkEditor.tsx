@@ -31,7 +31,8 @@ import { blocksFromComposeStream, hasComposePreviewContent } from "../../lib/stu
 import {
   applyPendingPatch,
   discardPendingPatch,
-  isStudioFirstDraftPatch
+  isStudioFirstDraftPatch,
+  normalizePendingPatchForWork
 } from "../../lib/studioPatchApply";
 import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { classifyStudioFailure } from "../../lib/studioAgentFailure";
@@ -307,14 +308,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         params: { userText: string; prefixTurns: StudioAgentTurn[] },
         qualityWeak = false
       ) => {
-        const fullPatch: PendingPatch = {
+        const fullPatch: PendingPatch = normalizePendingPatchForWork(after, {
           ...patch,
           sourceRunId: runId,
           qualityNote:
             qualityWeak && shouldShowQualityNote(after.editorMode)
               ? patch.qualityNote ?? "略模板化 · 可继续 patch 语气"
               : patch.qualityNote
-        };
+        });
 
         if (
           shouldAutoApplyPatch(after.editorMode, {
@@ -447,23 +448,26 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         beginComposeRun(isReviseIntent ? "revise" : "generate");
       }
 
-      const manuscriptBlocks = baseVersion?.blocks ?? [];
-
-      const runOneStream = (streamMessage: string, streamTaskSentence: string) =>
-        streamStudioAgent({
+      const runOneStream = (streamMessage: string, streamTaskSentence: string) => {
+        const liveWork = getStudioWork(workId) ?? cur;
+        const streamBase =
+          liveWork.versions.find((v) => v.id === liveWork.activeVersionId) ??
+          liveWork.versions.at(-1) ??
+          baseVersion;
+        return streamStudioAgent({
           message: streamMessage,
           agentTurns: params.prefixTurns,
-          status: cur.status,
-          versionCount: cur.versions.length,
+          status: liveWork.status,
+          versionCount: liveWork.versions.length,
           taskSentence: streamTaskSentence,
           intake,
-          notebook: cur.binding.notebook,
-          noteIds: cur.binding.noteIds,
+          notebook: liveWork.binding.notebook,
+          noteIds: liveWork.binding.noteIds,
           featureCore: getComposerPrefsFeatureCore() as unknown as Record<string, unknown>,
           authorPrompt,
           agentMode: "write",
-          manuscriptBlocks,
-          activeVersionId: cur.activeVersionId,
+          manuscriptBlocks: streamBase?.blocks ?? [],
+          activeVersionId: streamBase?.id ?? liveWork.activeVersionId,
           clientRunId,
           forceCompose: params.forceCompose,
           domain: domainCtx.domain,
@@ -532,6 +536,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             patchWorkStreamUi(workId, { streamOptimizing: true });
           }
         });
+      };
 
       try {
         let result = await runOneStream(outgoingText, effectiveTaskSentence);
@@ -711,12 +716,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
         const qualityWeak =
           result.tool === "compose" && shouldRejectDeliverableBody(result.tool, bodyText);
+        const reviseBase =
+          after.versions.find((v) => v.id === after.activeVersionId) ?? after.versions.at(-1);
         const patch: PendingPatch =
           result.status === "patch"
             ? result.pendingPatch
             : buildPendingPatchFromBlocks({
-                fromVersionId: after.activeVersionId,
-                baseBlocks: baseVersion?.blocks ?? [],
+                fromVersionId: reviseBase?.id ?? after.activeVersionId,
+                baseBlocks: reviseBase?.blocks ?? baseVersion?.blocks ?? [],
                 proposedBlocks: blocks,
                 summary: result.tool === "revise" ? "改版提议" : "成稿",
                 reason: result.tool === "revise" ? "按你的意见修改" : "",
