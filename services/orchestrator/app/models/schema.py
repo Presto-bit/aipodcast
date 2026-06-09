@@ -29,6 +29,8 @@ from ._core import (
     _resolve_user_uuid_or_none,
     create_notebook_only,
     list_notebook_names,
+    billing_user_id_from_ref,
+    billing_user_id_from_created_by,
     phone_for_job_created_by,
 )
 

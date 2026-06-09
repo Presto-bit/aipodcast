@@ -36,6 +36,12 @@ from ..fyv_shared.payment_wallet_rate_limit import (
 
 _log = logging.getLogger(__name__)
 
+
+def _wallet_balance_for_billing_ref(billing_user_ref: str) -> int:
+    uid = models.billing_user_id_from_ref((billing_user_ref or "").strip())
+    return models.wallet_balance_cents_for_user_id(uid) if uid else 0
+
+
 # apply_payment_event 在 DB 层失败时可能返回 payment_event_tx_failed（旧）、transaction_exception（其它 DB 异常）、
 # transaction_deadlock（40P01）；前两者与死锁均可能为瞬时错误，对账路径上做退避重试。
 _WALLET_RECONCILE_APPLY_RETRY_REASONS = frozenset(
@@ -157,30 +163,35 @@ def subscription_me_api(request: Request):
     sess = auth_bridge.get_session_by_bearer(request.headers.get("authorization", ""))
     if not sess:
         raise HTTPException(status_code=401, detail="未登录")
-    phone = auth_bridge.session_principal(sess)
-    info = dict(auth_bridge.user_info_for_phone(phone))
+    billing_user_ref = auth_bridge.session_principal(sess)
+    info = dict(auth_bridge.user_info_for_phone(billing_user_ref))
     for k in ("plan", "acct_tier", "billing_cycle"):
         info.pop(k, None)
-    bal = models.wallet_balance_cents_for_phone(phone)
+    billing_uid = models.billing_user_id_from_ref(billing_user_ref)
+    bal = models.wallet_balance_cents_for_user_id(billing_uid) if billing_uid else 0
     rp, rsz, roff = _wallet_table_page_params(request, "recharge")
     cp, csz, coff = _wallet_table_page_params(request, "consumption")
-    recharge_total = models.count_wallet_recharge_rows_for_phone(phone)
-    recharge = models.list_wallet_recharge_rows_for_phone(phone, rsz, offset=roff)
+    recharge_total = models.count_wallet_recharge_rows_for_phone(billing_user_ref)
+    recharge = models.list_wallet_recharge_rows_for_phone(billing_user_ref, rsz, offset=roff)
     since_f, until_f, consumption_sum_enabled = _consumption_range_from_request(request)
-    consumption_total = models.count_wallet_consumption_rows_for_phone(phone, since=since_f, until=until_f)
+    consumption_total = models.count_wallet_consumption_rows_for_phone(billing_user_ref, since=since_f, until=until_f)
     consumption = models.list_wallet_consumption_rows_for_phone(
-        phone, csz, offset=coff, since=since_f, until=until_f
+        billing_user_ref, csz, offset=coff, since=since_f, until=until_f
     )
     consumption_filtered_wallet_total_cents: int | None = None
     if consumption_sum_enabled and since_f is not None and until_f is not None:
         consumption_filtered_wallet_total_cents = models.sum_wallet_consumption_wallet_cents_succeeded_for_phone(
-            phone, since=since_f, until=until_f
+            billing_user_ref, since=since_f, until=until_f
         )
-    has_experience_pack = models.experience_pack_row_exists_for_phone(phone)
+    has_experience_pack = models.experience_pack_row_exists_for_user_id(billing_uid) if billing_uid else False
     experience_body = {
-        "voice_minutes_remaining": round(float(models.experience_voice_minutes_for_phone(phone) or 0), 4),
-        "asr_minutes_remaining": round(float(models.experience_asr_minutes_for_phone(phone) or 0), 4),
-        "text_chars_remaining": int(models.experience_text_chars_for_phone(phone) or 0),
+        "voice_minutes_remaining": round(
+            float(models.experience_voice_minutes_for_user_id(billing_uid) or 0) if billing_uid else 0.0, 4
+        ),
+        "asr_minutes_remaining": round(
+            float(models.experience_asr_minutes_for_user_id(billing_uid) or 0) if billing_uid else 0.0, 4
+        ),
+        "text_chars_remaining": int(models.experience_text_chars_for_user_id(billing_uid) or 0) if billing_uid else 0,
     }
     if has_experience_pack:
         experience_body["voice_minutes_total"] = float(EXPERIENCE_NEW_USER_VOICE_MINUTES)
@@ -280,7 +291,7 @@ def subscription_wallet_checkout_complete(request: Request, body: WalletTopupChe
         "reason": reason,
         "order": row,
         "user": auth_bridge.user_info_for_phone(phone),
-        "wallet_balance_cents": models.wallet_balance_cents_for_phone(phone),
+        "wallet_balance_cents": _wallet_balance_for_billing_ref(phone),
     }
 
 
@@ -368,7 +379,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         ex = models.get_payment_order_by_event_id(out_trade_no)
         st_ex = str((ex or {}).get("status") or "").strip().lower()
         if ex and st_ex in ("paid", "success", "succeeded", "captured"):
-            bal = models.wallet_balance_cents_for_phone(phone)
+            bal = _wallet_balance_for_billing_ref(phone)
             return {"success": True, "applied": False, "detail": "already_settled", "wallet_balance_cents": bal}
         raise HTTPException(status_code=404, detail="checkout_session_not_found")
 
@@ -394,7 +405,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
             "success": True,
             "applied": False,
             "detail": "trade_not_found",
-            "wallet_balance_cents": models.wallet_balance_cents_for_phone(phone),
+            "wallet_balance_cents": _wallet_balance_for_billing_ref(phone),
         }
     if outcome != "paid":
         return {
@@ -402,7 +413,7 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
             "applied": False,
             "detail": "trade_not_paid_yet",
             "trade_status": qresp.get("trade_status"),
-            "wallet_balance_cents": models.wallet_balance_cents_for_phone(phone),
+            "wallet_balance_cents": _wallet_balance_for_billing_ref(phone),
         }
 
     notify_cents = alipay_total_amount_yuan_to_cents(str(qresp.get("total_amount") or ""))
@@ -468,14 +479,14 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         if attempt < 3:
             sleep_s = min(0.35, 0.05 * (2**attempt))
             if time.monotonic() + sleep_s >= _apply_deadline - 0.12:
-                bal = models.wallet_balance_cents_for_phone(phone)
+                bal = _wallet_balance_for_billing_ref(phone)
                 return _wallet_reconcile_pending_body(
                     bal=bal, last_apply_reason=last_reason, pending_kind="sleep_budget"
                 )
             time.sleep(sleep_s)
     if not ok_apply:
         if _wallet_reconcile_apply_retryable(last_reason):
-            bal = models.wallet_balance_cents_for_phone(phone)
+            bal = _wallet_balance_for_billing_ref(phone)
             _log.warning(
                 "alipay wallet reconcile exhausted retries out_trade_no=%s reason=%s balance=%s",
                 out_trade_no,
@@ -492,6 +503,6 @@ def alipay_wallet_reconcile_trade_query(request: Request, body: AlipayWalletReco
         )
         raise HTTPException(status_code=500, detail=last_reason or "apply_failed")
     models.alipay_page_delete_checkout_session(out_trade_no)
-    bal = models.wallet_balance_cents_for_phone(phone)
+    bal = _wallet_balance_for_billing_ref(phone)
     _log.info("alipay wallet reconcile applied out_trade_no=%s cents=%s balance=%s", out_trade_no, notify_cents, bal)
     return {"success": True, "applied": True, "wallet_balance_cents": bal}

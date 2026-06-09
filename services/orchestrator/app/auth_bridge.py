@@ -72,10 +72,10 @@ def user_info_for_phone(phone: str) -> dict[str, Any]:
     except Exception:
         pass
     try:
-        from .models import wallet_balance_cents_for_phone
+        from .models import billing_user_id_from_ref, wallet_balance_cents_for_user_id
 
-        ph_w = str(base.get("phone") or "").strip()
-        base["wallet_balance_cents"] = int(wallet_balance_cents_for_phone(ph_w)) if ph_w else 0
+        uid_w = str(base.get("user_id") or "").strip() or billing_user_id_from_ref(str(phone or "").strip())
+        base["wallet_balance_cents"] = int(wallet_balance_cents_for_user_id(uid_w)) if uid_w else 0
     except Exception:
         base["wallet_balance_cents"] = 0
     base.pop("plan", None)
@@ -331,15 +331,19 @@ def admin_credit_wallet_cents(phone: str, cents: int) -> tuple[bool, str | None,
     try:
         from . import models
 
-        if not models.wallet_credit_cents(p, int(cents)):
-            return False, "wallet_credit_failed", models.wallet_balance_cents_for_phone(p)
-        return True, None, models.wallet_balance_cents_for_phone(p)
+        uid = models.billing_user_id_from_ref(p)
+        if not uid:
+            return False, "user_not_found", 0
+        if not models.wallet_credit_cents_for_user_id(uid, int(cents)):
+            return False, "wallet_credit_failed", models.wallet_balance_cents_for_user_id(uid)
+        return True, None, models.wallet_balance_cents_for_user_id(uid)
     except Exception:
         logger.exception("admin_credit_wallet_cents failed")
         try:
             from . import models
 
-            return False, "wallet_credit_error", models.wallet_balance_cents_for_phone(p)
+            uid = models.billing_user_id_from_ref(p)
+            return False, "wallet_credit_error", models.wallet_balance_cents_for_user_id(uid) if uid else 0
         except Exception:
             return False, "wallet_credit_error", 0
 

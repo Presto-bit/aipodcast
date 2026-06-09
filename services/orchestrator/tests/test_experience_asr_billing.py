@@ -18,23 +18,23 @@ _CUR = MagicMock()
 
 
 def test_asr_billing_consumes_experience_before_wallet() -> None:
-    from app.models import asr_billing_try_debit
+    from app.models import asr_billing_try_debit_for_user_id
 
     uid = "00000000-0000-4000-8000-000000000001"
     row = {"asr_minutes_remaining": Decimal("20.0")}
-    _CUR.fetchone.side_effect = [row]
+    _CUR.fetchone.side_effect = [{"id": uid}, row]
 
     with (
         patch("app.media_wallet.media_wallet_billing_enabled", return_value=True),
-        patch("app.models._ensure_user_id_for_phone_conn", return_value=uid),
-        patch("app.models.ensure_user_experience_balance_schema"),
-        patch("app.models.ensure_user_wallet_schema"),
-        patch("app.models.get_conn") as mock_conn,
-        patch("app.models.get_cursor", _fake_cursor),
+        patch("app.models._core.ensure_user_experience_balance_schema"),
+        patch("app.models._core.ensure_user_wallet_schema"),
+        patch("app.models._core.get_conn") as mock_conn,
+        patch("app.models._core.get_cursor", _fake_cursor),
         patch("app.media_wallet.wallet_cents_for_asr_audio_seconds", return_value=490) as mock_cents,
+        patch("app.models._core._phone_for_user_id_on_cur", return_value="13800138000"),
     ):
         mock_conn.return_value.__enter__.return_value = MagicMock()
-        ok, meta = asr_billing_try_debit("13800138000", 600.0)  # 10 分钟
+        ok, meta = asr_billing_try_debit_for_user_id(uid, 600.0)  # 10 分钟
 
     assert ok is True
     assert meta["wallet_cents"] == 0
@@ -45,25 +45,25 @@ def test_asr_billing_consumes_experience_before_wallet() -> None:
 
 
 def test_asr_billing_wallet_when_experience_exhausted() -> None:
-    from app.models import asr_billing_try_debit
+    from app.models import asr_billing_try_debit_for_user_id
 
     uid = "00000000-0000-4000-8000-000000000001"
     row = {"asr_minutes_remaining": Decimal("0")}
     _CUR.reset_mock()
-    _CUR.fetchone.side_effect = [row, {"balance_cents": 10_000}]
+    _CUR.fetchone.side_effect = [{"id": uid}, row, {"balance_cents": 10_000}]
 
     with (
         patch("app.media_wallet.media_wallet_billing_enabled", return_value=True),
-        patch("app.models._ensure_user_id_for_phone_conn", return_value=uid),
-        patch("app.models.ensure_user_experience_balance_schema"),
-        patch("app.models.ensure_user_wallet_schema"),
-        patch("app.models.get_conn") as mock_conn,
-        patch("app.models.get_cursor", _fake_cursor),
+        patch("app.models._core.ensure_user_experience_balance_schema"),
+        patch("app.models._core.ensure_user_wallet_schema"),
+        patch("app.models._core.get_conn") as mock_conn,
+        patch("app.models._core.get_cursor", _fake_cursor),
         patch("app.media_wallet.wallet_cents_for_asr_audio_seconds", return_value=245),
-        patch("app.models._insert_user_wallet_ledger"),
+        patch("app.models._core._insert_user_wallet_ledger"),
+        patch("app.models._core._phone_for_user_id_on_cur", return_value="13800138000"),
     ):
         mock_conn.return_value.__enter__.return_value = MagicMock()
-        ok, meta = asr_billing_try_debit("13800138000", 1800.0)  # 30 分钟
+        ok, meta = asr_billing_try_debit_for_user_id(uid, 1800.0)  # 30 分钟
 
     assert ok is True
     assert meta["wallet_cents"] == 245
@@ -79,3 +79,15 @@ def test_preview_wallet_cents_for_asr_transcribe_respects_experience(monkeypatch
 
     assert preview_wallet_cents_for_asr_transcribe("13800138000", 600.0) == 0
     assert preview_wallet_cents_for_asr_transcribe("13800138000", 3600.0) == 2400
+
+
+def test_preview_wallet_cents_for_asr_transcribe_user_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.media_wallet import preview_wallet_cents_for_asr_transcribe_user_id
+
+    uid = "00000000-0000-4000-8000-000000000099"
+    monkeypatch.setattr("app.media_wallet.media_wallet_billing_enabled", lambda: True)
+    monkeypatch.setattr("app.models.experience_asr_minutes_for_user_id", lambda _u: 15.0)
+    monkeypatch.setattr("app.media_wallet.wallet_cents_for_asr_audio_seconds", lambda sec: int(sec))
+
+    assert preview_wallet_cents_for_asr_transcribe_user_id(uid, 600.0) == 0
+    assert preview_wallet_cents_for_asr_transcribe_user_id(uid, 3600.0) == 2700

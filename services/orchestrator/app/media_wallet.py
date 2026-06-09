@@ -132,17 +132,28 @@ def estimate_billed_script_chars_upper_bound(job_type: str, payload: dict[str, A
 
 def preview_wallet_cents_for_text_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> int:
     """不修改数据库：仅「单独计文稿」任务入队前，超出体验包字数的预估钱包扣费（分）。"""
+    from .models._core import billing_user_id_from_ref
+
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return 0
+    return preview_wallet_cents_for_text_enqueue_user_id(uid, job_type, payload)
+
+
+def preview_wallet_cents_for_text_enqueue_user_id(user_id: str | None, job_type: str, payload: dict[str, Any]) -> int:
     if not script_text_billed_separately_for_job_type(job_type):
         return 0
     if not media_wallet_billing_enabled():
         return 0
-    p = (phone or "").strip()
-    if not p:
+    from .models._core import _normalize_user_uuid
+
+    uid = _normalize_user_uuid((user_id or "").strip())
+    if not uid:
         return 0
     est = estimate_billed_script_chars_upper_bound(job_type, payload if isinstance(payload, dict) else {})
     from . import models
 
-    ex = int(models.experience_text_chars_for_phone(p) or 0)
+    ex = int(models.experience_text_chars_for_user_id(uid) or 0)
     rest = max(0, int(est) - ex)
     return wallet_cents_for_generated_text_chars(rest)
 
@@ -161,6 +172,44 @@ def estimate_spoken_minutes_podcast_enqueue(payload: dict[str, Any]) -> float:
 
 def preview_wallet_cents_for_asr_transcribe(phone: str, audio_seconds: float) -> int:
     """不修改数据库：剪辑转写入队前，超出体验包转写分钟后的预估钱包扣费（分）。"""
+    p = (phone or "").strip()
+    if not p:
+        return 0
+    from .models._core import _normalize_user_uuid
+
+    uid = _normalize_user_uuid(p)
+    if uid:
+        return preview_wallet_cents_for_asr_transcribe_user_id(uid, audio_seconds)
+    return _preview_wallet_cents_for_asr_transcribe_resolved(p, audio_seconds)
+
+
+def preview_wallet_cents_for_asr_transcribe_user_id(user_id: str, audio_seconds: float) -> int:
+    """不修改数据库：按 user_id 预估剪辑转写超出体验包后的钱包扣费（分）。"""
+    if not media_wallet_billing_enabled():
+        return 0
+    from .models._core import _normalize_user_uuid
+
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return 0
+    try:
+        sec = float(audio_seconds or 0)
+    except (TypeError, ValueError):
+        sec = 0.0
+    if sec <= 1e-9:
+        return 0
+    billed_min = sec / 60.0
+    from . import models
+
+    ex_m = float(models.experience_asr_minutes_for_user_id(uid) or 0.0)
+    wallet_min = max(0.0, billed_min - ex_m)
+    rest_sec = wallet_min * 60.0
+    if rest_sec <= 1e-9:
+        return 0
+    return int(wallet_cents_for_asr_audio_seconds(rest_sec))
+
+
+def _preview_wallet_cents_for_asr_transcribe_resolved(phone: str, audio_seconds: float) -> int:
     if not media_wallet_billing_enabled():
         return 0
     p = (phone or "").strip()
@@ -183,15 +232,26 @@ def preview_wallet_cents_for_asr_transcribe(phone: str, audio_seconds: float) ->
 
 def preview_wallet_cents_for_media_job(phone: str, tier: str | None, est_minutes: float) -> int:
     """不修改数据库：超出体验包语音分钟后，预估钱包扣费（分）；tier 已废弃保留参数。"""
+    from .models._core import billing_user_id_from_ref
+
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return 0
+    return preview_wallet_cents_for_media_job_user_id(uid, tier, est_minutes)
+
+
+def preview_wallet_cents_for_media_job_user_id(user_id: str, tier: str | None, est_minutes: float) -> int:
     _ = tier
     if not media_wallet_billing_enabled():
         return 0
-    p = (phone or "").strip()
-    if not p or est_minutes <= 1e-9:
+    from .models._core import _normalize_user_uuid
+
+    uid = _normalize_user_uuid((user_id or "").strip())
+    if not uid or est_minutes <= 1e-9:
         return 0
     from . import models
 
-    ex_m = float(models.experience_voice_minutes_for_phone(p) or 0)
+    ex_m = float(models.experience_voice_minutes_for_user_id(uid) or 0)
     wallet_min = max(0.0, float(est_minutes) - ex_m)
     return int(wallet_cents_for_overage_minutes(wallet_min))
 

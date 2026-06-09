@@ -120,6 +120,8 @@ def phone_for_job_created_by(created_by: str | None) -> str:
     """
     `jobs.created_by` 存的是 `users.id`（UUID）。Worker 里做套餐/笔记条数等需调用
     `user_info_for_phone` 时，应先把 UUID 解析为手机号；若已是手机号则原样返回。
+
+    计费 / 钱包 / 体验包扣减请改用 ``billing_user_id_from_ref``，勿依赖本函数。
     """
     raw = (created_by or "").strip()
     if not raw:
@@ -137,6 +139,22 @@ def phone_for_job_created_by(created_by: str | None) -> str:
     except Exception:
         pass
     return ""
+
+
+def billing_user_id_from_ref(user_ref: str | None) -> str | None:
+    """计费/钱包主键：将 UUID、手机、邮箱、用户名解析为 ``users.id``。"""
+    raw = (user_ref or "").strip()
+    if not raw:
+        return None
+    uid = _normalize_user_uuid(raw)
+    if uid:
+        return uid
+    return resolved_user_uuid_string(raw)
+
+
+def billing_user_id_from_created_by(created_by: str | None) -> str | None:
+    """``jobs.created_by`` → ``users.id``（计费入口）。"""
+    return billing_user_id_from_ref(created_by)
 
 
 def _resolve_user_uuid_or_none(cur: Any, user_ref: str | None) -> str | None:
@@ -6035,13 +6053,29 @@ def experience_voice_minutes_for_phone(phone: str) -> float:
     p = (phone or "").strip()
     if not p:
         return 0.0
+    uid = billing_user_id_from_ref(p)
+    if uid:
+        return experience_voice_minutes_for_user_id(uid)
     try:
         ensure_user_experience_balance_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                resolved = _ensure_user_id_for_phone_conn(conn, p)
+                if not resolved:
                     return 0.0
+                return experience_voice_minutes_for_user_id(resolved)
+    except Exception:
+        return 0.0
+
+
+def experience_voice_minutes_for_user_id(user_id: str) -> float:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return 0.0
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
                 cur.execute(
                     "SELECT voice_minutes_remaining FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
                     (uid,),
@@ -6056,13 +6090,29 @@ def experience_text_chars_for_phone(phone: str) -> int:
     p = (phone or "").strip()
     if not p:
         return 0
+    uid = billing_user_id_from_ref(p)
+    if uid:
+        return experience_text_chars_for_user_id(uid)
     try:
         ensure_user_experience_balance_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                resolved = _ensure_user_id_for_phone_conn(conn, p)
+                if not resolved:
                     return 0
+                return experience_text_chars_for_user_id(resolved)
+    except Exception:
+        return 0
+
+
+def experience_text_chars_for_user_id(user_id: str) -> int:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return 0
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
                 cur.execute(
                     "SELECT text_chars_remaining FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
                     (uid,),
@@ -6077,13 +6127,29 @@ def experience_asr_minutes_for_phone(phone: str) -> float:
     p = (phone or "").strip()
     if not p:
         return 0.0
+    uid = _normalize_user_uuid(p)
+    if uid:
+        return experience_asr_minutes_for_user_id(uid)
     try:
         ensure_user_experience_balance_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                resolved = _ensure_user_id_for_phone_conn(conn, p)
+                if not resolved:
                     return 0.0
+                return experience_asr_minutes_for_user_id(resolved)
+    except Exception:
+        return 0.0
+
+
+def experience_asr_minutes_for_user_id(user_id: str) -> float:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return 0.0
+    try:
+        ensure_user_experience_balance_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
                 cur.execute(
                     "SELECT asr_minutes_remaining FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
                     (uid,),
@@ -6096,16 +6162,20 @@ def experience_asr_minutes_for_phone(phone: str) -> float:
 
 def experience_pack_row_exists_for_phone(phone: str) -> bool:
     """是否已有体验包余额行（注册赠送写入后即为 True；用于与「从未开通」区分）。"""
-    p = (phone or "").strip()
-    if not p:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return False
+    return experience_pack_row_exists_for_user_id(uid)
+
+
+def experience_pack_row_exists_for_user_id(user_id: str) -> bool:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
         return False
     try:
         ensure_user_experience_balance_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
-                    return False
                 cur.execute(
                     "SELECT 1 FROM user_experience_balance WHERE user_id = %s::uuid LIMIT 1",
                     (uid,),
@@ -6152,61 +6222,69 @@ def experience_seed_for_new_user_after_registration(principal: str) -> None:
 
 
 def experience_restore_voice_minutes(phone: str, minutes: float) -> None:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if uid:
+        experience_restore_voice_minutes_for_user_id(uid, minutes)
+
+
+def experience_restore_voice_minutes_for_user_id(user_id: str, minutes: float) -> None:
     amt = float(minutes or 0)
     if amt <= 1e-12:
         return
-    p = (phone or "").strip()
-    if not p:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
         return
     try:
         ensure_user_experience_balance_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
-                    return
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     UPDATE user_experience_balance
                     SET voice_minutes_remaining = voice_minutes_remaining + %s,
-                        phone = %s,
+                        phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                         updated_at = NOW()
                     WHERE user_id = %s::uuid
                     """,
-                    (Decimal(str(round(amt, 6))), p, uid),
+                    (Decimal(str(round(amt, 6))), phone_ledger or None, uid),
                 )
             conn.commit()
     except Exception:
-        logger.exception("experience_restore_voice_minutes failed phone=%s", p[:4] if p else "")
+        logger.exception("experience_restore_voice_minutes_for_user_id failed user_id=%s", uid[:8] if uid else "")
 
 
 def experience_restore_text_chars(phone: str, chars: int) -> None:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if uid:
+        experience_restore_text_chars_for_user_id(uid, chars)
+
+
+def experience_restore_text_chars_for_user_id(user_id: str, chars: int) -> None:
     n = int(chars or 0)
     if n <= 0:
         return
-    p = (phone or "").strip()
-    if not p:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
         return
     try:
         ensure_user_experience_balance_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
-                    return
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     UPDATE user_experience_balance
                     SET text_chars_remaining = text_chars_remaining + %s,
-                        phone = %s,
+                        phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                         updated_at = NOW()
                     WHERE user_id = %s::uuid
                     """,
-                    (n, p, uid),
+                    (n, phone_ledger or None, uid),
                 )
             conn.commit()
     except Exception:
-        logger.exception("experience_restore_text_chars failed phone=%s", p[:4] if p else "")
+        logger.exception("experience_restore_text_chars_for_user_id failed user_id=%s", uid[:8] if uid else "")
 
 
 def experience_restore_asr_minutes(phone: str, minutes: float) -> None:
@@ -6239,24 +6317,32 @@ def experience_restore_asr_minutes(phone: str, minutes: float) -> None:
 
 
 def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, dict[str, Any]]:
-    """成稿文本：先扣体验包字数，再按超出部分从钱包扣费。"""
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return False, {"wallet_cents": 0, "experience_text_chars_consumed": 0, "reason": "no_user", "message": "未找到账户"}
+    return script_text_billing_try_debit_for_user_id(uid, char_count)
+
+
+def script_text_billing_try_debit_for_user_id(user_id: str, char_count: int) -> tuple[bool, dict[str, Any]]:
+    """成稿文本：先扣体验包字数，再按超出部分从钱包扣费（按 user_id）。"""
     from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_generated_text_chars
 
     base: dict[str, Any] = {"wallet_cents": 0, "experience_text_chars_consumed": 0}
     if not media_wallet_billing_enabled():
         return True, dict(base)
-    p = (phone or "").strip()
+    uid = _normalize_user_uuid(user_id)
     n = int(char_count or 0)
-    if not p or n <= 0:
+    if not uid or n <= 0:
         return True, dict(base)
     ensure_user_experience_balance_schema()
     ensure_user_wallet_schema()
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                cur.execute("SELECT id FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                if not cur.fetchone():
                     return False, {**base, "reason": "no_user", "message": "未找到账户"}
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     SELECT text_chars_remaining
@@ -6275,10 +6361,12 @@ def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, di
                     cur.execute(
                         """
                         UPDATE user_experience_balance
-                        SET text_chars_remaining = %s, phone = %s, updated_at = NOW()
+                        SET text_chars_remaining = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
                         WHERE user_id = %s::uuid
                         """,
-                        (new_txt, p, uid),
+                        (new_txt, phone_ledger or None, uid),
                     )
                 cents = int(wallet_cents_for_generated_text_chars(rest))
                 meta: dict[str, Any] = {**base, "experience_text_chars_consumed": int(take_ex), "wallet_cents": cents}
@@ -6287,12 +6375,12 @@ def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, di
                         """
                         UPDATE user_wallet_balance
                         SET balance_cents = balance_cents - %s,
-                            phone = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                             updated_at = NOW()
                         WHERE user_id = %s::uuid AND balance_cents >= %s
                         RETURNING balance_cents
                         """,
-                        (cents, p, uid, cents),
+                        (cents, phone_ledger or None, uid, cents),
                     )
                     rw = cur.fetchone()
                     if not rw:
@@ -6307,7 +6395,7 @@ def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, di
                     _insert_user_wallet_ledger(
                         cur,
                         user_id=str(uid),
-                        phone=p,
+                        phone=phone_ledger,
                         delta_cents=-cents,
                         balance_after_cents=int(rw.get("balance_cents") or 0),
                         entry_type="script_text_billing",
@@ -6316,25 +6404,45 @@ def script_text_billing_try_debit(phone: str, char_count: int) -> tuple[bool, di
                 conn.commit()
                 return True, meta
     except Exception as exc:
-        logger.exception("script_text_billing_try_debit failed")
+        logger.exception("script_text_billing_try_debit_for_user_id failed")
         return False, {**base, "reason": "error", "message": str(exc)[:300]}
 
 
 def script_text_billing_refund(phone: str, meta: dict[str, Any]) -> None:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if uid:
+        script_text_billing_refund_for_user_id(uid, meta)
+
+
+def script_text_billing_refund_for_user_id(user_id: str, meta: dict[str, Any]) -> None:
     """任务取消等场景：退回 script_text_billing_try_debit 已扣的体验与钱包。"""
-    p = (phone or "").strip()
-    if not p or not isinstance(meta, dict):
+    if not isinstance(meta, dict):
         return
     wc = int(meta.get("wallet_cents") or 0)
     et = int(meta.get("experience_text_chars_consumed") or 0)
     if wc > 0:
-        wallet_credit_cents(p, wc)
+        wallet_credit_cents_for_user_id(user_id, wc)
     if et > 0:
-        experience_restore_text_chars(p, et)
+        experience_restore_text_chars_for_user_id(user_id, et)
 
 
 def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[str, Any]]:
     """剪辑 ASR 成功后：先扣体验包转写分钟，再按超出部分从钱包扣费。"""
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        base: dict[str, Any] = {
+            "wallet_cents": 0,
+            "billed_seconds": 0.0,
+            "experience_asr_minutes_consumed": 0.0,
+        }
+        if not (phone or "").strip():
+            return True, dict(base)
+        return False, {**base, "reason": "no_user", "message": "未找到账户"}
+    return asr_billing_try_debit_for_user_id(uid, audio_seconds)
+
+
+def asr_billing_try_debit_for_user_id(user_id: str, audio_seconds: float) -> tuple[bool, dict[str, Any]]:
+    """剪辑 ASR 成功后：按 user_id 扣体验包转写分钟与钱包（不依赖手机号）。"""
     from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_asr_audio_seconds
 
     base: dict[str, Any] = {
@@ -6344,12 +6452,12 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
     }
     if not media_wallet_billing_enabled():
         return True, dict(base)
-    p = (phone or "").strip()
+    uid = _normalize_user_uuid(user_id)
     try:
         sec = float(audio_seconds or 0)
     except (TypeError, ValueError):
         sec = 0.0
-    if not p or sec <= 1e-9:
+    if not uid or sec <= 1e-9:
         return True, dict(base)
     billed_min = sec / 60.0
     ensure_user_experience_balance_schema()
@@ -6357,9 +6465,10 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                cur.execute("SELECT id FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                if not cur.fetchone():
                     return False, {**base, "reason": "no_user", "message": "未找到账户"}
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     SELECT asr_minutes_remaining
@@ -6380,10 +6489,10 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
                     cur.execute(
                         """
                         UPDATE user_experience_balance
-                        SET asr_minutes_remaining = %s, phone = %s, updated_at = NOW()
+                        SET asr_minutes_remaining = %s, phone = COALESCE(NULLIF(btrim(phone), ''), %s), updated_at = NOW()
                         WHERE user_id = %s::uuid
                         """,
-                        (Decimal(str(round(new_asr, 6))), p, uid),
+                        (Decimal(str(round(new_asr, 6))), phone_ledger or None, uid),
                     )
                 meta: dict[str, Any] = {
                     **base,
@@ -6396,12 +6505,12 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
                         """
                         UPDATE user_wallet_balance
                         SET balance_cents = balance_cents - %s,
-                            phone = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                             updated_at = NOW()
                         WHERE user_id = %s::uuid AND balance_cents >= %s
                         RETURNING balance_cents
                         """,
-                        (cents, p, uid, cents),
+                        (cents, phone_ledger or None, uid, cents),
                     )
                     rw = cur.fetchone()
                     if not rw:
@@ -6418,7 +6527,7 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
                     _insert_user_wallet_ledger(
                         cur,
                         user_id=str(uid),
-                        phone=p,
+                        phone=phone_ledger,
                         delta_cents=-cents,
                         balance_after_cents=bal_after,
                         entry_type="clip_asr_billing",
@@ -6432,12 +6541,27 @@ def asr_billing_try_debit(phone: str, audio_seconds: float) -> tuple[bool, dict[
                 conn.commit()
                 return True, meta
     except Exception as exc:
-        logger.exception("asr_billing_try_debit failed")
+        logger.exception("asr_billing_try_debit_for_user_id failed")
         return False, {**base, "reason": "error", "message": str(exc)[:300]}
 
 
 def media_billing_try_assert_cover_estimated_minutes(
     phone: str,
+    tier: str | None,
+    est_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, dict[str, Any]]:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return True, {"estimated_minutes": float(est_minutes)}
+    return media_billing_try_assert_cover_estimated_minutes_for_user_id(
+        uid, tier, est_minutes, period_days=period_days
+    )
+
+
+def media_billing_try_assert_cover_estimated_minutes_for_user_id(
+    user_id: str,
     tier: str | None,
     est_minutes: float,
     *,
@@ -6453,12 +6577,12 @@ def media_billing_try_assert_cover_estimated_minutes(
     base: dict[str, Any] = {"estimated_minutes": float(est_minutes)}
     if not _mw.media_wallet_billing_enabled():
         return True, base
-    p = (phone or "").strip()
-    if not p or float(est_minutes) <= 1e-9:
+    uid = _normalize_user_uuid(user_id)
+    if not uid or float(est_minutes) <= 1e-9:
         return True, base
     est = float(est_minutes)
     try:
-        ex_voice = float(experience_voice_minutes_for_phone(p) or 0.0)
+        ex_voice = float(experience_voice_minutes_for_user_id(uid) or 0.0)
     except Exception:
         ex_voice = 0.0
     take_ex = min(est, max(0.0, ex_voice))
@@ -6466,7 +6590,7 @@ def media_billing_try_assert_cover_estimated_minutes(
     cents = int(_mw.wallet_cents_for_overage_minutes(wallet_min))
     if cents <= 0:
         return True, {**base, "preview_wallet_cents": 0}
-    bal = int(wallet_balance_cents_for_phone(p))
+    bal = int(wallet_balance_cents_for_user_id(uid))
     if bal < cents:
         return False, {
             **base,
@@ -6488,6 +6612,27 @@ def _media_billing_try_debit_voice_billed_minutes(
     *,
     period_days: int = 30,
 ) -> tuple[bool, int, dict[str, Any]]:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        base_meta: dict[str, Any] = {
+            "payg_restores": [],
+            "wallet_cents": 0,
+            "from_payg_minutes": 0.0,
+            "experience_voice_minutes_consumed": 0.0,
+        }
+        return False, 0, {**base_meta, "reason": "no_user", "message": "未找到账户，无法结算语音用量"}
+    return _media_billing_try_debit_voice_billed_minutes_for_user_id(
+        uid, tier, billed_minutes, period_days=period_days
+    )
+
+
+def _media_billing_try_debit_voice_billed_minutes_for_user_id(
+    user_id: str,
+    tier: str | None,
+    billed_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, int, dict[str, Any]]:
     """
     事务内：先扣体验包语音分钟，再按 billed_minutes 超出部分从钱包扣费（无订阅月配额、无按次分钟包）。
     billed_minutes 通常为成片实际口播分钟；兼容旧调用传入预估分钟。
@@ -6503,21 +6648,22 @@ def _media_billing_try_debit_voice_billed_minutes(
     }
     if not _mw.media_wallet_billing_enabled():
         return True, 0, dict(base_meta)
-    p = (phone or "").strip()
-    if not p or float(billed_minutes) <= 1e-9:
+    uid = _normalize_user_uuid(user_id)
+    if not uid or float(billed_minutes) <= 1e-9:
         return True, 0, dict(base_meta)
     ensure_user_experience_balance_schema()
     ensure_user_wallet_schema()
     try:
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                cur.execute("SELECT id FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                if not cur.fetchone():
                     return False, 0, {
                         **base_meta,
                         "reason": "no_user",
                         "message": "未找到账户，无法结算语音用量",
                     }
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     SELECT voice_minutes_remaining
@@ -6536,10 +6682,12 @@ def _media_billing_try_debit_voice_billed_minutes(
                     cur.execute(
                         """
                         UPDATE user_experience_balance
-                        SET voice_minutes_remaining = %s, phone = %s, updated_at = NOW()
+                        SET voice_minutes_remaining = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
                         WHERE user_id = %s::uuid
                         """,
-                        (Decimal(str(round(new_ex, 6))), p, uid),
+                        (Decimal(str(round(new_ex, 6))), phone_ledger or None, uid),
                     )
                 wallet_min = max(0.0, bill - take_ex)
                 cents = int(_mw.wallet_cents_for_overage_minutes(wallet_min))
@@ -6553,12 +6701,12 @@ def _media_billing_try_debit_voice_billed_minutes(
                         """
                         UPDATE user_wallet_balance
                         SET balance_cents = balance_cents - %s,
-                            phone = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                             updated_at = NOW()
                         WHERE user_id = %s::uuid AND balance_cents >= %s
                         RETURNING balance_cents
                         """,
-                        (cents, p, uid, cents),
+                        (cents, phone_ledger or None, uid, cents),
                     )
                     row_w = cur.fetchone()
                     if not row_w:
@@ -6576,7 +6724,7 @@ def _media_billing_try_debit_voice_billed_minutes(
                     _insert_user_wallet_ledger(
                         cur,
                         user_id=str(uid),
-                        phone=p,
+                        phone=phone_ledger,
                         delta_cents=-cents,
                         balance_after_cents=bal_after_w,
                         entry_type="media_voice_billing",
@@ -6585,7 +6733,7 @@ def _media_billing_try_debit_voice_billed_minutes(
                 conn.commit()
                 return True, cents, meta
     except Exception as exc:
-        logger.exception("_media_billing_try_debit_voice_billed_minutes failed")
+        logger.exception("_media_billing_try_debit_voice_billed_minutes_for_user_id failed")
         return False, 0, {**base_meta, "reason": "error", "message": str(exc)[:300]}
 
 
@@ -6602,6 +6750,18 @@ def media_billing_try_debit_estimated_minutes(
     )
 
 
+def media_billing_try_debit_estimated_minutes_for_user_id(
+    user_id: str,
+    tier: str | None,
+    est_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, int, dict[str, Any]]:
+    return _media_billing_try_debit_voice_billed_minutes_for_user_id(
+        user_id, tier, float(est_minutes), period_days=period_days
+    )
+
+
 def media_billing_try_debit_actual_minutes(
     phone: str,
     tier: str | None,
@@ -6612,6 +6772,18 @@ def media_billing_try_debit_actual_minutes(
     """成片生成后：按实际口播分钟扣体验包与钱包。"""
     return _media_billing_try_debit_voice_billed_minutes(
         phone, tier, float(actual_minutes), period_days=period_days
+    )
+
+
+def media_billing_try_debit_actual_minutes_for_user_id(
+    user_id: str,
+    tier: str | None,
+    actual_minutes: float,
+    *,
+    period_days: int = 30,
+) -> tuple[bool, int, dict[str, Any]]:
+    return _media_billing_try_debit_voice_billed_minutes_for_user_id(
+        user_id, tier, float(actual_minutes), period_days=period_days
     )
 
 
@@ -6654,21 +6826,46 @@ def wallet_balance_cents_for_phone(phone: str) -> int:
     p = (phone or "").strip()
     if not p:
         return 0
+    uid = _normalize_user_uuid(p)
+    if uid:
+        return wallet_balance_cents_for_user_id(uid)
     try:
         ensure_user_wallet_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
+                resolved = _ensure_user_id_for_phone_conn(conn, p)
+                if not resolved:
                     return 0
+                return wallet_balance_cents_for_user_id(resolved)
+    except Exception:
+        return 0
+
+
+def wallet_balance_cents_for_user_id(user_id: str) -> int:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return 0
+    try:
+        ensure_user_wallet_schema()
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
                 cur.execute(
-                    "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s LIMIT 1",
+                    "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s::uuid LIMIT 1",
                     (uid,),
                 )
                 row = cur.fetchone() or {}
                 return int(row.get("balance_cents") or 0)
     except Exception:
         return 0
+
+
+def _phone_for_user_id_on_cur(cur: Any, user_id: str) -> str:
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return ""
+    cur.execute("SELECT phone FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+    row = cur.fetchone()
+    return str(row.get("phone") or "").strip() if row else ""
 
 
 def user_has_wallet_recharge_history(phone: str) -> bool:
@@ -6732,39 +6929,44 @@ def user_work_download_blocked_never_paid_free_only(phone: str, current_plan: st
 
 
 def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return False, -1
+    return wallet_try_debit_cents_for_user_id(uid, cents)
+
+
+def wallet_try_debit_cents_for_user_id(user_id: str, cents: int) -> tuple[bool, int]:
     """
     从钱包扣减指定分；余额不足则不扣。
     返回 (是否成功, 扣后余额；-1 表示未扣款且无法读取余额)。
     """
-    p = (phone or "").strip()
+    uid = _normalize_user_uuid(user_id)
     try:
         debit = int(cents)
     except (TypeError, ValueError):
         return False, -1
-    if not p or debit <= 0:
+    if not uid or debit <= 0:
         return False, -1
     try:
         ensure_user_wallet_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
-                    return False, -1
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     UPDATE user_wallet_balance
                     SET balance_cents = balance_cents - %s,
-                        phone = %s,
+                        phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                         updated_at = NOW()
-                    WHERE user_id = %s AND balance_cents >= %s
+                    WHERE user_id = %s::uuid AND balance_cents >= %s
                     RETURNING balance_cents
                     """,
-                    (debit, p, uid, debit),
+                    (debit, phone_ledger or None, uid, debit),
                 )
                 row = cur.fetchone()
                 if not row:
                     cur.execute(
-                        "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s LIMIT 1",
+                        "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s::uuid LIMIT 1",
                         (uid,),
                     )
                     bal_row = cur.fetchone() or {}
@@ -6773,11 +6975,11 @@ def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:
                 _insert_user_wallet_ledger(
                     cur,
                     user_id=str(uid),
-                    phone=p,
+                    phone=phone_ledger,
                     delta_cents=-debit,
                     balance_after_cents=bal_after,
                     entry_type="wallet_debit",
-                    meta={"source": "wallet_try_debit_cents"},
+                    meta={"source": "wallet_try_debit_cents_for_user_id"},
                 )
                 conn.commit()
                 return True, bal_after
@@ -6786,42 +6988,45 @@ def wallet_try_debit_cents(phone: str, cents: int) -> tuple[bool, int]:
 
 
 def wallet_credit_cents(phone: str, cents: int) -> bool:
-    """
-    增加钱包余额（用于克隆失败/取消后退回已扣的按次费）。
-    """
-    p = (phone or "").strip()
+    uid = billing_user_id_from_ref((phone or "").strip())
+    if not uid:
+        return False
+    return wallet_credit_cents_for_user_id(uid, cents)
+
+
+def wallet_credit_cents_for_user_id(user_id: str, cents: int) -> bool:
+    """增加钱包余额（用于克隆失败/取消后退回已扣的按次费）。"""
+    uid = _normalize_user_uuid(user_id)
     try:
         credit = int(cents)
     except (TypeError, ValueError):
         return False
-    if not p or credit <= 0:
+    if not uid or credit <= 0:
         return False
     try:
         ensure_user_wallet_schema()
         with get_conn() as conn:
             with get_cursor(conn) as cur:
-                uid = _ensure_user_id_for_phone_conn(conn, p)
-                if not uid:
-                    return False
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
                 cur.execute(
                     """
                     UPDATE user_wallet_balance
                     SET balance_cents = balance_cents + %s,
-                        phone = %s,
+                        phone = COALESCE(NULLIF(btrim(phone), ''), %s),
                         updated_at = NOW()
-                    WHERE user_id = %s
+                    WHERE user_id = %s::uuid
                     RETURNING balance_cents
                     """,
-                    (credit, p, uid),
+                    (credit, phone_ledger or None, uid),
                 )
                 row = cur.fetchone()
                 if not row:
                     cur.execute(
                         """
                         INSERT INTO user_wallet_balance (user_id, phone, balance_cents, updated_at)
-                        VALUES (%s, %s, %s, NOW())
+                        VALUES (%s::uuid, %s, %s, NOW())
                         """,
-                        (uid, p, credit),
+                        (uid, phone_ledger or None, credit),
                     )
                     bal_after = credit
                 else:
@@ -6829,16 +7034,16 @@ def wallet_credit_cents(phone: str, cents: int) -> bool:
                 _insert_user_wallet_ledger(
                     cur,
                     user_id=str(uid),
-                    phone=p,
+                    phone=phone_ledger,
                     delta_cents=credit,
                     balance_after_cents=bal_after,
                     entry_type="wallet_credit",
-                    meta={"source": "wallet_credit_cents"},
+                    meta={"source": "wallet_credit_cents_for_user_id"},
                 )
                 conn.commit()
                 return True
     except Exception:
-        logger.exception("wallet_credit_cents failed phone=%s", p[:4] if p else "")
+        logger.exception("wallet_credit_cents_for_user_id failed user_id=%s", uid[:8] if uid else "")
         return False
 
 

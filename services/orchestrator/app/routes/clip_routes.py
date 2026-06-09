@@ -20,6 +20,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from .. import auth_bridge
 from ..clip_audio_merge import clip_merge_limits, ffprobe_audio_channels
+from ..clip_audio_validate import validate_clip_upload_audio_bytes
 from ..clip_merge_scheduler import merge_immediate
 from ..clip_segment_transcript import (
     parse_audio_source_segments,
@@ -79,9 +80,9 @@ from ..clip_asr_billing import estimate_clip_transcribe_billable_seconds
 from ..media_wallet import (
     asr_wallet_yuan_per_minute_for_display,
     media_wallet_billing_enabled,
-    preview_wallet_cents_for_asr_transcribe,
+    preview_wallet_cents_for_asr_transcribe_user_id,
 )
-from ..models import phone_for_job_created_by, resolved_user_uuid_string, wallet_balance_cents_for_phone
+from ..models import resolved_user_uuid_string, wallet_balance_cents_for_user_id
 from ..clip_silence_detect import detect_silence_segments_from_file
 from ..object_store import (
     delete_object_key,
@@ -857,6 +858,7 @@ def _clip_upload_source_audio_sync(
     base_name = Path(fn_display).name[:240] or "upload.mp3"
     ext = Path(base_name).suffix[:12] or ".mp3"
     safe_stem = _SAFE_NAME.sub("_", Path(base_name).stem).strip("._")[:120] or "upload"
+    validate_clip_upload_audio_bytes(body, filename_hint=fn_display)
     key = f"clip/{owner_seg}/{project_id}/source_{uuid.uuid4().hex[:12]}_{safe_stem}{ext}"
     upload_bytes(key, body, mime)
     ok = update_clip_project_audio(
@@ -905,8 +907,11 @@ async def clip_upload_audio(project_id: str, request: Request):
             fn_display=fn_display,
             mime=mime,
         )
-    except ValueError:
-        raise HTTPException(status_code=500, detail="更新工程音频字段失败") from None
+    except ValueError as exc:
+        msg = str(exc)
+        if msg == "update_clip_project_audio_failed":
+            raise HTTPException(status_code=500, detail="更新工程音频字段失败") from None
+        raise HTTPException(status_code=400, detail=msg) from None
 
 
 @router.post("/clip/projects/{project_id}/audio/repair")
@@ -1001,6 +1006,7 @@ def _clip_stage_audio_segment_sync(
     base_name = Path(fn_display).name[:240] or "segment.mp3"
     safe_tail = _SAFE_NAME.sub("_", base_name).strip("._")[:120] or "segment"
     owner_seg = uid or "anon"
+    validate_clip_upload_audio_bytes(body, filename_hint=fn_display)
     sk = f"clip/{owner_seg}/{project_id}/stage_{uuid.uuid4().hex[:16]}_{safe_tail}"
     upload_bytes(sk, body, mime)
     main_key = str(row.get("audio_object_key") or "").strip()
@@ -1064,7 +1070,9 @@ async def clip_stage_audio_segment(project_id: str, request: Request):
         msg = str(exc)
         if msg == "project_not_found":
             raise HTTPException(status_code=404, detail="工程不存在") from None
-        raise HTTPException(status_code=400, detail="无法追加分段（可能超过段数上限）") from None
+        if msg == "append_segment_failed":
+            raise HTTPException(status_code=400, detail="无法追加分段（可能超过段数上限）") from None
+        raise HTTPException(status_code=400, detail=msg) from None
 
 
 @router.post("/clip/projects/{project_id}/audio/staging/reorder")
@@ -1773,12 +1781,9 @@ async def clip_start_transcribe(project_id: str, request: Request):
             ),
         )
     if media_wallet_billing_enabled():
-        phone_tb = (phone_for_job_created_by(uid) or "").strip()
-        if not phone_tb:
-            raise HTTPException(
-                status_code=400,
-                detail="账户未绑定手机号，无法按使用量结算转写费用，请完善账号后重试。",
-            )
+        bill_uid = (uid or "").strip()
+        if not bill_uid:
+            raise HTTPException(status_code=401, detail="未登录")
         try:
             sec_est = estimate_clip_transcribe_billable_seconds(
                 row,
@@ -1791,9 +1796,9 @@ async def clip_start_transcribe(project_id: str, request: Request):
                 status_code=503,
                 detail=f"无法估算转写计费时长（请确认音频可读），请稍后重试：{exc}",
             ) from exc
-        cents_need = preview_wallet_cents_for_asr_transcribe(phone_tb, sec_est)
+        cents_need = preview_wallet_cents_for_asr_transcribe_user_id(bill_uid, sec_est)
         if cents_need > 0:
-            bal_tb = wallet_balance_cents_for_phone(phone_tb)
+            bal_tb = wallet_balance_cents_for_user_id(bill_uid)
             if bal_tb < cents_need:
                 yuan_per_min = asr_wallet_yuan_per_minute_for_display()
                 raise HTTPException(

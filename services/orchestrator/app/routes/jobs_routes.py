@@ -30,8 +30,8 @@ from ..media_wallet import (
     estimate_spoken_minutes_podcast_enqueue,
     estimate_spoken_minutes_tts,
     media_wallet_billing_enabled,
-    preview_wallet_cents_for_media_job,
-    preview_wallet_cents_for_text_enqueue,
+    preview_wallet_cents_for_media_job_user_id,
+    preview_wallet_cents_for_text_enqueue_user_id,
 )
 from ..models import (
     aggregate_succeeded_works_metrics,
@@ -61,8 +61,9 @@ from ..models import (
     purge_expired_trashed_works,
     restore_deleted_job,
     soft_delete_job,
-    wallet_balance_cents_for_phone,
+    wallet_balance_cents_for_user_id,
 )
+from ..billing_user_ref import billing_user_id_from_ref
 from ..mp3_export import build_export_mp3
 from ..object_store import (
     get_object_bytes,
@@ -484,15 +485,15 @@ def _trim_note_refs_payload(payload: dict[str, Any], phone: str) -> None:
         pass
 
 
-def _media_job_wallet_preview_dict(phone: str | None, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _media_job_wallet_preview_dict(billing_user_ref: str | None, job_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     """创建 / 预检共用：媒体钱包是否足够覆盖预估超量分钟。"""
     jt = str(job_type or "").strip().lower()
     out: dict[str, Any] = {"media_wallet_billing_enabled": bool(media_wallet_billing_enabled()), "job_type": jt}
     if not media_wallet_billing_enabled():
         out["allowed"] = True
         return out
-    p = (phone or "").strip()
-    if not p:
+    uid = billing_user_id_from_ref((billing_user_ref or "").strip())
+    if not uid:
         out["allowed"] = True
         return out
     if jt not in ("text_to_speech", "tts", "podcast_generate", "podcast"):
@@ -503,8 +504,8 @@ def _media_job_wallet_preview_dict(phone: str | None, job_type: str, payload: di
     else:
         body_m = str(payload.get("text") or "").strip() or "你好，欢迎使用 AI Native Studio。"
         est_m = float(estimate_spoken_minutes_tts(payload, body_m))
-    need_cents = int(preview_wallet_cents_for_media_job(p, None, est_m))
-    bal_m = int(wallet_balance_cents_for_phone(p))
+    need_cents = int(preview_wallet_cents_for_media_job_user_id(uid, None, est_m))
+    bal_m = int(wallet_balance_cents_for_user_id(uid))
     out["estimated_spoken_minutes"] = round(est_m, 2)
     out["wallet_charge_cents"] = need_cents
     out["wallet_balance_cents"] = bal_m
@@ -516,29 +517,29 @@ def _media_job_wallet_preview_dict(phone: str | None, job_type: str, payload: di
     return out
 
 
-def _enforce_media_wallet_for_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> None:
-    prev = _media_job_wallet_preview_dict(phone, job_type, payload)
+def _enforce_media_wallet_for_enqueue(billing_user_ref: str | None, job_type: str, payload: dict[str, Any]) -> None:
+    prev = _media_job_wallet_preview_dict(billing_user_ref, job_type, payload)
     if not prev.get("allowed", True):
         raise HTTPException(status_code=400, detail=str(prev.get("detail") or "钱包余额不足"))
 
 
-def _enforce_combined_wallet_for_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> None:
+def _enforce_combined_wallet_for_enqueue(billing_user_ref: str | None, job_type: str, payload: dict[str, Any]) -> None:
     """脚本文本预估计费 + 语音预估计费，合并校验余额。"""
     if not media_wallet_billing_enabled():
         return
-    p = (phone or "").strip()
-    if not p:
+    uid = billing_user_id_from_ref((billing_user_ref or "").strip())
+    if not uid:
         return
     jt = str(job_type or "").strip().lower()
-    text_c = preview_wallet_cents_for_text_enqueue(p, jt, payload)
-    audio_prev = _media_job_wallet_preview_dict(p, jt, payload)
+    text_c = preview_wallet_cents_for_text_enqueue_user_id(uid, jt, payload)
+    audio_prev = _media_job_wallet_preview_dict(billing_user_ref, jt, payload)
     if not audio_prev.get("allowed", True):
         raise HTTPException(status_code=400, detail=str(audio_prev.get("detail") or "钱包余额不足"))
     audio_c = int(audio_prev.get("wallet_charge_cents") or 0)
     total = text_c + audio_c
     if total <= 0:
         return
-    bal = int(wallet_balance_cents_for_phone(p))
+    bal = int(wallet_balance_cents_for_user_id(uid))
     if bal < total:
         raise HTTPException(status_code=400, detail="余额不足，请先充值。")
 
@@ -552,15 +553,16 @@ def preview_media_job_api(req: JobCreateRequest, request: Request):
     payload = dict(req.payload or {})
     if "api_key" in payload:
         payload.pop("api_key", None)
-    phone = (user_ref or req.created_by or "").strip()
-    _trim_note_refs_payload(payload, phone)
+    billing_user_ref = (user_ref or req.created_by or "").strip()
+    _trim_note_refs_payload(payload, billing_user_ref)
     jt = str(req.job_type or "").strip().lower()
-    body = _media_job_wallet_preview_dict(phone, jt, payload)
-    text_c = preview_wallet_cents_for_text_enqueue(phone, jt, payload)
+    body = _media_job_wallet_preview_dict(billing_user_ref, jt, payload)
+    billing_uid = billing_user_id_from_ref(billing_user_ref)
+    text_c = preview_wallet_cents_for_text_enqueue_user_id(billing_uid, jt, payload) if billing_uid else 0
     body["wallet_text_charge_cents_preview"] = text_c
-    if media_wallet_billing_enabled() and phone:
+    if media_wallet_billing_enabled() and billing_uid:
         audio_c = int(body.get("wallet_charge_cents") or 0)
-        bal = int(wallet_balance_cents_for_phone(phone))
+        bal = int(wallet_balance_cents_for_user_id(billing_uid))
         body["wallet_balance_cents"] = bal
         total = audio_c + text_c
         body["wallet_total_charge_cents_preview"] = total
@@ -581,8 +583,8 @@ def create_job_api(req: JobCreateRequest, request: Request):
     if "api_key" in payload:
         payload.pop("api_key", None)
 
-    phone = (user_ref or req.created_by or "").strip()
-    _trim_note_refs_payload(payload, phone)
+    billing_user_ref = (user_ref or req.created_by or "").strip()
+    _trim_note_refs_payload(payload, billing_user_ref)
 
     owner_src = str(payload.get("notes_source_owner_user_id") or "").strip()
     nb_src = str(payload.get("notes_notebook") or "").strip()
@@ -597,9 +599,10 @@ def create_job_api(req: JobCreateRequest, request: Request):
         if not ids or count_notes_in_notebook_for_owner(owner_src, nb_src, ids) != len(ids):
             raise HTTPException(status_code=400, detail="note_ids_not_in_shared_notebook")
 
-    if str(req.job_type or "").strip().lower() in ("voice_clone", "clone_voice") and phone and media_wallet_billing_enabled():
+    billing_uid = billing_user_id_from_ref(billing_user_ref)
+    if str(req.job_type or "").strip().lower() in ("voice_clone", "clone_voice") and billing_uid and media_wallet_billing_enabled():
         pay = voice_clone_payg_cents()
-        bal = wallet_balance_cents_for_phone(phone)
+        bal = wallet_balance_cents_for_user_id(billing_uid)
         if bal < pay:
             raise HTTPException(
                 status_code=400,
@@ -609,9 +612,9 @@ def create_job_api(req: JobCreateRequest, request: Request):
             )
 
     jt_enqueue = str(req.job_type or "").strip().lower()
-    if phone and media_wallet_billing_enabled():
+    if billing_uid and media_wallet_billing_enabled():
         try:
-            _enforce_combined_wallet_for_enqueue(phone, jt_enqueue, payload)
+            _enforce_combined_wallet_for_enqueue(billing_user_ref, jt_enqueue, payload)
         except HTTPException:
             raise
         except Exception as exc:

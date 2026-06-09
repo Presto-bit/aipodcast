@@ -98,6 +98,21 @@ import {
   type EngineHeaderState
 } from "./prestoFlowEditorBootstrap";
 
+function friendlyWaveformError(msg: string): string {
+  const raw = msg.trim();
+  if (!raw) return "波形加载失败";
+  if (/DEMUXER_ERROR|no supported streams|FFmpegDemuxer/i.test(raw)) {
+    return "浏览器无法解码该音频（波形/试听不可用）。请确认文件为 MP3 或 M4A（AAC 编码），或重新上传。";
+  }
+  if (/MEDIA_ERR_SRC_NOT_SUPPORTED|MEDIA_ERR_DECODE/i.test(raw)) {
+    return "浏览器不支持该音频格式，请转为 MP3 或 M4A（AAC）后重试。";
+  }
+  if (raw === "waveform_error" || /^无法(播放|加载)/.test(raw)) {
+    return raw;
+  }
+  return raw;
+}
+
 export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const usePrdLayout = clipEditorUsesPrdLayout();
   const { t } = useI18n();
@@ -110,6 +125,8 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<ClipProjectRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  /** 波形/试听解码错误，与操作类 err、服务端 transcription_error 分开展示 */
+  const [waveformErr, setWaveformErr] = useState("");
   const [projectTitleEditing, setProjectTitleEditing] = useState(false);
   const [projectTitleDraft, setProjectTitleDraft] = useState("");
   const [projectTitleBusy, setProjectTitleBusy] = useState(false);
@@ -927,11 +944,12 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
   );
 
   const handleWaveformLoadError = useCallback((msg: string) => {
+    const friendly = friendlyWaveformError(msg);
     const now = Date.now();
     const prev = waveformLoadErrDedupRef.current;
-    if (prev.msg === msg && now - prev.at < 2500) return;
-    waveformLoadErrDedupRef.current = { msg, at: now };
-    setErr((p) => (p ? `${p}\n${msg}` : msg));
+    if (prev.msg === friendly && now - prev.at < 2500) return;
+    waveformLoadErrDedupRef.current = { msg: friendly, at: now };
+    setWaveformErr(friendly);
   }, []);
 
   const handleWaveformPlayState = useCallback((playing: boolean) => {
@@ -1111,6 +1129,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     setWaveformPlaying(false);
+    setWaveformErr("");
   }, [waveformAudioUrl]);
 
   const generateWordchainPreview = useCallback(async () => {
@@ -3012,8 +3031,15 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
                 {err}
               </p>
             ) : null}
+            {waveformErr ? (
+              <p className="px-4 py-2 text-sm text-amber-800 dark:text-amber-200" role="status">
+                音频预览：{waveformErr}
+              </p>
+            ) : null}
             {project.transcription_error ? (
-              <p className="px-4 text-sm text-danger-ink">{project.transcription_error}</p>
+              <p className="px-4 py-2 text-sm text-danger-ink" role="alert">
+                转写失败：{project.transcription_error}
+              </p>
             ) : null}
             {project.export_error ? <p className="px-4 text-sm text-danger-ink">{project.export_error}</p> : null}
             {audioMergeBusy ? (

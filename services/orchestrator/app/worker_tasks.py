@@ -30,20 +30,21 @@ from .models import (
     add_artifact,
     append_cloned_voice_for_user_uuid,
     append_job_event,
-    asr_billing_try_debit,
-    experience_restore_voice_minutes,
+    asr_billing_try_debit_for_user_id,
+    billing_user_id_from_created_by,
+    billing_user_id_from_ref,
+    experience_restore_voice_minutes_for_user_id,
     finalize_job_terminal_unless_cancelled,
     get_job,
-    media_billing_try_assert_cover_estimated_minutes,
-    media_billing_try_debit_actual_minutes,
+    media_billing_try_assert_cover_estimated_minutes_for_user_id,
+    media_billing_try_debit_actual_minutes_for_user_id,
     payg_restore_minutes_from_log,
-    phone_for_job_created_by,
-    script_text_billing_refund,
-    script_text_billing_try_debit,
+    script_text_billing_refund_for_user_id,
+    script_text_billing_try_debit_for_user_id,
     try_mark_job_running,
     update_job_status,
-    wallet_credit_cents,
-    wallet_try_debit_cents,
+    wallet_credit_cents_for_user_id,
+    wallet_try_debit_cents_for_user_id,
 )
 from .object_store import upload_bytes, upload_text
 from .storage_paths import job_artifact_base, job_cover_object_key
@@ -63,10 +64,10 @@ def _wallet_ledger_tts_model_for_voice_billing(payload: dict[str, Any] | None) -
     return str(os.getenv("MINIMAX_TTS_MODEL") or "speech-2.8-turbo").strip()
 
 
-def _refund_media_wallet_job(phone: str, meta: dict[str, Any]) -> None:
+def _refund_media_wallet_job(user_id: str | None, meta: dict[str, Any]) -> None:
     """语音任务失败或取消后退回本次从钱包扣的分、按次分钟包（若有）及体验包语音分钟。"""
-    p = (phone or "").strip()
-    if not p or not isinstance(meta, dict):
+    uid = billing_user_id_from_created_by(user_id) or billing_user_id_from_ref(str(user_id or "").strip())
+    if not uid or not isinstance(meta, dict):
         return
     wc = int(meta.get("wallet_cents") or 0)
     pr = meta.get("payg_restores")
@@ -74,11 +75,11 @@ def _refund_media_wallet_job(phone: str, meta: dict[str, Any]) -> None:
     if wc <= 0 and not (isinstance(pr, list) and pr) and ev <= 1e-12:
         return
     if wc > 0:
-        wallet_credit_cents(p, wc)
+        wallet_credit_cents_for_user_id(uid, wc)
     if isinstance(pr, list) and pr:
-        payg_restore_minutes_from_log(p, pr)
+        payg_restore_minutes_from_log(uid, pr)
     if ev > 1e-12:
-        experience_restore_voice_minutes(p, ev)
+        experience_restore_voice_minutes_for_user_id(uid, ev)
 
 
 def _debit_script_text_billing_or_raise(job_id: str, created_by: str | None, script_body: str) -> dict[str, Any]:
@@ -90,11 +91,11 @@ def _debit_script_text_billing_or_raise(job_id: str, created_by: str | None, scr
 
     if not media_wallet_billing_enabled():
         return {}
-    phone = (phone_for_job_created_by(created_by) or "").strip()
-    if not phone:
+    uid = billing_user_id_from_created_by(created_by)
+    if not uid:
         return {}
     chars = len((script_body or "").strip())
-    ok, meta = script_text_billing_try_debit(phone, chars)
+    ok, meta = script_text_billing_try_debit_for_user_id(uid, chars)
     if not ok:
         raise RuntimeError(str((meta or {}).get("message") or "script text billing failed"))
     wc = int((meta or {}).get("wallet_cents") or 0)
@@ -475,12 +476,12 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             from .media_wallet import media_wallet_billing_enabled
 
             pay_cents = voice_clone_payg_cents()
-            clone_phone = (phone_for_job_created_by(created_by) or "").strip()
+            clone_uid = billing_user_id_from_created_by(created_by)
             debited = False
             if media_wallet_billing_enabled():
-                if not clone_phone:
-                    raise RuntimeError("单次克隆需从钱包扣费，但未找到绑定账户，请重新登录后重试")
-                ok_debit, bal_after = wallet_try_debit_cents(clone_phone, pay_cents)
+                if not clone_uid:
+                    raise RuntimeError("单次克隆需从钱包扣费，但未找到账户，请重新登录后重试")
+                ok_debit, bal_after = wallet_try_debit_cents_for_user_id(clone_uid, pay_cents)
                 if not ok_debit:
                     bal_show = max(0, bal_after) / 100.0 if bal_after >= 0 else 0.0
                     raise RuntimeError(
@@ -500,8 +501,8 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     raise RuntimeError("音频文件过大，最大支持 20MB")
                 out = clone_voice(audio_bytes=audio_bytes, filename=filename, display_name=display_name, api_key=api_key)
             except Exception:
-                if debited and clone_phone:
-                    wallet_credit_cents(clone_phone, pay_cents)
+                if debited and clone_uid:
+                    wallet_credit_cents_for_user_id(clone_uid, pay_cents)
                     append_job_event(job_id, "log", "克隆未成功，已退回钱包扣款", {"cents": pay_cents})
                 raise
             result = {
@@ -512,8 +513,8 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 "message": out.get("message"),
             }
             if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
-                if debited and clone_phone:
-                    wallet_credit_cents(clone_phone, pay_cents)
+                if debited and clone_uid:
+                    wallet_credit_cents_for_user_id(clone_uid, pay_cents)
                     append_job_event(job_id, "log", "任务已取消，已退回单次克隆扣款", {"cents": pay_cents})
                 append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
                 return {"status": "cancelled"}
@@ -552,7 +553,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 or bool(str(payload.get("outro_text") or "").strip())
                 or want_polish
             )
-            phone_m = phone_for_job_created_by(created_by)
+            phone_m = billing_user_id_from_created_by(created_by)
             media_bill_meta: dict[str, Any] = {}
             est_m_voice = 0.0
             try:
@@ -560,7 +561,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     est_m_voice = float(
                         estimate_spoken_minutes_tts(payload if isinstance(payload, dict) else {}, source_text)
                     )
-                    ok_a, ass_meta = media_billing_try_assert_cover_estimated_minutes(
+                    ok_a, ass_meta = media_billing_try_assert_cover_estimated_minutes_for_user_id(
                         phone_m,
                         _subscription_tier_for_job(created_by),
                         est_m_voice,
@@ -720,7 +721,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                             "未能解析成片时长，语音费用暂按预估分钟结算",
                             {"estimated_minutes_fallback": round(_fb_est, 4)},
                         )
-                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_actual_minutes(
+                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_actual_minutes_for_user_id(
                         phone_m,
                         _subscription_tier_for_job(created_by),
                         bill_m,
@@ -1093,9 +1094,9 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
         )
         text_bill_meta_script = _debit_script_text_billing_or_raise(job_id, created_by, script)
         if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
-            ph_can = (phone_for_job_created_by(created_by) or "").strip()
-            if text_bill_meta_script and ph_can:
-                script_text_billing_refund(ph_can, text_bill_meta_script)
+            uid_can = billing_user_id_from_created_by(created_by)
+            if text_bill_meta_script and uid_can:
+                script_text_billing_refund_for_user_id(uid_can, text_bill_meta_script)
                 append_job_event(job_id, "log", "任务已取消，已退回脚本文本扣费（体验包与/或钱包）", text_bill_meta_script)
             append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
             return {"status": "cancelled"}
@@ -1331,12 +1332,12 @@ def run_media_job(job_id: str) -> dict[str, Any]:
 
             from .media_wallet import MEDIA_USAGE_PERIOD_DAYS, estimate_spoken_minutes_tts
 
-            phone_pm = phone_for_job_created_by(created_by)
+            phone_pm = billing_user_id_from_created_by(created_by)
             media_bill_meta: dict[str, Any] = {}
             est_m_voice_pod = 0.0
             if phone_pm:
                 est_m_voice_pod = float(estimate_spoken_minutes_tts(tts_pl, script))
-                ok_a, ass_meta = media_billing_try_assert_cover_estimated_minutes(
+                ok_a, ass_meta = media_billing_try_assert_cover_estimated_minutes_for_user_id(
                     phone_pm,
                     _subscription_tier_for_job(created_by),
                     est_m_voice_pod,
@@ -1504,7 +1505,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                             "未能解析成片时长，语音费用暂按预估分钟结算",
                             {"estimated_minutes_fallback": round(_fb_est, 4)},
                         )
-                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_actual_minutes(
+                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_actual_minutes_for_user_id(
                         phone_pm,
                         _subscription_tier_for_job(created_by),
                         bill_m,
@@ -1853,8 +1854,7 @@ def run_clip_transcription_job(
                 normalized=merged,
                 segment_transcripts=cache,
             )
-            ph_asr = (phone_for_job_created_by(owner) or "").strip()
-            ok_asr, meta_asr = asr_billing_try_debit(ph_asr, billed_sec)
+            ok_asr, meta_asr = asr_billing_try_debit_for_user_id(owner or "", billed_sec)
             if not ok_asr:
                 logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
             elif int(meta_asr.get("wallet_cents") or 0) > 0:
@@ -1940,8 +1940,7 @@ def run_clip_transcription_job(
             normalized=normalized,
             segment_transcripts=None,
         )
-        ph_asr = (phone_for_job_created_by(owner) or "").strip()
-        ok_asr, meta_asr = asr_billing_try_debit(ph_asr, billed_sec)
+        ok_asr, meta_asr = asr_billing_try_debit_for_user_id(owner or "", billed_sec)
         if not ok_asr:
             logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
         elif int(meta_asr.get("wallet_cents") or 0) > 0:
