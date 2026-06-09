@@ -30,6 +30,7 @@ from .agent_route import (
 )
 from .agent_loop import run_agent_tool_loop
 from .agent_tool_schema import normalize_agent_mode
+from .patch_utils import build_pending_patch_payload
 
 STUDIO_NEEDS_BRIEF = "NEEDS_BRIEF"
 STUDIO_NEEDS_REWRITE = "NEEDS_REWRITE"
@@ -111,7 +112,13 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
 
     pending_steps: list[dict[str, Any]] = []
 
-    def emit_step(step_id: str, label: str, status: str, tool: str | None) -> None:
+    def emit_step(
+        step_id: str,
+        label: str,
+        status: str,
+        tool: str | None,
+        detail: str = "",
+    ) -> None:
         pending_steps.append(
             {
                 "type": "step",
@@ -119,6 +126,8 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 "label": label,
                 "status": status,
                 "tool": tool or "",
+                "reason": detail[:480] if detail else "",
+                "detail": detail[:480] if detail else "",
                 "requestId": rid,
             }
         )
@@ -150,6 +159,18 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     }
     yield _sse(tool_call_payload)
     yield _sse({**tool_call_payload, "type": "route"})
+    if decision.reason:
+        yield _sse(
+            {
+                "type": "trace_step",
+                "id": "route_decision",
+                "tool": tool,
+                "label": "决定下一步",
+                "status": "done",
+                "detail": decision.reason[:480],
+                "requestId": rid,
+            }
+        )
 
     if tool == "reply":
         compose_brief = build_compose_task_sentence(turns, current_message=message)
@@ -348,13 +369,48 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     "label": "撰写成稿" if tool == "compose" else "按你的意见修改",
                     "status": "done",
                     "tool": tool,
+                    "reason": decision.reason[:480] if decision.reason else "",
+                    "detail": decision.reason[:480] if decision.reason else "",
                     "requestId": rid,
+                }
+            )
+            from_blocks = (
+                payload.get("manuscriptBlocks")
+                if isinstance(payload.get("manuscriptBlocks"), list)
+                else []
+            )
+            from_blocks = [b for b in from_blocks if isinstance(b, dict)]
+            from_version_id = str(payload.get("activeVersionId") or "").strip()
+            quality_note = ""
+            body_text = ""
+            for blk in blocks:
+                if isinstance(blk, dict) and str(blk.get("kind") or "") == "body":
+                    body_text = str(blk.get("text") or "")
+                    break
+            if body_text and _looks_like_xhs_template_body({"body": body_text}, task_sentence):
+                quality_note = "开头略偏通用模板，可先采纳再改标题或开头"
+            patch = build_pending_patch_payload(
+                from_version_id=from_version_id,
+                from_blocks=from_blocks,
+                proposed_blocks=blocks,
+                message=message,
+                reason=decision.reason or ("首稿成稿" if tool == "compose" else "按意见改版"),
+                source_run_id=str(payload.get("clientRunId") or rid),
+                quality_note=quality_note,
+            )
+            yield _sse(
+                {
+                    "type": "patch_proposed",
+                    "pendingPatch": patch,
+                    "requestId": rid,
+                    "tool": data.get("tool") or tool,
                 }
             )
             yield _sse(
                 {
                     "type": "done",
                     "tool": data.get("tool") or tool,
+                    "outcome": "patch",
                     "blocks": blocks,
                     "requestId": rid,
                     "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),

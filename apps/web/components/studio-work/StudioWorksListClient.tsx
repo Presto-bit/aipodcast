@@ -6,49 +6,35 @@ import { useCallback, useEffect, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { WORKBENCH_CHAT_PATH, WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
 import { createStudioWork, listStudioWorks } from "../../lib/studioWorkStorage";
+import { formatWorkCardMeta } from "../../lib/studioWorkCard";
 import type { StudioWork } from "../../lib/studioWorkTypes";
-import { workStatusLabel } from "../../lib/studioWorkTypes";
-
-function ChannelChip() {
-  return (
-    <span className="shrink-0 rounded-md bg-rose-500/12 px-1.5 py-0.5 text-[11px] font-medium text-rose-700 dark:text-rose-300">
-      小红书
-    </span>
-  );
-}
 
 function WorkRow({ work }: { work: StudioWork }) {
-  const version = work.versions.find((v) => v.id === work.activeVersionId);
-  const versionLabel = version?.label || (work.versions.length ? "草稿" : "—");
   const material =
     work.binding.noteIds.length > 0
-      ? `资料·${work.binding.notebook || "笔记本"}(${work.binding.noteIds.length})`
-      : "资料未绑定";
+      ? `资料 ${work.binding.noteIds.length}`
+      : "资料 0";
   return (
     <Link
       href={`${WORKBENCH_STUDIO_PATH}/${work.id}`}
       className="block rounded-xl border border-line bg-surface p-4 transition hover:border-brand/35 hover:bg-fill/30"
     >
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <ChannelChip />
-          <span className="truncate font-medium text-ink">{work.title}</span>
+        <div className="min-w-0 flex-1">
+          <span className="truncate font-medium text-ink">{work.title || "未命名"}</span>
         </div>
-        <span
-          className={[
-            "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium",
-            work.status === "generating"
-              ? "bg-brand/10 text-brand"
-              : work.status === "ready"
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                : "bg-fill text-muted"
-          ].join(" ")}
-        >
-          {work.status === "generating" ? "生成中…" : workStatusLabel(work.status)}
-        </span>
+        {work.pendingPatch ? (
+          <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-800 dark:text-amber-200">
+            待确认
+          </span>
+        ) : work.status === "generating" ? (
+          <span className="shrink-0 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+            生成中
+          </span>
+        ) : null}
       </div>
       <p className="mt-1.5 text-xs text-muted">
-        {material} · {versionLabel}
+        {formatWorkCardMeta(work)} · {material}
       </p>
       {work.status === "generating" && work.runPhase ? (
         <p className="mt-1 text-xs text-brand">{work.runPhase}</p>

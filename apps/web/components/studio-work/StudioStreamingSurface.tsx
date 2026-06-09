@@ -1,15 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
-  manuscriptBodyBlocks,
   manuscriptTitleBlocks,
   resolveManuscriptVariant
 } from "../../lib/studioManuscriptView";
 import { studioStreamPhaseLabel } from "../../lib/studioComposeProgress";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
-import StudioManuscriptReadable, { StudioVariantTabs } from "./StudioManuscriptReadable";
+import StudioManuscriptReadable from "./StudioManuscriptReadable";
 
 export type StudioStreamingVariant = "idle" | "active" | "ready" | "diff";
 
@@ -23,7 +22,7 @@ function StreamPhaseHint({ label }: { label: string }) {
   );
 }
 
-/** Cursor 式 Agent 输出面：流式 / 成稿（flowLayout 时参与页面全局滚动） */
+/** V2：流式单稿，无方向 Tab */
 export default function StudioStreamingSurface({
   phase,
   taskSentence,
@@ -32,7 +31,6 @@ export default function StudioStreamingSurface({
   onCancel,
   variant = "active",
   version = null,
-  onTitleIndexChange,
   flowLayout = false,
   isRevise = false,
   corpusNotebook = "",
@@ -52,8 +50,6 @@ export default function StudioStreamingSurface({
   corpusNoteIds?: string[];
 }) {
   void taskSentence;
-  const [previewIndex, setPreviewIndex] = useState(0);
-
   const isActive = variant === "active";
   const isReadyLike = variant === "ready";
   const displayBlocks = useMemo(() => {
@@ -62,29 +58,20 @@ export default function StudioStreamingSurface({
   }, [blocks, version?.blocks]);
 
   const titles = useMemo(() => manuscriptTitleBlocks(displayBlocks), [displayBlocks]);
-  const bodyCount = useMemo(() => manuscriptBodyBlocks(displayBlocks).length, [displayBlocks]);
-  const showVariantTabs = titles.length > 1 && (!isActive || bodyCount > 1);
   const hasContent = Boolean(
     bodyText?.trim() ||
       titles.length ||
       displayBlocks.some((b) => b.kind === "body" && b.text.trim())
   );
-  const titleIndex = version ? (version.primaryTitleIndex ?? previewIndex) : previewIndex;
-  const activeIndex = onTitleIndexChange ? titleIndex : previewIndex;
 
   const streamPhase = isActive
     ? studioStreamPhaseLabel({ runPhase: phase, hasStream: hasContent, isRevise })
     : "";
 
-  useEffect(() => {
-    if (previewIndex >= titles.length) setPreviewIndex(0);
-  }, [previewIndex, titles.length]);
-
   if (isReadyLike && version) {
     return (
       <StudioOutputManuscript
         version={version}
-        onTitleIndexChange={onTitleIndexChange}
         corpusNotebook={corpusNotebook}
         corpusNoteIds={corpusNoteIds}
       />
@@ -101,30 +88,16 @@ export default function StudioStreamingSurface({
       ) : null;
     }
 
-    const slice = resolveManuscriptVariant(displayBlocks, activeIndex);
+    const slice = resolveManuscriptVariant(displayBlocks, 0);
     const streamingBody = bodyText?.trim();
     const streamVariant =
-      isActive && streamingBody && activeIndex === 0
-        ? { ...slice, body: streamingBody }
-        : slice;
+      isActive && streamingBody ? { ...slice, body: streamingBody } : slice;
 
     return (
       <div className="text-left">
         <StreamPhaseHint label={streamPhase} />
 
-        {showVariantTabs ? (
-          <StudioVariantTabs
-            titles={titles}
-            titleIndex={activeIndex}
-            onTitleIndexChange={(i) => {
-              setPreviewIndex(i);
-              onTitleIndexChange?.(i);
-            }}
-          />
-        ) : null}
-
         <StudioManuscriptReadable
-          key={activeIndex}
           variant={streamVariant}
           trailingCursor={isActive}
           corpusNotebook={corpusNotebook}

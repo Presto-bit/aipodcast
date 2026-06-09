@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
   manuscriptTitleBlocks,
   resolveManuscriptVariant,
@@ -8,7 +7,7 @@ import {
 } from "../../lib/studioManuscriptView";
 import type { ManuscriptVersion } from "../../lib/studioWorkTypes";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
-import StudioManuscriptReadable, { StudioVariantTabs } from "./StudioManuscriptReadable";
+import StudioManuscriptReadable from "./StudioManuscriptReadable";
 
 function IconCopy({ className }: { className?: string }) {
   return (
@@ -28,30 +27,27 @@ function IconCopy({ className }: { className?: string }) {
   );
 }
 
-/** 输出区稿件：方向 Tab 切换三篇成稿，结构化只读排版 */
+/** V2：单标题输出，支持选区 */
 export default function StudioOutputManuscript({
   version,
-  onTitleIndexChange,
   generatingPhase,
   corpusNotebook = "",
-  corpusNoteIds = []
+  corpusNoteIds = [],
+  selectionHighlight,
+  onTextSelect
 }: {
   version: ManuscriptVersion | null;
   onTitleIndexChange?: (index: number) => void;
-  /** 写稿进度仅展示在成稿区，此处仅占位 */
   generatingPhase?: string;
   generatingTask?: string;
   corpusNotebook?: string;
   corpusNoteIds?: string[];
+  selectionHighlight?: string;
+  onTextSelect?: (text: string) => void;
 }) {
   const sourceBlocks = version?.blocks ?? [];
   const titles = manuscriptTitleBlocks(sourceBlocks);
-  const persistedIndex = resolvePrimaryTitleIndex(version, titles.length);
-  const [titleIndex, setTitleIndex] = useState(persistedIndex);
-
-  useEffect(() => {
-    setTitleIndex(persistedIndex);
-  }, [persistedIndex, version?.id]);
+  const titleIndex = resolvePrimaryTitleIndex(version, titles.length);
 
   if (generatingPhase) {
     return <div className="min-h-[4rem]" aria-hidden />;
@@ -60,34 +56,23 @@ export default function StudioOutputManuscript({
   if (!sourceBlocks.length) return null;
 
   const variant = resolveManuscriptVariant(sourceBlocks, titleIndex);
-  const showTabs = titles.length > 1 && Boolean(onTitleIndexChange);
 
   return (
     <div className="min-w-0 text-left">
-      {showTabs ? (
-        <StudioVariantTabs
-          titles={titles}
-          titleIndex={titleIndex}
-          onTitleIndexChange={(index) => {
-            setTitleIndex(index);
-            onTitleIndexChange?.(index);
-          }}
-        />
-      ) : null}
-
       <StudioManuscriptReadable
-        key={titleIndex}
         variant={variant}
         corpusNotebook={corpusNotebook}
         corpusNoteIds={corpusNoteIds}
+        selectionHighlight={selectionHighlight}
+        onTextSelect={onTextSelect}
       />
 
       {version ? (
         <div className="mt-3 flex justify-start">
           <button
             type="button"
-            title="复制全部（含话题与互动）"
-            aria-label="复制全部（含话题与互动）"
+            title="复制全部"
+            aria-label="复制全部"
             className="rounded p-1 text-muted hover:text-ink"
             onClick={() =>
               void navigator.clipboard.writeText(manuscriptCopyAll(sourceBlocks, titleIndex))

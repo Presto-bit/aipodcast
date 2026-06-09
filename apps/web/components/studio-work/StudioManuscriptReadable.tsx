@@ -163,7 +163,9 @@ export default function StudioManuscriptReadable({
   trailingCursor = false,
   className = "",
   corpusNotebook = "",
-  corpusNoteIds = []
+  corpusNoteIds = [],
+  selectionHighlight,
+  onTextSelect
 }: {
   variant: ManuscriptVariantSlice;
   showTitle?: boolean;
@@ -171,6 +173,9 @@ export default function StudioManuscriptReadable({
   className?: string;
   corpusNotebook?: string;
   corpusNoteIds?: string[];
+  /** 选区高亮片段（patch 进行中） */
+  selectionHighlight?: string;
+  onTextSelect?: (text: string) => void;
 }) {
   const corpusSources =
     corpusNoteIds.length > 0 ? buildStudioCorpusSources(corpusNotebook, corpusNoteIds) : undefined;
@@ -180,13 +185,26 @@ export default function StudioManuscriptReadable({
   if (!showTitle && !hasBody && !hasTail) return null;
 
   return (
-    <article className={`min-w-0 select-text text-left ${className}`.trim()}>
+    <article
+      className={`min-w-0 select-text text-left ${className}`.trim()}
+      onMouseUp={() => {
+        if (!onTextSelect) return;
+        const sel = window.getSelection()?.toString().trim();
+        if (sel && sel.length >= 2) onTextSelect(sel);
+      }}
+    >
       {showTitle && variant.title.trim() ? (
         <h2 className={STUDIO_MANUSCRIPT_TITLE}>{variant.title.trim()}</h2>
       ) : null}
 
       {hasBody ? (
         <div className={showTitle && variant.title.trim() ? "mt-3" : ""}>
+          {selectionHighlight ? (
+            <p className="mb-2 rounded border border-brand/40 bg-brand/10 px-2 py-1 text-[10px] text-brand">
+              选中：{selectionHighlight.slice(0, 80)}
+              {selectionHighlight.length > 80 ? "…" : ""}
+            </p>
+          ) : null}
           <ManuscriptBodySegments body={variant.body} corpusSources={corpusSources} />
         </div>
       ) : null}

@@ -1,7 +1,6 @@
-import { promoBriefClarifyText } from "./studioGenerateStream";
 import { isOpsStrategyQuestion, opsStrategyFallbackReply } from "./studioOpsStrategy";
 import { STUDIO_OPS_FOLLOWUP_CHIPS } from "./studioBriefMerge";
-import { needsPromoBriefClarification, wouldAutoGenerate } from "./studioOrchestrator";
+import { wouldAutoGenerate } from "./studioOrchestrator";
 import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type { StudioAgentTurn, StudioWork } from "./studioWorkTypes";
@@ -146,12 +145,8 @@ export function resolveStudioStructuredResponse(
   if (structured.kind !== "ask_user") return structured;
   if (!isDraftLikeStatus(work.status)) return structured;
   if (!q) return structured;
-  if (!wouldAutoGenerate(work, q)) return structured;
   return { kind: "silent" };
 }
-
-const DRAFT_CLARIFY_FALLBACK =
-  "可以先说说想写什么主题、给谁看、用什么形式吗？";
 
 /** 运营回复后附带的 Cursor 式下一步 chips（无成稿时） */
 export function opsStrategySuggestedReplies(work: StudioWork): string[] | undefined {
@@ -184,6 +179,5 @@ export function draftAskFallbackText(
   if (wouldAutoGenerate(work, latestUserMessage, turnList)) return null;
   const trimmed = rawAnswer?.trim();
   if (trimmed && !trimmed.startsWith("{")) return trimmed;
-  if (needsPromoBriefClarification(composeTask)) return promoBriefClarifyText();
-  return DRAFT_CLARIFY_FALLBACK;
+  return null;
 }

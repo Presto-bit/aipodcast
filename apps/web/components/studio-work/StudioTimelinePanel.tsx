@@ -2,8 +2,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import { buildStudioTimeline } from "../../lib/studioTimeline";
-import type { StudioComposePreview } from "../../lib/studioComposePreview";
-import type { ManuscriptBlock, StudioAgentTurn, StudioWork } from "../../lib/studioWorkTypes";
+import type { ManuscriptBlock, PendingPatch, StudioAgentTurn, StudioWork } from "../../lib/studioWorkTypes";
 import StudioTimelineManuscriptCard from "./StudioTimelineManuscriptCard";
 import StudioAgentMessage from "./StudioAgentMessage";
 import StudioEphemeralHint from "./StudioEphemeralHint";
@@ -26,8 +25,16 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge,
   streamingBlocks = null,
   streamingBodyText = null,
-  composePreview = null,
-  onAdoptComposePreview,
+  pendingPatch = null,
+  patchSelections = new Set<string>(),
+  onApplyPatch,
+  onDiscardPatch,
+  onTogglePatchKey,
+  onUndo,
+  onRetryError,
+  onCorpusMenuOpen,
+  selectionHighlight,
+  onTextSelect,
   activeAgentStatus = null
 }: {
   work: StudioWork;
@@ -47,8 +54,16 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge: () => void;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
-  composePreview?: StudioComposePreview | null;
-  onAdoptComposePreview?: () => void;
+  pendingPatch?: PendingPatch | null;
+  patchSelections?: Set<string>;
+  onApplyPatch?: (partial: boolean) => void;
+  onDiscardPatch?: () => void;
+  onTogglePatchKey?: (key: string) => void;
+  onUndo?: () => void;
+  onRetryError?: () => void;
+  onCorpusMenuOpen?: () => void;
+  selectionHighlight?: string;
+  onTextSelect?: (text: string) => void;
   activeAgentStatus?: ReactNode;
 }) {
   void scrollRef;
@@ -94,12 +109,17 @@ export default function StudioTimelinePanel({
               baseVersion={item.baseVersion}
               isActiveVersion={item.isActiveVersion}
               busy={busy}
-              onTitleIndexChange={onTitleIndexChange}
-              onBlocksChange={onBlocksChange}
               streamingBlocks={streamingBlocks}
               streamingBodyText={streamingBodyText}
-              composePreview={composePreview}
-              onAdoptComposePreview={onAdoptComposePreview}
+              pendingPatch={item.pendingPatch ?? (pendingPatch?.sourceRunId === item.run.id ? pendingPatch : null)}
+              patchSelections={patchSelections}
+              onApplyPatch={onApplyPatch}
+              onDiscardPatch={onDiscardPatch}
+              onTogglePatchKey={onTogglePatchKey}
+              onRetryError={onRetryError}
+              onCorpusMenuOpen={onCorpusMenuOpen}
+              selectionHighlight={selectionHighlight}
+              onTextSelect={onTextSelect}
             />
           );
         })}

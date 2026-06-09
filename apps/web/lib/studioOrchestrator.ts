@@ -1,5 +1,4 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
-import { normalizeStudioRunPhase } from "./studioRunPhase";
 import { composeTaskSentenceFromTurns, hasTaskContext } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type {
@@ -28,38 +27,16 @@ export type StudioRouteDecision = {
 
 const MAX_RUNS = 12;
 
-const TOPIC_FORM_SIGNAL =
-  /清单|小红书|笔记|教程|测评|好物|干货|故事|攻略|标题|正文|受众|新人|职场|产品|运营|清单体|种草|周报|总结/;
-
-const PROMO_DETAIL_SIGNAL =
-  /受众|人群|读者|卖点|场景|功能|材质|主打|痛点|提醒|便携|保温|职场|新人|白领|品牌|价格|差异化|清单体|教程|测评|故事/;
-
 const WRITE_INTENT =
   /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写/;
 
-/** 推广/种草句仅有品类名、缺受众或卖点时先走 ask 确认需求 */
-export function needsPromoBriefClarification(userMessage: string): boolean {
-  const text = userMessage.trim();
-  const isPromoTask =
-    /推广|种草|带货/.test(text) ||
-    (/水杯|杯子|保温杯|产品|新品/.test(text) && /小红书|笔记|写篇|写一篇/.test(text));
-  if (!isPromoTask) return false;
-  return !PROMO_DETAIL_SIGNAL.test(text);
+/** V2：门禁全部删除 — 仅用于 UI hint，不阻断路由 */
+export function needsPromoBriefClarification(_userMessage: string): boolean {
+  return false;
 }
 
-/** 输入框 hint / 软失败分类；不再阻断 open-ended 成稿路由 */
-export function isInsufficientBrief(userMessage: string): boolean {
-  const text = userMessage.trim();
-  if (!text) return true;
-  if (text.length < 8) return true;
-  if (needsPromoBriefClarification(text)) return true;
-  const hasWriteIntent = WRITE_INTENT.test(text);
-  const hasTopicOrForm = TOPIC_FORM_SIGNAL.test(text);
-  if (hasWriteIntent && hasTopicOrForm) return false;
-  if (hasWriteIntent && text.length >= 14) return false;
-  if (hasTopicOrForm && text.length >= 12) return false;
-  if (/^(帮我想|写点|想做|来点|整点|搞个|随便)/.test(text) && !hasTopicOrForm) return true;
-  return text.length < 14 && !hasTopicOrForm && !hasWriteIntent;
+export function isInsufficientBrief(_userMessage: string): boolean {
+  return false;
 }
 
 /** 纯问答（无写稿意图）时不触发自动 generate */
@@ -74,12 +51,7 @@ function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
   return false;
 }
 
-function isVagueOpenEnded(q: string): boolean {
-  const text = q.trim();
-  return /^(帮我想|写点|想做|来点|整点|搞个|随便)/.test(text) && !TOPIC_FORM_SIGNAL.test(text);
-}
-
-/** 当前输入是否足以触发自动成稿（与 routeStudioAction 同源） */
+/** 当前输入是否足以触发自动成稿（V2：open-ended 默认 generate） */
 export function wouldAutoGenerate(
   work: StudioWork,
   userMessage: string,
@@ -88,7 +60,10 @@ export function wouldAutoGenerate(
   return routeStudioAction(work, userMessage, turns).tool === "generate";
 }
 
-/** 主编排：决定走对话(ask) 还是子任务工具(generate/revise) */
+/**
+ * V2 客户端轻量路由：最终 tool 由后端 Planner 决定；
+ * 此处仅用于 ghost / legacy ask 路径。
+ */
 export function routeStudioAction(
   work: StudioWork,
   userMessage: string,
@@ -97,14 +72,21 @@ export function routeStudioAction(
   const q = userMessage.trim();
   const intent = inferStudioAgentIntent(q, work);
   const turnList = turns ?? work.agentTurns;
-  const composeTask = composeTaskSentenceFromTurns(turnList, q);
   const taskReady = hasTaskContext(work, turnList);
 
   if (work.status === "generating") {
+    if (/[?？]$/.test(q) || /^(什么|为何|怎么|为什么)/.test(q)) {
+      return {
+        tool: "ask",
+        intent,
+        note: "生成中 · 将回答你的问题",
+        askContext: { includeManuscript: true, includeMemory: true }
+      };
+    }
     return {
       tool: "ask",
       intent,
-      note: "生成进行中，仅回答进度与解读类问题",
+      note: "生成中 · 约束已排队",
       askContext: { includeManuscript: true, includeMemory: true }
     };
   }
@@ -112,12 +94,12 @@ export function routeStudioAction(
   if (
     (work.status === "ready" || work.status === "shipped") &&
     (work.versions?.length ?? 0) > 0 &&
-    /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改/.test(q)
+    /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化/.test(q)
   ) {
     return {
       tool: "revise",
       intent: "revise_coach",
-      note: "将按输入执行改版",
+      note: "Editing… · 将局部改版",
       askContext: { includeManuscript: true, includeMemory: true }
     };
   }
@@ -126,13 +108,12 @@ export function routeStudioAction(
     isDraftLikeStatus(work.status) &&
     (work.versions?.length ?? 0) === 0 &&
     !isAskOnlyMessage(q, intent) &&
-    !isVagueOpenEnded(q) &&
-    (taskReady || q.length >= 8 || WRITE_INTENT.test(q) || TOPIC_FORM_SIGNAL.test(q))
+    (taskReady || q.length >= 1 || WRITE_INTENT.test(q) || q.length >= 4)
   ) {
     return {
       tool: "generate",
       intent,
-      note: "开始生成稿件",
+      note: "Writing… · 开始写稿",
       askContext: { includeManuscript: false, includeMemory: false }
     };
   }
@@ -146,7 +127,7 @@ export function routeStudioAction(
     work.binding?.notebook?.trim() && (work.binding?.noteIds?.length ?? 0) > 0
   );
   const noteParts = [
-    "对话解释",
+    "Answering…",
     corpusBound ? "已绑资料" : "未绑资料",
     includeManuscript ? "含当前稿件" : "不含稿件全文"
   ];
@@ -164,16 +145,17 @@ export function appendStudioRun(
   tool: StudioTool,
   summary: string,
   status: StudioRunStatus = "running",
-  extra?: Partial<Pick<StudioRun, "jobId" | "finishedAt" | "anchorTurnId">>
+  extra?: Partial<Pick<StudioRun, "jobId" | "finishedAt" | "anchorTurnId">> & { runId?: string }
 ): { work: StudioWork; runId: string } {
-  const runId = crypto.randomUUID();
+  const { runId: presetRunId, ...runExtra } = extra ?? {};
+  const runId = presetRunId?.trim() || crypto.randomUUID();
   const run: StudioRun = {
     id: runId,
     tool,
     status,
     summary,
     startedAt: Date.now(),
-    ...extra
+    ...runExtra
   };
   const runs = [...(work.agentRuns ?? []), run].slice(-MAX_RUNS);
   return {
@@ -213,7 +195,7 @@ export function patchStudioGeneratePhase(
   phase: string
 ): StudioWork {
   const msg = phase.trim() || "处理中…";
-  const uiPhase = normalizeStudioRunPhase(msg);
+  const uiPhase = msg;
   const runs = runId
     ? (work.agentRuns ?? []).map((r) =>
         r.id === runId && r.status === "running" ? { ...r, summary: msg } : r

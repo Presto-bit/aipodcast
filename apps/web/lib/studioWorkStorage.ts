@@ -7,6 +7,8 @@ import {
 } from "./homeComposerChatStorage";
 import type { HomeComposerPrefs } from "./homeComposerTypes";
 import { readStudioWorksBlob, writeStudioWorksBlob } from "./studioWorkCloud";
+import { STUDIO_WORK_SCHEMA_VERSION } from "./studioWorkMigrate";
+import { STUDIO_DEFAULT_EDITOR_MODE } from "./studioEditorMode";
 import type { StudioWork, WorkStatus } from "./studioWorkTypes";
 import { isStudioWorkDraft } from "./studioWorkTask";
 
@@ -82,7 +84,11 @@ export function createStudioWork(params?: {
     title: brief.slice(0, 40) || "新任务",
     brief,
     status: "draft",
-    schemaVersion: 3,
+    schemaVersion: STUDIO_WORK_SCHEMA_VERSION,
+    editorMode: STUDIO_DEFAULT_EDITOR_MODE,
+    domain: "general",
+    format: "general",
+    plannerAssumptions: [],
     binding: inherited.binding,
     featureCore: params?.featureCore ?? inherited.featureCore,
     allowModelFallback: true,

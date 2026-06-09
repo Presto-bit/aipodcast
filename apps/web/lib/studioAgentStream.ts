@@ -7,7 +7,7 @@ import {
   type StudioAgentToolCall
 } from "./studioAgentToolSchema";
 import { parseStudioAgentStep, upsertAgentStep, type StudioAgentStep } from "./studioAgentSteps";
-import type { ManuscriptBlock, StudioAgentTurn, WorkStatus } from "./studioWorkTypes";
+import type { ManuscriptBlock, PendingPatch, StudioAgentTurn, WorkStatus } from "./studioWorkTypes";
 
 export type StudioAgentTool = "reply" | "compose" | "revise";
 
@@ -27,6 +27,8 @@ export type StudioAgentStreamInput = {
   stylePrompt?: string;
   agentMode?: StudioAgentMode;
   manuscriptBlocks?: ManuscriptBlock[];
+  activeVersionId?: string;
+  clientRunId?: string;
   forceCompose?: boolean;
   authHeaders: Record<string, string>;
   signal?: AbortSignal;
@@ -39,10 +41,12 @@ export type StudioAgentStreamInput = {
   onBlockDelta?: (blocks: ManuscriptBlock[], tool: StudioAgentTool) => void;
   onBodyDelta?: (body: string, tool: StudioAgentTool) => void;
   onStreamReset?: (tool: StudioAgentTool) => void;
+  onPatchProposed?: (patch: PendingPatch, tool: StudioAgentTool) => void;
 };
 
 export type StudioAgentStreamResult =
   | { status: "reply"; text: string }
+  | { status: "patch"; tool: "compose" | "revise"; pendingPatch: PendingPatch; blocks: ManuscriptBlock[] }
   | { status: "done"; tool: "compose" | "revise"; blocks: ManuscriptBlock[] }
   | { status: "error"; error: string }
   | { status: "aborted" };
@@ -78,6 +82,8 @@ export async function streamStudioAgent(
       stylePrompt: input.stylePrompt?.trim() || "",
       agentMode: input.agentMode ?? "write",
       manuscriptBlocks: (input.manuscriptBlocks ?? []).map((b) => ({ ...b })),
+      activeVersionId: input.activeVersionId?.trim() || "",
+      clientRunId: input.clientRunId?.trim() || "",
       forceCompose: Boolean(input.forceCompose),
       useRag: input.noteIds.length > 0,
       sourceType: input.noteIds.length > 0 ? "notes_rag" : "composer_prompt"
@@ -105,6 +111,7 @@ export async function streamStudioAgent(
   let replyNotified = false;
   let doneTool: "compose" | "revise" | null = null;
   let doneBlocks: ManuscriptBlock[] = [];
+  let pendingPatch: PendingPatch | null = null;
   let agentSteps: StudioAgentStep[] = [];
   let firstDeltaAt = 0;
   const startedAt = Date.now();
@@ -175,6 +182,29 @@ export async function streamStudioAgent(
             if (blocks.length) {
               input.onBlockDelta?.(blocks, tool === "revise" ? "revise" : "compose");
             }
+          } else if (type === "patch_proposed") {
+            const raw = ev.pendingPatch;
+            if (raw && typeof raw === "object") {
+              const p = raw as Record<string, unknown>;
+              pendingPatch = {
+                fromVersionId: String(p.fromVersionId || ""),
+                proposedBlocks: normalizeStreamManuscriptBlocks(p.proposedBlocks),
+                summary: String(p.summary || "改版提议"),
+                reason: String(p.reason || "").trim() || undefined,
+                qualityNote: String(p.qualityNote || "").trim() || undefined,
+                changedKeys: Array.isArray(p.changedKeys)
+                  ? p.changedKeys.map((k) => String(k))
+                  : undefined,
+                selections: Array.isArray(p.selections)
+                  ? p.selections.map((k) => String(k))
+                  : undefined,
+                sourceRunId: String(p.sourceRunId || "").trim() || undefined
+              };
+              input.onPatchProposed?.(
+                pendingPatch,
+                tool === "revise" ? "revise" : "compose"
+              );
+            }
           } else if (type === "done") {
             const dt = String(ev.tool || "");
             if (dt === "reply") {
@@ -209,9 +239,17 @@ export async function streamStudioAgent(
     return { status: "reply", text: replyText };
   }
 
-  if (doneTool && doneBlocks.length) {
-    if (!firstDeltaAt && Date.now() - startedAt > 8000) {
+  if (doneTool && (doneBlocks.length || pendingPatch)) {
+    if (!firstDeltaAt && !pendingPatch && Date.now() - startedAt > 8000) {
       return { status: "error", error: "生成超时：8 秒内未收到稿件更新" };
+    }
+    if (pendingPatch) {
+      return {
+        status: "patch",
+        tool: doneTool,
+        pendingPatch,
+        blocks: doneBlocks.length ? doneBlocks : pendingPatch.proposedBlocks
+      };
     }
     return { status: "done", tool: doneTool, blocks: doneBlocks };
   }

@@ -1,42 +1,208 @@
 "use client";
 
-import type { StudioComposePreview } from "../../lib/studioComposePreview";
-import { taskSentenceFromWork } from "../../lib/studioWorkTask";
+import { useMemo, useState } from "react";
+import { patchHunkLabel } from "../../lib/studioPatchHunkLabel";
+import { shouldShowQualityNote } from "../../lib/studioEditorMode";
+import { diffLines } from "../../lib/studioLineDiff";
+import { studioSemanticPhase } from "../../lib/studioPhaseLabel";
+import { STUDIO_HUNK_ADD, STUDIO_STATUS_PULSE, STUDIO_STATUS_TEXT } from "../../lib/studioVisualTokens";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
+  PendingPatch,
   StudioRun,
   StudioWork
 } from "../../lib/studioWorkTypes";
+import StudioErrorLine from "./StudioErrorLine";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 import StudioStreamingSurface from "./StudioStreamingSurface";
+import StudioTrustBar from "./StudioTrustBar";
 
-function ComposePreviewBanner({
-  preview,
-  onAdopt
+function PatchFooter({
+  patch,
+  work,
+  taskSummary,
+  busy,
+  selectedCount,
+  onApplyPartial,
+  onApplyAll,
+  onDiscard,
+  onCorpusClick
 }: {
-  preview: StudioComposePreview;
-  onAdopt?: () => void;
+  patch: PendingPatch;
+  work: StudioWork;
+  taskSummary?: string;
+  busy: boolean;
+  selectedCount: number;
+  onApplyPartial?: () => void;
+  onApplyAll?: () => void;
+  onDiscard?: () => void;
+  onCorpusClick?: () => void;
 }) {
-  const label =
-    preview.reason === "needs_rewrite"
-      ? "预览稿·未过质量校验（偏模板化）"
-      : "预览稿·待补充信息";
+  const showQuality = shouldShowQualityNote(work.editorMode) && patch.qualityNote;
+  const hunkCount = (patch.changedKeys ?? patch.selections ?? []).length;
   return (
-    <div className="mb-2 rounded-lg border border-amber-200/80 bg-amber-50/90 px-3 py-2 text-[12px] text-ink dark:border-amber-900/40 dark:bg-amber-950/30">
-      <p className="font-medium">{label}</p>
-      <p className="mt-0.5 text-muted">
-        内容已保留，可先采纳再在下方修改；或点对话区的「再试一次」让系统重写。
-      </p>
-      {onAdopt ? (
+    <div className="mb-2 space-y-2 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2">
+      <p className="text-[12px] font-medium text-ink">待确认 · {hunkCount} 处改动</p>
+      <StudioTrustBar work={work} taskSummary={taskSummary} onCorpusClick={onCorpusClick} />
+      {patch.reason ? <p className="text-[10px] text-muted">{patch.reason}</p> : null}
+      {showQuality ? (
+        <p className="text-[11px] text-amber-800 dark:text-amber-200">{patch.qualityNote}</p>
+      ) : null}
+      <div className="flex flex-wrap gap-2 text-[11px]">
+        {onApplyPartial ? (
+          <button
+            type="button"
+            disabled={busy || selectedCount <= 0}
+            className="rounded-md bg-brand px-2.5 py-1 text-brand-foreground disabled:opacity-50"
+            onClick={onApplyPartial}
+          >
+            采纳所选 ({selectedCount})
+          </button>
+        ) : null}
+        {onApplyAll ? (
+          <button
+            type="button"
+            disabled={busy}
+            className="rounded-md border border-line px-2.5 py-1 hover:bg-fill disabled:opacity-50"
+            onClick={onApplyAll}
+          >
+            全部采纳
+          </button>
+        ) : null}
+        {onDiscard ? (
+          <button
+            type="button"
+            disabled={busy}
+            className="rounded-md border border-line px-2.5 py-1 hover:bg-fill disabled:opacity-50"
+            onClick={onDiscard}
+          >
+            放弃
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function LineDiffReview({
+  before,
+  after,
+  selectedKeys,
+  onToggleKey
+}: {
+  before: string;
+  after: string;
+  selectedKeys: Set<string>;
+  onToggleKey: (key: string) => void;
+}) {
+  const hunks = useMemo(() => diffLines(before, after, "body"), [before, after]);
+  if (!hunks.length) return null;
+  return (
+    <div className="mb-2 space-y-1 text-[12px]">
+      {hunks.map((h) => (
+        <label
+          key={h.key}
+          className={[
+            "flex cursor-pointer gap-2",
+            selectedKeys.has(h.key) ? STUDIO_HUNK_ADD : "opacity-75"
+          ].join(" ")}
+        >
+          <input
+            type="checkbox"
+            checked={selectedKeys.has(h.key)}
+            onChange={() => onToggleKey(h.key)}
+            className="mt-1"
+          />
+          <span className="min-w-0 flex-1">
+            <span className="text-[10px] text-muted">{patchHunkLabel(h.key)}</span>
+            {h.before ? (
+              <span className="mt-0.5 block text-danger-ink line-through">{h.before}</span>
+            ) : null}
+            {h.after ? <span className="mt-0.5 block text-brand">{h.after}</span> : null}
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function MinimalPatchBlocks({
+  baseBlocks,
+  proposedBlocks,
+  changedKeys,
+  patchSelections,
+  onTogglePatchKey
+}: {
+  baseBlocks: ManuscriptBlock[];
+  proposedBlocks: ManuscriptBlock[];
+  changedKeys: Set<string>;
+  patchSelections: Set<string>;
+  onTogglePatchKey?: (key: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const baseBody = baseBlocks.find((b) => b.kind === "body")?.text ?? "";
+  const proposedBody = proposedBlocks.find((b) => b.kind === "body")?.text ?? "";
+  const bodyChanged = [...changedKeys].some((k) => k.startsWith("body:"));
+  const titleChanged = changedKeys.has("title:0");
+
+  if (expanded) {
+    return (
+      <>
         <button
           type="button"
-          className="mt-2 rounded-md bg-brand px-2.5 py-1 text-[11px] text-brand-foreground hover:opacity-90"
-          onClick={onAdopt}
+          className="mb-2 text-[10px] text-muted underline"
+          onClick={() => setExpanded(false)}
         >
-          采纳为稿件
+          收起全文
         </button>
+        <StudioOutputManuscript
+          version={{
+            id: "patch-full",
+            label: "提议",
+            createdAt: Date.now(),
+            blocks: proposedBlocks
+          }}
+        />
+      </>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {titleChanged ? (
+        <div className={STUDIO_HUNK_ADD}>
+          <p className="text-[10px] text-muted">{patchHunkLabel("title:0")}</p>
+          <p className="text-sm font-medium">{proposedBlocks.find((b) => b.kind === "title")?.text}</p>
+        </div>
       ) : null}
+      {bodyChanged && baseBody !== proposedBody ? (
+        <LineDiffReview
+          before={baseBody}
+          after={proposedBody}
+          selectedKeys={patchSelections}
+          onToggleKey={(k) => onTogglePatchKey?.(k)}
+        />
+      ) : null}
+      {[...changedKeys]
+        .filter((k) => k.startsWith("meta:"))
+        .map((key) => (
+          <label key={key} className={`flex items-center gap-2 ${STUDIO_HUNK_ADD} text-[11px]`}>
+            <input
+              type="checkbox"
+              checked={patchSelections.has(key)}
+              onChange={() => onTogglePatchKey?.(key)}
+            />
+            {patchHunkLabel(key)}
+          </label>
+        ))}
+      <button
+        type="button"
+        className="text-[10px] text-muted underline"
+        onClick={() => setExpanded(true)}
+      >
+        查看全文
+      </button>
     </div>
   );
 }
@@ -46,14 +212,18 @@ export default function StudioTimelineManuscriptCard({
   run,
   version,
   baseVersion,
-  isActiveVersion,
   busy,
-  onTitleIndexChange,
-  onBlocksChange: _onBlocksChange,
   streamingBlocks = null,
   streamingBodyText = null,
-  composePreview = null,
-  onAdoptComposePreview
+  pendingPatch = null,
+  patchSelections = new Set<string>(),
+  onApplyPatch,
+  onDiscardPatch,
+  onTogglePatchKey,
+  onRetryError,
+  onCorpusMenuOpen,
+  selectionHighlight,
+  onTextSelect
 }: {
   work: StudioWork;
   run: StudioRun;
@@ -61,28 +231,38 @@ export default function StudioTimelineManuscriptCard({
   baseVersion: ManuscriptVersion | null;
   isActiveVersion: boolean;
   busy: boolean;
-  onTitleIndexChange?: (index: number) => void;
-  onBlocksChange?: (blocks: ManuscriptBlock[]) => void;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
-  composePreview?: StudioComposePreview | null;
-  onAdoptComposePreview?: () => void;
+  pendingPatch?: PendingPatch | null;
+  patchSelections?: Set<string>;
+  onApplyPatch?: (partial: boolean) => void;
+  onDiscardPatch?: () => void;
+  onTogglePatchKey?: (key: string) => void;
+  onRetryError?: () => void;
+  onCorpusMenuOpen?: () => void;
+  selectionHighlight?: string;
+  onTextSelect?: (text: string) => void;
 }) {
   const isRunning = run.status === "running" && work.status === "generating";
-  const taskSentence = taskSentenceFromWork(work);
-  const failedPreview =
-    composePreview && composePreview.runId === run.id && composePreview.blocks.length > 0
-      ? composePreview
-      : null;
+  const taskSentence = work.brief || "";
 
   if (isRunning) {
-    const phase = work.runPhase || run.summary || (run.tool === "revise" ? "改版中…" : "写稿中…");
+    const phase = studioSemanticPhase({
+      runPhase: work.runPhase || run.summary,
+      tool: run.tool === "revise" ? "revise" : "generate",
+      streamingBlocks,
+      searchingCorpus: /搜|资料/.test(work.runPhase || "")
+    });
     const hasStream = Boolean(
       (streamingBlocks && streamingBlocks.length > 0) || streamingBodyText?.trim()
     );
-    if (hasStream) {
-      return (
-        <div className="mt-2">
+    return (
+      <div className="mt-2 space-y-2">
+        <p className={`flex items-center gap-2 ${STUDIO_STATUS_TEXT}`}>
+          <span className={STUDIO_STATUS_PULSE} aria-hidden />
+          {phase}
+        </p>
+        {hasStream ? (
           <StudioStreamingSurface
             variant="active"
             blocks={streamingBlocks}
@@ -94,37 +274,34 @@ export default function StudioTimelineManuscriptCard({
             corpusNotebook={work.binding.notebook}
             corpusNoteIds={work.binding.noteIds}
           />
-        </div>
-      );
-    }
-    return (
-      <div className="mt-2">
-        <StudioOutputManuscript
-          version={run.tool === "revise" ? baseVersion : null}
-          generatingPhase={phase}
-          corpusNotebook={work.binding.notebook}
-          corpusNoteIds={work.binding.noteIds}
-        />
+        ) : (
+          <div className="min-h-[3rem] rounded-md border border-dashed border-line/50" aria-hidden />
+        )}
       </div>
     );
   }
 
-  if (failedPreview) {
-    const previewVersion: ManuscriptVersion = {
-      id: `preview-${run.id}`,
-      label: "预览",
-      createdAt: Date.now(),
-      blocks: failedPreview.blocks,
-      sourceRunId: run.id
-    };
+  if (pendingPatch && pendingPatch.proposedBlocks.length > 0) {
+    const changed = new Set(pendingPatch.changedKeys ?? pendingPatch.selections ?? []);
     return (
       <div className="mt-2">
-        <ComposePreviewBanner preview={failedPreview} onAdopt={onAdoptComposePreview} />
-        <StudioOutputManuscript
-          version={previewVersion}
-          onTitleIndexChange={onTitleIndexChange}
-          corpusNotebook={work.binding.notebook}
-          corpusNoteIds={work.binding.noteIds}
+        <PatchFooter
+          patch={pendingPatch}
+          work={work}
+          taskSummary={taskSentence}
+          busy={busy}
+          selectedCount={patchSelections.size}
+          onApplyPartial={onApplyPatch ? () => onApplyPatch(true) : undefined}
+          onApplyAll={onApplyPatch ? () => onApplyPatch(false) : undefined}
+          onDiscard={onDiscardPatch}
+          onCorpusClick={onCorpusMenuOpen}
+        />
+        <MinimalPatchBlocks
+          baseBlocks={baseVersion?.blocks ?? []}
+          proposedBlocks={pendingPatch.proposedBlocks}
+          changedKeys={changed}
+          patchSelections={patchSelections}
+          onTogglePatchKey={onTogglePatchKey}
         />
       </div>
     );
@@ -135,16 +312,21 @@ export default function StudioTimelineManuscriptCard({
       <div className="mt-2">
         <StudioOutputManuscript
           version={version}
-          onTitleIndexChange={isActiveVersion ? onTitleIndexChange : undefined}
           corpusNotebook={work.binding.notebook}
           corpusNoteIds={work.binding.noteIds}
+          selectionHighlight={selectionHighlight}
+          onTextSelect={onTextSelect}
         />
       </div>
     );
   }
 
   if (run.status === "error" && work.error) {
-    return <p className="mt-2 text-[13px] text-danger-ink">{work.error}</p>;
+    return (
+      <div className="mt-2">
+        <StudioErrorLine message={work.error} onRetry={onRetryError} />
+      </div>
+    );
   }
 
   return null;

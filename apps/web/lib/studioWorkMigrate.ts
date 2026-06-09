@@ -1,7 +1,8 @@
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "./studioTimeline";
 import type { StudioWork, WorkStatus } from "./studioWorkTypes";
 
-export const STUDIO_WORK_SCHEMA_VERSION = 4;
+/** v6：Studio V2 — 零配置 domain、探索模式、去 Tab */
+export const STUDIO_WORK_SCHEMA_VERSION = 6;
 
 /** v3 草稿态：含已废弃的 briefing / planned */
 export function isDraftLikeStatus(status: WorkStatus): boolean {
@@ -20,18 +21,12 @@ function backfillTimelineAnchors(work: StudioWork): StudioWork {
     }
   }
 
-  const runs = (work.agentRuns ?? []).map((run, i) => {
+  const runs = (work.agentRuns ?? []).map((run) => {
     if (run.anchorTurnId) return run;
     if (run.tool !== "generate" && run.tool !== "revise") return run;
     const jobIndex = jobRuns.findIndex((r) => r.id === run.id);
     const anchorTurnId = jobIndex >= 0 ? ackIds[jobIndex] : undefined;
     return anchorTurnId ? { ...run, anchorTurnId } : run;
-  });
-
-  const versions = work.versions.map((v, i) => {
-    if (v.sourceRunId) return v;
-    const run = jobRuns[i];
-    return run ? { ...v, sourceRunId: run.id } : v;
   });
 
   let pendingPatch = work.pendingPatch;
@@ -42,10 +37,45 @@ function backfillTimelineAnchors(work: StudioWork): StudioWork {
     }
   }
 
-  return { ...work, agentRuns: runs, versions, pendingPatch };
+  return { ...work, agentRuns: runs, pendingPatch };
 }
 
-/** 读盘时迁移 schema（v3 状态机 + v4 时间线锚点回填） */
+function migrateToV6(work: StudioWork): StudioWork {
+  return {
+    ...work,
+    schemaVersion: STUDIO_WORK_SCHEMA_VERSION,
+    editorMode: work.editorMode ?? "explore",
+    domain: work.domain ?? (work.channel === "xhs" ? "social" : "general"),
+    format: work.format ?? (work.channel === "xhs" ? "short_post" : "general"),
+    plannerAssumptions: work.plannerAssumptions ?? [],
+    undoSnapshot: undefined
+  };
+}
+
+function migrateToV5(work: StudioWork): StudioWork {
+  let status = work.status;
+  if (status === "generating") status = "draft";
+  if (status === "briefing" || status === "planned") status = "draft";
+
+  return {
+    ...work,
+    schemaVersion: 5,
+    status,
+    versions: [],
+    activeVersionId: "",
+    pendingPatch: undefined,
+    followUps: [],
+    agentTrace: [],
+    plan: undefined,
+    postDoneFollowUpPending: undefined,
+    postDoneFollowUpDone: undefined,
+    postDoneCoach: undefined,
+    postDoneCoachStreaming: undefined,
+    runPhase: undefined
+  };
+}
+
+/** 读盘时迁移 schema */
 export function migrateStudioWorkToV3(work: StudioWork): StudioWork {
   let next = work;
 
@@ -66,8 +96,16 @@ export function migrateStudioWorkToV3(work: StudioWork): StudioWork {
     };
   }
 
+  if ((next.schemaVersion ?? 0) < 4) {
+    next = backfillTimelineAnchors({ ...next, schemaVersion: 4 });
+  }
+
+  if ((next.schemaVersion ?? 0) < 5) {
+    next = migrateToV5(next);
+  }
+
   if ((next.schemaVersion ?? 0) < STUDIO_WORK_SCHEMA_VERSION) {
-    next = backfillTimelineAnchors({ ...next, schemaVersion: STUDIO_WORK_SCHEMA_VERSION });
+    next = migrateToV6(next);
   }
 
   return next;

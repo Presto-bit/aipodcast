@@ -1,10 +1,7 @@
+import { describe, expect, it } from "vitest";
 import { mergeBriefChipReply } from "../studioBriefMerge";
 import { routeStudioAction } from "../studioOrchestrator";
 import type { StudioWork } from "../studioWorkTypes";
-
-function assert(cond: boolean, msg: string) {
-  if (!cond) throw new Error(msg);
-}
 
 function baseWork(overrides: Partial<StudioWork> = {}): StudioWork {
   return {
@@ -28,73 +25,85 @@ function baseWork(overrides: Partial<StudioWork> = {}): StudioWork {
   };
 }
 
-const turns = [
-  { id: "u1", role: "user" as const, content: "写一篇产品新人清单体小红书", createdAt: 1 }
-];
+describe("studioOrchestrator", () => {
+  const turns = [
+    { id: "u1", role: "user" as const, content: "写一篇产品新人清单体小红书", createdAt: 1 }
+  ];
 
-const promoMsg =
-  "我想写一篇小红书推广文案，推广杯子，给职场人士提醒喝水";
-const promoTurns = [{ id: "u1", role: "user" as const, content: promoMsg, createdAt: 1 }];
-const autoGen = routeStudioAction(
-  baseWork({ status: "draft", agentTurns: promoTurns }),
-  promoMsg,
-  promoTurns
-);
-assert(autoGen.tool === "generate", `promo brief should generate, got ${autoGen.tool}`);
+  it("routes promo brief to generate", () => {
+    const promoMsg =
+      "我想写一篇小红书推广文案，推广杯子，给职场人士提醒喝水";
+    const promoTurns = [{ id: "u1", role: "user" as const, content: promoMsg, createdAt: 1 }];
+    const autoGen = routeStudioAction(
+      baseWork({ status: "draft", agentTurns: promoTurns }),
+      promoMsg,
+      promoTurns
+    );
+    expect(autoGen.tool).toBe("generate");
+  });
 
-const cupOnlyMsg = "我想写一篇小红书推广水杯";
-const cupTurns = [{ id: "u2", role: "user" as const, content: cupOnlyMsg, createdAt: 1 }];
-const cupClarify = routeStudioAction(
-  baseWork({ status: "draft", agentTurns: cupTurns }),
-  cupOnlyMsg,
-  cupTurns
-);
-assert(cupClarify.tool === "generate", `cup-only promo should compose open-ended, got ${cupClarify.tool}`);
+  it("routes cup-only promo to generate (V2 no gate)", () => {
+    const cupOnlyMsg = "我想写一篇小红书推广水杯";
+    const cupTurns = [{ id: "u2", role: "user" as const, content: cupOnlyMsg, createdAt: 1 }];
+    const cupClarify = routeStudioAction(
+      baseWork({ status: "draft", agentTurns: cupTurns }),
+      cupOnlyMsg,
+      cupTurns
+    );
+    expect(cupClarify.tool).toBe("generate");
+  });
 
-const askOnly = routeStudioAction(
-  baseWork({ status: "draft", agentTurns: turns }),
-  "开头钩子怎么写更抓人？",
-  turns
-);
-assert(askOnly.tool === "ask", `question-only should ask, got ${askOnly.tool}`);
+  it("routes question-only to ask", () => {
+    const askOnly = routeStudioAction(
+      baseWork({ status: "draft", agentTurns: turns }),
+      "开头钩子怎么写更抓人？",
+      turns
+    );
+    expect(askOnly.tool).toBe("ask");
+  });
 
-const vague = routeStudioAction(
-  baseWork({ status: "draft", agentTurns: [{ id: "u1", role: "user", content: "帮我想想", createdAt: 1 }] }),
-  "帮我想想",
-  [{ id: "u1", role: "user" as const, content: "帮我想想", createdAt: 1 }]
-);
-assert(vague.tool === "ask", `vague brief should ask, got ${vague.tool}`);
+  it("routes vague brief to generate (V2 zero-config)", () => {
+    const vague = routeStudioAction(
+      baseWork({ status: "draft", agentTurns: [{ id: "u1", role: "user", content: "帮我想想", createdAt: 1 }] }),
+      "帮我想想",
+      [{ id: "u1", role: "user" as const, content: "帮我想想", createdAt: 1 }]
+    );
+    expect(vague.tool).toBe("generate");
+  });
 
-const revise = routeStudioAction(
-  baseWork({
-    status: "ready",
-    versions: [
-      {
-        id: "v1",
-        label: "v1",
-        createdAt: 1,
-        blocks: [{ id: "b1", kind: "body", text: "正文" }]
-      }
-    ],
-    activeVersionId: "v1"
-  }),
-  "把标题改得更犀利一点"
-);
-assert(revise.tool === "revise", `ready+revise intent should revise, got ${revise.tool}`);
+  it("routes ready revise intent to revise", () => {
+    const revise = routeStudioAction(
+      baseWork({
+        status: "ready",
+        versions: [
+          {
+            id: "v1",
+            label: "v1",
+            createdAt: 1,
+            blocks: [{ id: "b1", kind: "body", text: "正文" }]
+          }
+        ],
+        activeVersionId: "v1"
+      }),
+      "把标题改得更犀利一点"
+    );
+    expect(revise.tool).toBe("revise");
+  });
 
-const listTurns = [
-  { id: "u1", role: "user" as const, content: "我想写一篇清单体内容", createdAt: 1 }
-];
-const mergedBrief = mergeBriefChipReply(listTurns[0]!.content, "受众：产品新人");
-const mergedTurns = [
-  ...listTurns,
-  { id: "u2", role: "user" as const, content: mergedBrief, createdAt: 2 }
-];
-const afterChip = routeStudioAction(
-  baseWork({ status: "draft", agentTurns: mergedTurns }),
-  mergedBrief,
-  mergedTurns
-);
-assert(afterChip.tool === "generate", `merged chip brief should generate, got ${afterChip.tool}`);
-
-console.log("studioOrchestrator.test.ts: ok");
+  it("routes merged chip brief to generate", () => {
+    const listTurns = [
+      { id: "u1", role: "user" as const, content: "我想写一篇清单体内容", createdAt: 1 }
+    ];
+    const mergedBrief = mergeBriefChipReply(listTurns[0]!.content, "受众：产品新人");
+    const mergedTurns = [
+      ...listTurns,
+      { id: "u2", role: "user" as const, content: mergedBrief, createdAt: 2 }
+    ];
+    const afterChip = routeStudioAction(
+      baseWork({ status: "draft", agentTurns: mergedTurns }),
+      mergedBrief,
+      mergedTurns
+    );
+    expect(afterChip.tool).toBe("generate");
+  });
+});

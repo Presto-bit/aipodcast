@@ -9,8 +9,8 @@ import {
   deleteStudioWork,
   listStudioWorks
 } from "../../lib/studioWorkStorage";
+import { formatWorkCardMeta } from "../../lib/studioWorkCard";
 import type { StudioWork } from "../../lib/studioWorkTypes";
-import { workStatusLabel } from "../../lib/studioWorkTypes";
 
 export default function StudioSessionRail({
   activeWorkId,
@@ -114,11 +114,8 @@ export default function StudioSessionRail({
                   active ? "text-brand" : "text-ink"
                 ].join(" ")}
               >
-                <p className="truncate font-medium">{w.title || "新任务"}</p>
-                <p className="mt-0.5 truncate text-[10px] text-muted">
-                  {workStatusLabel(w.status)}
-                  {w.binding.noteIds.length ? ` · ${w.binding.noteIds.length}篇` : ""}
-                </p>
+                <p className="truncate font-medium">{w.title || "未命名"}</p>
+                <p className="mt-0.5 truncate text-[10px] text-muted">{formatWorkCardMeta(w)}</p>
               </Link>
               <button
                 type="button"

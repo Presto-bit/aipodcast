@@ -3,6 +3,8 @@
 import type { FeatureCore } from "./homeComposerExpertTypes";
 import type { NotesAskSessionState } from "./notesAskMemoryTypes";
 import type { NotesAskSource } from "./notesAskCitation";
+import type { StudioDomain, StudioFormat } from "./studioDomainProfile";
+import type { StudioEditorMode } from "./studioEditorMode";
 
 export type StudioAgentIntent =
   | "brief_clarify"
@@ -82,8 +84,36 @@ export type PendingPatch = {
   fromVersionId: string;
   proposedBlocks: ManuscriptBlock[];
   summary: string;
+  /** 决策依据（Cursor 式 trace） */
+  reason?: string;
+  qualityNote?: string;
+  changedKeys?: string[];
+  selections?: string[];
   /** 纵向时间线：触发此次改版的 Run */
   sourceRunId?: string;
+};
+
+export type StudioUndoSnapshot = {
+  versions: ManuscriptVersion[];
+  activeVersionId: string;
+  pendingPatch?: PendingPatch;
+  savedAt: number;
+};
+
+export type FollowUpItem = {
+  id: string;
+  text: string;
+  createdAt: number;
+};
+
+export type AgentTraceStep = {
+  id: string;
+  tool: string;
+  label: string;
+  status: "running" | "done" | "error";
+  detail?: string;
+  startedAt: number;
+  finishedAt?: number;
 };
 
 export type StudioRun = {
@@ -127,8 +157,24 @@ export type StudioWork = {
   workRules?: string;
   /** 子任务轨迹（plan / generate / revise） */
   agentRuns?: StudioRun[];
+  /** 写稿中排队追加的指令 */
+  followUps?: FollowUpItem[];
+  /** 当前/最近 run 的 agent trace（可折叠） */
+  agentTrace?: AgentTraceStep[];
   /** 最近一次编排说明 */
   lastOrchestratorNote?: string;
+  /** V2：推断/纠正的写作领域 */
+  domain?: StudioDomain;
+  format?: StudioFormat;
+  /** V2：Planner assumptions（trace 可见） */
+  plannerAssumptions?: string[];
+  lastPlannerReason?: string;
+  /** V2：探索（自动 Apply）| 审阅（需确认） */
+  editorMode?: StudioEditorMode;
+  /** V2：Apply 后一层 Undo */
+  undoSnapshot?: StudioUndoSnapshot;
+  /** V2：最近一次失败码（短 copy） */
+  lastFailureCode?: string;
   /** @deprecated v3 已移除，读盘 migrate 会清空 */
   postDoneFollowUpPending?: boolean;
   /** @deprecated v3 已移除 */

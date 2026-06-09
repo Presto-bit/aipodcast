@@ -5,6 +5,8 @@ export type StudioAgentStep = {
   label: string;
   status: StudioAgentStepStatus;
   tool?: string;
+  /** 决策依据 / tool 详情（Cursor 式 trace） */
+  detail?: string;
 };
 
 export function upsertAgentStep(steps: StudioAgentStep[], next: StudioAgentStep): StudioAgentStep[] {
@@ -26,5 +28,12 @@ export function parseStudioAgentStep(ev: Record<string, unknown>): StudioAgentSt
     return null;
   }
   const tool = String(ev.tool || "").trim();
-  return { id, label, status, tool: tool || undefined };
+  const detail = String(ev.detail || ev.reason || "").trim();
+  return {
+    id,
+    label,
+    status,
+    tool: tool || undefined,
+    detail: detail || undefined
+  };
 }
