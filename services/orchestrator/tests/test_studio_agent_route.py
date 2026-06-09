@@ -56,6 +56,19 @@ def test_ready_edit_routes_revise():
     assert tool == "revise"
 
 
+def test_ready_without_manuscript_still_compose_for_promo_brief():
+    msg = "编写小红书推广文案，给职场女性推广杯子，可以提醒定时喝水，统计水量"
+    turns = [{"role": "user", "content": msg}]
+    task = build_compose_task_sentence(turns, current_message=msg)
+    tool = route_studio_agent(
+        message=msg,
+        status="ready",
+        version_count=0,
+        task_sentence=task,
+    )
+    assert tool == "compose"
+
+
 def test_ready_explicit_ask_routes_reply():
     tool = route_studio_agent(
         message="这段为什么这样写？",

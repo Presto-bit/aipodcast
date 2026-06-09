@@ -1,4 +1,5 @@
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "./studioTimeline";
+import { normalizeStudioWorkLifecycle } from "./studioLifecycle";
 import type { StudioWork, WorkStatus } from "./studioWorkTypes";
 
 /** v6：Studio V2 — 零配置 domain、探索模式、去 Tab */
@@ -108,5 +109,5 @@ export function migrateStudioWorkToV3(work: StudioWork): StudioWork {
     next = migrateToV6(next);
   }
 
-  return next;
+  return normalizeStudioWorkLifecycle(next);
 }

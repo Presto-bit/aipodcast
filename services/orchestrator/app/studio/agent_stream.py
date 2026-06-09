@@ -30,6 +30,7 @@ from .agent_route import (
     is_insufficient_brief,
     is_manuscript_edit,
     reply_for_blocking,
+    should_compose_without_manuscript,
 )
 from .agent_tool_router import StudioToolDecision
 from .agent_loop import manuscript_plain_from_payload, run_agent_tool_loop
@@ -187,8 +188,23 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             reason=decision.reason or "护栏：有稿改稿",
         )
 
+    compose_brief = build_compose_task_sentence(turns, current_message=message)
+    if tool == "reply" and should_compose_without_manuscript(
+        message=message,
+        task_sentence=compose_brief,
+        version_count=version_count,
+        status=status,
+    ):
+        tool = "compose"
+        decision = StudioToolDecision(
+            tool="compose",
+            brief=compose_brief or message,
+            reply_text="",
+            source="mixed",
+            reason="护栏：无成稿时写成稿",
+        )
+
     if tool == "reply":
-        compose_brief = build_compose_task_sentence(turns, current_message=message)
         if decision.reply_text:
             text = decision.reply_text
         elif is_insufficient_brief(compose_brief) and version_count == 0:
@@ -347,7 +363,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     if not template_retry_done and attempt < 2:
                         template_retry_done = True
                         last_errors = [
-                            "成稿过于模板化，请换开头钩子、段落结构与用词重写，三方向须明显不同"
+                            "成稿过于模板化，请换开头钩子、段落结构与用词重写"
                         ]
                         event_q.put(("stream_reset", None))
                         continue

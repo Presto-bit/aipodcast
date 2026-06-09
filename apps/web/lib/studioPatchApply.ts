@@ -108,5 +108,9 @@ export function applyPendingPatch(
 }
 
 export function discardPendingPatch(work: StudioWork): StudioWork {
-  return { ...work, pendingPatch: undefined };
+  const next = { ...work, pendingPatch: undefined };
+  if (next.versions.length === 0 && (next.status === "ready" || next.status === "shipped")) {
+    return { ...next, status: "draft" };
+  }
+  return next;
 }

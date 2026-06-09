@@ -33,7 +33,9 @@ EDIT_SIGNAL = re.compile(
     r"改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化|"
     r"写\s*\d+\s*字|约?\s*\d+\s*字|到\s*\d+\s*字|字数|篇幅|扩写|写长|写短|【块级改版】|块级改版"
 )
-WRITE_INTENT = re.compile(r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写")
+WRITE_INTENT = re.compile(
+    r"生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写|编写|推广文案|小红书"
+)
 ASK_SIGNAL = re.compile(r"[?？]$|怎么(写|改|搭)|如何(写|改)|钩子|开头|结构|^(帮我)?(分析|解读|看看|讲讲)")
 COMPOSE_CHIP_SIGNAL = re.compile(
     r"^(按已有信息|再试一次|直接开始写成稿|(受众|卖点|场景|主题)[：:])"
@@ -117,36 +119,39 @@ def route_studio_agent(
     status: str,
     version_count: int,
     task_sentence: str,
+    agent_mode: str = "write",
+    force_compose: bool = False,
+    has_pending_patch: bool = False,
 ) -> StudioTool:
-    q = message.strip()
-    has_ms = version_count > 0
-    if status == "generating":
-        if is_manuscript_read_intent(q) or is_explicit_ask_while_ready(q):
-            return "reply"
-        if has_ms and is_manuscript_edit(q, has_manuscript=True):
-            return "revise"
-        if WRITE_INTENT.search(q) or TOPIC_FORM_SIGNAL.search(q):
-            return "compose"
-        return "reply"
-    if has_ms and status in ("ready", "shipped"):
-        if is_explicit_ask_while_ready(q):
-            return "reply"
-        if is_manuscript_edit(q, has_manuscript=True):
-            return "revise"
-    draft_like = status in ("draft", "briefing", "planned")
-    if draft_like and version_count == 0:
-        compose_brief = task_sentence.strip() or q
-        if should_force_compose(
-            message=q,
-            task_sentence=compose_brief,
-            version_count=version_count,
-        ):
-            return "compose"
-        if is_ask_only(q, has_manuscript=False):
-            return "reply"
-        if compose_brief or WRITE_INTENT.search(q) or TOPIC_FORM_SIGNAL.search(q) or len(q) >= 1:
-            return "compose"
-    return "reply"
+    from .agent_action import action_to_legacy_tool, resolve_studio_action
+
+    action = resolve_studio_action(
+        message=message,
+        status=status,
+        version_count=version_count,
+        task_sentence=task_sentence,
+        agent_mode=agent_mode,
+        force_compose=force_compose,
+        has_pending_patch=has_pending_patch,
+    )
+    return action_to_legacy_tool(action)
+
+
+def should_compose_without_manuscript(
+    *,
+    message: str,
+    task_sentence: str,
+    version_count: int,
+    status: str = "draft",
+) -> bool:
+    from .agent_action import should_create_without_manuscript
+
+    return should_create_without_manuscript(
+        message=message,
+        task_sentence=task_sentence,
+        version_count=version_count,
+        status=status,
+    )
 
 
 def reply_for_blocking(_message: str) -> str:

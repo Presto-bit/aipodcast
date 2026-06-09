@@ -98,11 +98,12 @@ describe("studio V2", () => {
     expect(looksLikeReviseRequest("总结一下这篇要点", true)).toBe(false);
   });
 
-  it("explore mode auto applies", () => {
+  it("explore mode auto applies including revise", () => {
     expect(shouldAutoApplyPatch("explore")).toBe(true);
+    expect(shouldAutoApplyPatch("explore", { forceReview: true })).toBe(true);
     expect(shouldAutoApplyPatch("review")).toBe(false);
     expect(shouldAutoApplyPatch("review", { isFirstDraft: true })).toBe(true);
-    expect(shouldAutoApplyPatch("explore", { forceReview: true })).toBe(false);
+    expect(shouldAutoApplyPatch("review", { forceReview: true })).toBe(false);
   });
 
   it("default editor mode is review", () => {

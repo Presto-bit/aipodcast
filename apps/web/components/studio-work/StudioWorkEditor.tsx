@@ -16,7 +16,8 @@ import { getComposerPrefsFeatureCore, getStudioWork, upsertStudioWork } from "..
 import {
   appendStudioRun,
   finishStudioRun,
-  patchStudioGeneratePhase
+  patchStudioGeneratePhase,
+  wouldAutoGenerate
 } from "../../lib/studioOrchestrator";
 import {
   appendComposeClarifyTurn,
@@ -540,6 +541,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
       try {
         let result = await runOneStream(outgoingText, effectiveTaskSentence);
+        const liveAfterStream = getStudioWork(workId);
+        if (
+          result.status === "reply" &&
+          liveAfterStream &&
+          !liveAfterStream.versions.length &&
+          wouldAutoGenerate(liveAfterStream, params.userText, params.prefixTurns)
+        ) {
+          result = await runOneStream(outgoingText, composeTask);
+        }
         if (result.status === "reply" && baseVersion) {
           const liveForRetry = getStudioWork(workId);
           if (liveForRetry && shouldSuppressStudioCanvasReply(liveForRetry, params.userText)) {

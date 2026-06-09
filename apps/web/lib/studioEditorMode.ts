@@ -16,8 +16,8 @@ export function shouldAutoApplyPatch(
   mode: StudioEditorMode | undefined,
   options?: { forceReview?: boolean; isFirstDraft?: boolean }
 ): boolean {
-  if (options?.forceReview) return false;
   if (isExploreMode(mode)) return true;
+  if (options?.forceReview) return false;
   if (options?.isFirstDraft) return true;
   return false;
 }

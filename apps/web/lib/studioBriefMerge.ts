@@ -1,7 +1,8 @@
 import { normalizeStudioComposeBrief } from "./studioComposeBrief";
 
 const FIELD_CHIP_RE = /^(受众|卖点|场景|主题)[：:]\s*(.+)$/;
-const WRITE_INTENT_RE = /生成|成稿|创作一篇|写一篇|开始写|帮我写|我想创作|我想写/;
+const WRITE_INTENT_RE =
+  /生成|成稿|创作一篇|写一篇|开始写|帮我写|我想创作|我想写|编写|推广文案|小红书/;
 
 /**
  * Cursor 式 chip：在已有 brief 上追加字段，而非覆盖整段对话。

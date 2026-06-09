@@ -1,4 +1,5 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
+import { actionToLegacyRunTool, resolveStudioAgentAction } from "./studioAgentAction";
 import {
   isExplicitAskWhileReady,
   looksLikeManuscriptEditRequest,
@@ -35,7 +36,7 @@ export type StudioRouteDecision = {
 const MAX_RUNS = 12;
 
 const WRITE_INTENT =
-  /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写/;
+  /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写|编写|推广文案|小红书/;
 
 /** V2：门禁全部删除 — 仅用于 UI hint，不阻断路由 */
 export function needsPromoBriefClarification(_userMessage: string): boolean {
@@ -118,17 +119,26 @@ export function routeStudioAction(
     }
   }
 
-  if (
-    isDraftLikeStatus(work.status) &&
-    (work.versions?.length ?? 0) === 0 &&
-    !isAskOnlyMessage(q, intent) &&
-    (taskReady || q.length >= 1 || WRITE_INTENT.test(q) || q.length >= 4)
-  ) {
+  const action = resolveStudioAgentAction({
+    work,
+    message: q,
+    turns: turnList,
+    agentMode: "write"
+  });
+  if (action === "create") {
     return {
-      tool: "generate",
+      tool: actionToLegacyRunTool(action),
       intent,
       note: "Writing… · 开始写稿",
       askContext: { includeManuscript: false, includeMemory: false }
+    };
+  }
+  if (action === "edit") {
+    return {
+      tool: actionToLegacyRunTool(action),
+      intent: "revise_coach",
+      note: "Editing… · 修改当前稿件",
+      askContext: { includeManuscript: true, includeMemory: true }
     };
   }
 

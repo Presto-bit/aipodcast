@@ -22,7 +22,8 @@ export function taskSentenceFromWork(work: StudioWork): string {
 export function isAskOnlyUserTurn(text: string): boolean {
   const q = text.trim();
   if (!q) return false;
-  const hasWriteIntent = /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写/.test(q);
+  const hasWriteIntent =
+    /生成|成稿|创作一篇|写一篇|开始写|帮我写|帮我做一篇|我想创作|我想写|编写|推广文案|小红书/.test(q);
   if (hasWriteIntent) return false;
   if (/[?？]$/.test(q)) return true;
   if (/怎么(写|改|搭)|如何(写|改)|钩子|开头|结构/.test(q)) return true;
