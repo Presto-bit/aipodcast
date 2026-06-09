@@ -1254,8 +1254,8 @@ def _wordchain_preview_object_key(owner_seg: str, project_id: str) -> str:
 
 @router.post("/clip/projects/{project_id}/audio/wordchain-preview")
 def clip_post_wordchain_preview(project_id: str, request: Request):
-    """生成与终版导出相同的词链 MP3（含 export_pause_policy），写入对象存储供波形试听；不替换主素材。"""
-    from ..clip_export import export_clip_mp3_from_bytes
+    """生成与终版导出相同的短语拼接 MP3（含 export_pause_policy），写入对象存储供波形试听；不替换主素材。"""
+    from ..clip_export import export_clip_mp3_from_bytes, silence_regions_from_analysis
 
     uid = _owner_uuid(request)
     row = get_clip_project(project_id=project_id, user_uuid=uid)
@@ -1304,6 +1304,7 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
     pk = _wordchain_preview_object_key(owner_seg, project_id)
     tl_doc = row.get("timeline_json")
     silence_cuts = _silence_cut_ranges_from_timeline_doc(tl_doc)
+    silence_regions = silence_regions_from_analysis(row.get("silence_analysis"))
     try:
         if segs_wc:
             raw = concat_ordered_source_segments_to_bytes(segs_wc)
@@ -1320,6 +1321,7 @@ def clip_post_wordchain_preview(project_id: str, request: Request):
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
             silence_cut_ranges=silence_cuts,
+            silence_regions=silence_regions,
             duck_ranges=None,
             skip_loudnorm=True,
             final_lame_q=lame_q,

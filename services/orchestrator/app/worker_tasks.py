@@ -1959,7 +1959,7 @@ def run_clip_transcription_job(
 
 
 def run_clip_export_job(project_id: str) -> dict[str, Any]:
-    from .clip_export import export_clip_mp3_from_bytes
+    from .clip_export import export_clip_mp3_from_bytes, silence_regions_from_analysis
     from .clip_export_options import lame_q_from_export_options
     from .clip_segment_transcript import parse_audio_source_segments
     from .clip_store import (
@@ -2054,6 +2054,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
                     except (TypeError, ValueError):
                         cap = 0
                     silence_cuts.append((s, e, max(0, min(10_000, cap))))
+    silence_regions = silence_regions_from_analysis(row.get("silence_analysis"))
     try:
         if source_segs:
             b = concat_ordered_source_segments_to_bytes(source_segs)
@@ -2071,6 +2072,7 @@ def run_clip_export_job(project_id: str) -> dict[str, Any]:
             long_pause_ms=long_pause_ms,
             long_pause_cap_ms=long_pause_cap_ms,
             silence_cut_ranges=silence_cuts,
+            silence_regions=silence_regions,
             duck_ranges=None,
             skip_loudnorm=True,
             final_lame_q=lame_q,

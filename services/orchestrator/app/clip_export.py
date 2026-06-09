@@ -36,6 +36,203 @@ def _merge_segments(words: list[dict[str, Any]], gap_ms: int) -> list[tuple[int,
     return segs
 
 
+_SENTENCE_END_CHARS = frozenset("。！？；.!?…")
+
+
+def _word_text(w: dict[str, Any]) -> str:
+    return str(w.get("text") or w.get("word") or "").strip()
+
+
+def _text_ends_sentence(text: str) -> bool:
+    t = text.strip()
+    return bool(t) and t[-1] in _SENTENCE_END_CHARS
+
+
+def _gap_overlaps_silence(gap_start_ms: int, gap_end_ms: int, silence_regions: list[tuple[int, int]]) -> bool:
+    if gap_end_ms <= gap_start_ms:
+        return False
+    mid = (gap_start_ms + gap_end_ms) // 2
+    for rs, re in silence_regions:
+        if rs <= mid <= re:
+            return True
+        if not (re <= gap_start_ms or rs >= gap_end_ms):
+            return True
+    return False
+
+
+def _merge_phrase_spans(
+    kept: list[dict[str, Any]],
+    *,
+    merge_gap_ms: int,
+    split_gap_ms: int,
+    punct_gap_ms: int,
+    silence_regions: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """
+    编辑粒度为词，拼接粒度为短语/句：相邻保留词合并为 span，在长间隔、静音区、句末标点处切开。
+    """
+    if not kept:
+        return []
+    merge_gap_ms = max(0, int(merge_gap_ms))
+    split_gap_ms = max(merge_gap_ms + 1, int(split_gap_ms))
+    punct_gap_ms = max(0, int(punct_gap_ms))
+    spans: list[tuple[int, int]] = []
+    cur_s: int | None = None
+    cur_e: int | None = None
+    prev_word: dict[str, Any] | None = None
+
+    for w in kept:
+        try:
+            s = int(w.get("s_ms", 0))
+            e = int(w.get("e_ms", s))
+        except (TypeError, ValueError):
+            continue
+        if e <= s:
+            continue
+        if cur_s is None:
+            cur_s, cur_e, prev_word = s, e, w
+            continue
+        gap = max(0, s - int(cur_e))
+        split = False
+        if gap >= split_gap_ms:
+            split = True
+        elif silence_regions and _gap_overlaps_silence(int(cur_e), s, silence_regions):
+            split = True
+        elif prev_word and _text_ends_sentence(_word_text(prev_word)) and gap >= punct_gap_ms:
+            split = True
+        elif gap > merge_gap_ms:
+            split = True
+        if split:
+            spans.append((int(cur_s), int(cur_e)))
+            cur_s, cur_e, prev_word = s, e, w
+        else:
+            cur_e = max(int(cur_e), e)
+            prev_word = w
+    if cur_s is not None and cur_e is not None:
+        spans.append((int(cur_s), int(cur_e)))
+    return spans
+
+
+def _phrase_segments_for_export(
+    phrase_spans: list[tuple[int, int]],
+    *,
+    long_pause_ms: int,
+    long_pause_cap_ms: int,
+    min_bridge_ms: int,
+    silence_cut_ranges: list[tuple[int, int, int]] | None = None,
+) -> list[tuple[int, int]]:
+    """
+    短语 span 转为 (起点 ms, 时长 ms)；短语之间保留短桥接（环境声/自然间隙），长停顿按 cap 保留。
+    """
+    if not phrase_spans:
+        return []
+    min_bridge_ms = max(0, int(min_bridge_ms))
+    long_pause_ms = max(0, int(long_pause_ms))
+    long_pause_cap_ms = max(30, int(long_pause_cap_ms))
+    out: list[tuple[int, int]] = []
+    for i, (s, e) in enumerate(phrase_spans):
+        dur = max(30, int(e) - int(s))
+        out.append((int(s), dur))
+        if i >= len(phrase_spans) - 1:
+            break
+        ns, _ = phrase_spans[i + 1]
+        gap = _effective_gap_after_silence_cuts(int(e), int(ns), silence_cut_ranges)
+        if gap <= 0:
+            continue
+        if long_pause_ms > 0 and gap >= long_pause_ms:
+            bridge = min(gap, long_pause_cap_ms)
+        else:
+            bridge = min(gap, max(min_bridge_ms, 60))
+        if bridge >= 30:
+            out.append((int(e), bridge))
+    return out
+
+
+def _effective_gap_after_silence_cuts(
+    gap_start_ms: int,
+    gap_end_ms: int,
+    silence_cut_ranges: list[tuple[int, int, int]] | None,
+) -> int:
+    gap = max(0, int(gap_end_ms) - int(gap_start_ms))
+    if not silence_cut_ranges or gap <= 0:
+        return gap
+    cut_ms = 0
+    for rs, re, cap_ms in silence_cut_ranges:
+        ov = min(int(gap_end_ms), int(re)) - max(int(gap_start_ms), int(rs))
+        if ov > 0:
+            cut_ms += max(0, ov - max(0, int(cap_ms)))
+    return max(0, gap - cut_ms)
+
+
+def _pick_room_tone_slice(
+    silence_regions: list[tuple[int, int]],
+    *,
+    min_ms: int = 400,
+) -> tuple[int, int]:
+    """从静音区选取一段 room tone 采样（起点 ms, 时长 ms）。"""
+    best: tuple[int, int] | None = None
+    for rs, re in silence_regions:
+        dur = int(re) - int(rs)
+        if dur < min_ms:
+            continue
+        if best is None or dur > best[1]:
+            best = (int(rs), min(dur, 1200))
+    return best if best else (0, 0)
+
+
+def silence_regions_from_analysis(raw: Any) -> list[tuple[int, int]]:
+    """解析工程 silence_analysis JSON 为 [(start_ms, end_ms), ...]。"""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    if not isinstance(raw, dict):
+        return []
+    segs = raw.get("segments")
+    if not isinstance(segs, list):
+        return []
+    out: list[tuple[int, int]] = []
+    for it in segs:
+        if not isinstance(it, dict):
+            continue
+        try:
+            s = int(it.get("start_ms"))
+            e = int(it.get("end_ms"))
+        except (TypeError, ValueError):
+            continue
+        if e > s:
+            out.append((s, e))
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def _build_acrossfade_filter_script(segments: list[tuple[int, int]], crossfade_ms: int) -> str:
+    """短语段 atrim + acrossfade 链（PCM），单段时不 crossfade。"""
+    if not segments:
+        raise RuntimeError("filter_complex：无分段")
+    crossfade_ms = max(5, min(80, int(crossfade_ms)))
+    branches: list[str] = []
+    labels: list[str] = []
+    for idx, (s_ms, dur_ms) in enumerate(segments):
+        dur_ms = max(30, int(dur_ms))
+        s_sec = s_ms / 1000.0
+        d_sec = dur_ms / 1000.0
+        lab = f"s{idx}"
+        branches.append(f"[0:a]atrim=start={s_sec:.6f}:duration={d_sec:.6f},asetpts=PTS-STARTPTS[{lab}]")
+        labels.append(f"[{lab}]")
+    if len(labels) == 1:
+        branches[-1] = branches[-1].replace(labels[0], "[out]")
+        return ";".join(branches)
+    cf_sec = crossfade_ms / 1000.0
+    chain = labels[0]
+    for i in range(1, len(labels)):
+        out_lab = "out" if i == len(labels) - 1 else f"x{i}"
+        branches.append(f"{chain}{labels[i]}acrossfade=d={cf_sec:.4f}:c1=tri:c2=tri[{out_lab}]")
+        chain = f"[{out_lab}]"
+    return ";".join(branches)
+
+
 def _clip_kept_to_time_range(
     kept: list[dict[str, Any]],
     start_ms: int | None,
@@ -463,38 +660,84 @@ def _loudnorm_mp3_two_pass(
         raise RuntimeError("loudnorm 二遍导出失败")
 
 
-def _export_word_chain_with_bridges(
+def _export_phrase_acrossfade(
     ffmpeg_bin: str,
     td_path: Path,
     inp: str,
-    kept: list[dict[str, Any]],
+    segments: list[tuple[int, int]],
+    crossfade_ms: int,
     *,
-    max_bridge_ms: int,
-    afade_ms: int,
-    long_pause_ms: int = 0,
-    long_pause_cap_ms: int = 500,
-    silence_cut_ranges: list[tuple[int, int, int]] | None = None,
-) -> Path:
-    """逐词切段，词间保留有限桥接静音，输出 PCM WAV。"""
-    segments = _word_chain_segments(
-        kept,
-        max_bridge_ms=max_bridge_ms,
-        long_pause_ms=long_pause_ms,
-        long_pause_cap_ms=long_pause_cap_ms,
-        silence_cut_ranges=silence_cut_ranges,
-    )
+    out_wav: Path,
+) -> None:
+    """短语段 atrim + acrossfade 链，输出 PCM WAV；段数过多时分批再 concat。"""
     if not segments:
-        raise RuntimeError("词链导出：无有效片段")
-    raw = td_path / "chain_raw.wav"
-    _export_segments_filter_concat(
-        ffmpeg_bin,
-        td_path,
-        inp,
-        segments,
-        afade_ms,
-        out_wav=raw,
+        raise RuntimeError("无分段可导出")
+    batch_cap = _read_filter_batch_max()
+    if batch_cap == 0 or len(segments) <= batch_cap:
+        script_path = td_path / "fc_phrase.txt"
+        script_path.write_text(_build_acrossfade_filter_script(segments, crossfade_ms), encoding="utf-8")
+        _run_filter_complex_script_to_wav(ffmpeg_bin, inp, out_wav, script_path)
+        return
+    chunk_paths: list[Path] = []
+    for b_start in range(0, len(segments), batch_cap):
+        batch = segments[b_start : b_start + batch_cap]
+        script_path = td_path / f"fc_phrase_{b_start}.txt"
+        script_path.write_text(_build_acrossfade_filter_script(batch, crossfade_ms), encoding="utf-8")
+        chunk = td_path / f"phrase_chunk_{b_start:05d}.wav"
+        _run_filter_complex_script_to_wav(ffmpeg_bin, inp, chunk, script_path)
+        chunk_paths.append(chunk)
+    _concat_demuxer_wav(ffmpeg_bin, td_path, chunk_paths, out_wav)
+
+
+def _mix_room_tone_under(
+    ffmpeg_bin: str,
+    td_path: Path,
+    main_wav: Path,
+    source_inp: str,
+    silence_regions: list[tuple[int, int]],
+    *,
+    volume: float = 0.08,
+) -> Path:
+    """从静音区抽取 room tone，低音量垫在全轨下方以维持环境声连续感。"""
+    rt_start, rt_dur = _pick_room_tone_slice(silence_regions)
+    if rt_dur < 400:
+        return main_wav
+    vol = max(0.02, min(0.25, float(volume)))
+    out_wav = td_path / "phrase_with_room_tone.wav"
+    s_sec = rt_start / 1000.0
+    d_sec = rt_dur / 1000.0
+    filt = (
+        f"[1:a]atrim=start={s_sec:.6f}:duration={d_sec:.6f},asetpts=PTS-STARTPTS,"
+        f"aloop=loop=-1:size=2e+09,volume={vol:.4f}[rt];"
+        f"[0:a][rt]amix=inputs=2:duration=first:dropout_transition=0[out]"
     )
-    return raw
+    cmd = [
+        ffmpeg_bin,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-y",
+        "-i",
+        str(main_wav),
+        "-i",
+        str(source_inp),
+        "-filter_complex",
+        filt,
+        "-map",
+        "[out]",
+        "-c:a",
+        "pcm_s16le",
+        str(out_wav),
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=3600)
+    except Exception:
+        logger.warning("clip export room tone mix failed, skip bed")
+        return main_wav
+    if not out_wav.is_file() or out_wav.stat().st_size < 44:
+        return main_wav
+    return out_wav
 
 
 def _tag_mp3_metadata(ffmpeg_bin: str, mp3_bytes: bytes, metadata: dict[str, str]) -> bytes:
@@ -559,11 +802,12 @@ def export_clip_mp3_from_bytes(
     range_start_ms: int | None = None,
     range_end_ms: int | None = None,
     silence_cut_ranges: list[tuple[int, int, int]] | None = None,
+    silence_regions: list[tuple[int, int]] | None = None,
     duck_ranges: list[tuple[int, int]] | None = None,
     metadata: dict[str, str] | None = None,
 ) -> bytes:
     """
-    将未排除的词按时间合并后切段，PCM 中转拼接，终稿单次 MP3 编码。
+    将未排除的词按短语/句合并后 acrossfade 拼接，PCM 中转，终稿单次 MP3 编码。
     loudnorm 默认关闭；响度归一请使用「一键响度」修音后再导出。
     """
     kept = _kept_words_sorted(normalized, excluded_word_ids)
@@ -571,10 +815,17 @@ def export_clip_mp3_from_bytes(
     if not kept:
         raise RuntimeError("没有可导出的语音片段（可能已删除全部词或时间范围无内容）")
 
-    merge_gap_ms = max(0, int(merge_gap_ms))
-    max_bridge_ms = _read_int_env("CLIP_EXPORT_MAX_BRIDGE_MS", 420)
-    word_chain_max = _read_int_env("CLIP_EXPORT_WORD_CHAIN_MAX", 180)
-    afade_ms = _read_int_env("CLIP_EXPORT_AFADE_MS", 18)
+    phrase_merge_gap = _read_int_env("CLIP_EXPORT_PHRASE_MERGE_GAP_MS", 320)
+    phrase_split_gap = _read_int_env("CLIP_EXPORT_PHRASE_SPLIT_GAP_MS", 700)
+    punct_gap_ms = _read_int_env("CLIP_EXPORT_PHRASE_PUNCT_GAP_MS", 150)
+    min_bridge_ms = _read_int_env("CLIP_EXPORT_PHRASE_MIN_BRIDGE_MS", 80)
+    crossfade_ms = _read_int_env("CLIP_EXPORT_ACROSSFADE_MS", 25)
+    room_tone_on = (os.getenv("CLIP_EXPORT_ROOM_TONE") or "1").strip() not in ("0", "false", "no")
+    try:
+        room_tone_vol = float(os.getenv("CLIP_EXPORT_ROOM_TONE_VOL") or "0.08")
+    except (TypeError, ValueError):
+        room_tone_vol = 0.08
+
     if loudnorm_i_lufs is not None and math.isfinite(float(loudnorm_i_lufs)):
         i_lufs = max(-24.0, min(-10.0, float(loudnorm_i_lufs)))
     else:
@@ -591,9 +842,7 @@ def export_clip_mp3_from_bytes(
     do_skip_loudnorm = bool(skip_loudnorm) or skip_env
 
     fin_q = max(0, min(9, int(final_lame_q)))
-
-    has_silence_cuts = bool(silence_cut_ranges)
-    use_word_chain = has_silence_cuts or (max_bridge_ms > 0 and word_chain_max > 0 and len(kept) <= word_chain_max)
+    regions = list(silence_regions or [])
 
     ffmpeg_bin = shutil.which("ffmpeg") or "ffmpeg"
     with tempfile.TemporaryDirectory(prefix="fyv_clip_export_") as td:
@@ -644,32 +893,41 @@ def export_clip_mp3_from_bytes(
             _decode_source_to_pcm_wav(ffmpeg_bin, src_inp, pcm_src)
         inp = str(pcm_src)
 
-        if use_word_chain:
-            raw_concat = _export_word_chain_with_bridges(
+        phrase_spans = _merge_phrase_spans(
+            kept,
+            merge_gap_ms=phrase_merge_gap,
+            split_gap_ms=phrase_split_gap,
+            punct_gap_ms=punct_gap_ms,
+            silence_regions=regions,
+        )
+        if not phrase_spans:
+            raise RuntimeError("没有可导出的语音片段（可能已删除全部词）")
+        segments = _phrase_segments_for_export(
+            phrase_spans,
+            long_pause_ms=max(0, int(long_pause_ms)),
+            long_pause_cap_ms=max(50, min(5000, int(long_pause_cap_ms))),
+            min_bridge_ms=min_bridge_ms,
+            silence_cut_ranges=silence_cut_ranges,
+        )
+        raw_concat = td_path / "phrase_raw.wav"
+        _export_phrase_acrossfade(
+            ffmpeg_bin,
+            td_path,
+            inp,
+            segments,
+            crossfade_ms,
+            out_wav=raw_concat,
+        )
+        if room_tone_on and regions:
+            mixed = _mix_room_tone_under(
                 ffmpeg_bin,
                 td_path,
+                raw_concat,
                 inp,
-                kept,
-                max_bridge_ms=max_bridge_ms,
-                afade_ms=afade_ms,
-                long_pause_ms=max(0, int(long_pause_ms)),
-                long_pause_cap_ms=max(50, min(5000, int(long_pause_cap_ms))),
-                silence_cut_ranges=silence_cut_ranges,
+                regions,
+                volume=room_tone_vol,
             )
-        else:
-            segs = _merge_segments(kept, gap_ms=merge_gap_ms)
-            if not segs:
-                raise RuntimeError("没有可导出的语音片段（可能已删除全部词）")
-            segments = [(s_ms, max(50, e_ms - s_ms)) for s_ms, e_ms in segs]
-            raw_concat = td_path / "seg_raw.wav"
-            _export_segments_filter_concat(
-                ffmpeg_bin,
-                td_path,
-                inp,
-                segments,
-                afade_ms,
-                out_wav=raw_concat,
-            )
+            raw_concat = mixed
 
         out_mp3 = td_path / "export_final.mp3"
         if do_skip_loudnorm:
