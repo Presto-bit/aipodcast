@@ -16,6 +16,7 @@ import {
 } from "react";
 import { Maximize2, Minimize2 } from "../icons";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
+import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import type { ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";

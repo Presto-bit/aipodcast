@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useI18n } from "../../lib/I18nProvider";
+import { useI18n } from "../../lib/I18nContext";
 import {
   CLIP_EXPORT_QUALITY_PRESETS,
   exportOptionsFromPreset,
@@ -14,7 +14,7 @@ import {
 
 type Props = {
   projectId: string;
-  exportOptions: ClipExportOptions | null | undefined;
+  exportOptions: unknown;
   getAuthHeaders: () => Record<string, string>;
   disabled?: boolean;
   onUpdated?: (opts: ClipExportOptions) => void;
