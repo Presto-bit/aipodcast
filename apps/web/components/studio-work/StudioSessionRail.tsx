@@ -10,6 +10,7 @@ import {
   listStudioWorks
 } from "../../lib/studioWorkStorage";
 import { formatWorkCardMeta } from "../../lib/studioWorkCard";
+import { isWorkStreamRunning } from "../../lib/studioWorkStreamRegistry";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 
 export default function StudioSessionRail({
@@ -28,6 +29,8 @@ export default function StudioSessionRail({
 
   useEffect(() => {
     refresh();
+    const id = window.setInterval(refresh, 2000);
+    return () => window.clearInterval(id);
   }, [refresh, activeWorkId]);
 
   function onNewAgent() {
@@ -99,6 +102,7 @@ export default function StudioSessionRail({
       <div className="min-h-0 flex-1 overflow-y-auto p-2">
         {works.map((w) => {
           const active = w.id === activeWorkId;
+          const running = w.status === "generating" || isWorkStreamRunning(w.id);
           return (
             <div
               key={w.id}
@@ -114,7 +118,12 @@ export default function StudioSessionRail({
                   active ? "text-brand" : "text-ink"
                 ].join(" ")}
               >
-                <p className="truncate font-medium">{w.title || "未命名"}</p>
+                <p className="truncate font-medium">
+                  {running && !active ? (
+                    <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-brand animate-pulse" aria-hidden />
+                  ) : null}
+                  {w.title || "未命名"}
+                </p>
                 <p className="mt-0.5 truncate text-[10px] text-muted">{formatWorkCardMeta(w)}</p>
               </Link>
               <button

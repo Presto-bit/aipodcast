@@ -40,13 +40,9 @@ import {
   studioStructuredAddsAssistantTurn,
   userMessageLooksLikeQuestion
 } from "../../lib/studioAgentStructured";
-import { studioDomainLabel } from "../../lib/studioDomainProfile";
-import type { StudioDomain } from "../../lib/studioDomainProfile";
-import type { StudioEditorMode } from "../../lib/studioEditorMode";
+import { STUDIO_REVISE_INTENT_RE } from "../../lib/studioReviseIntent";
 import { appendFollowUp, followUpHint } from "../../lib/studioFollowUpQueue";
-import { studioCommandGhost, studioCommandPlaceholder } from "../../lib/studioCommandBar";
-import StudioApplyToast from "./StudioApplyToast";
-import StudioEditorControls from "./StudioEditorControls";
+import { studioCommandPlaceholder } from "../../lib/studioCommandBar";
 import StudioEmptyState from "./StudioEmptyState";
 import StudioTrustBar from "./StudioTrustBar";
 import type {
@@ -116,7 +112,6 @@ export default function StudioAgentDock({
   onQueueRevise,
   onRestoreCanvasBeforeTurn,
   onCancelStream,
-  onDiscardStream,
   onUndoApply,
   showFeatureNudge,
   onDismissFeatureNudge,
@@ -125,6 +120,7 @@ export default function StudioAgentDock({
   canvasMode = false,
   agentRouteHint = "",
   agentSteps = [],
+  streamOptimizing = false,
   streamingBlocks = null,
   streamingBodyText = null,
   pendingPatch = null,
@@ -132,14 +128,10 @@ export default function StudioAgentDock({
   onApplyPatch,
   onDiscardPatch,
   onTogglePatchKey,
-  applyToast,
-  onDismissApplyToast,
   selectedSnippet = "",
   onSelectionChange,
   onParallelAsk,
-  onRetryLast,
-  onEditorModeChange,
-  onDomainChange
+  onRetryLast
 }: {
   work: StudioWork;
   isLoggedIn: boolean;
@@ -149,6 +141,7 @@ export default function StudioAgentDock({
   /** 单 Agent 路由提示（reply / compose / revise） */
   agentRouteHint?: string;
   agentSteps?: StudioAgentStep[];
+  streamOptimizing?: boolean;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
   pendingPatch?: PendingPatch | null;
@@ -156,14 +149,10 @@ export default function StudioAgentDock({
   onApplyPatch?: (partial: boolean) => void;
   onDiscardPatch?: () => void;
   onTogglePatchKey?: (key: string) => void;
-  applyToast?: string | null;
-  onDismissApplyToast?: () => void;
   selectedSnippet?: string;
   onSelectionChange?: (text: string) => void;
   onParallelAsk?: (params: { userText: string; prefixTurns: StudioAgentTurn[] }) => Promise<void>;
   onRetryLast?: () => void;
-  onEditorModeChange?: (mode: StudioEditorMode) => void;
-  onDomainChange?: (domain: StudioDomain) => void;
   getAuthHeaders: () => Record<string, string>;
   onPersist: (next: StudioWork) => void;
   /** 单 Agent SSE（reply | compose | revise）；提供时优先于 ask+Job 双轨 */
@@ -179,7 +168,6 @@ export default function StudioAgentDock({
   onQueueRevise?: (opinion: string) => void;
   onRestoreCanvasBeforeTurn?: (turnId: string) => void;
   onCancelStream?: () => void;
-  onDiscardStream?: () => void;
   onUndoApply?: () => void;
   showFeatureNudge: boolean;
   onDismissFeatureNudge: () => void;
@@ -226,9 +214,11 @@ export default function StudioAgentDock({
   const hasComposeStream = Boolean(streamingBlocks?.length || streamingBodyText?.trim());
   const showAgentSteps =
     canvasMode && (jobRunning || agentBusy) && agentSteps.length > 0 && !agentRouteHint;
+  const showCanvasRouteHint = canvasMode && jobRunning && Boolean(agentRouteHint);
   const showEphemeralHint =
     canvasMode && Boolean(ephemeralHint) && !agentRouteHint && !hasComposeStream;
-  const showAgentOutputStatus = showAgentSteps || showEphemeralHint;
+  const showAgentOutputStatus =
+    showCanvasRouteHint || showAgentSteps || showEphemeralHint;
   const dockPhase = useAgentStream ? phase || undefined : phase || undefined;
 
   const scrollToActiveUser = useCallback(() => {
@@ -636,7 +626,8 @@ export default function StudioAgentDock({
       !userMessageLooksLikeQuestion(q) &&
       !/钩子|开头|结构|运营|策略|解读|分析|进度|还要多久/.test(q) &&
       !shouldForceStudioCompose(q, fromChip) &&
-      !/改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化|只改/.test(q);
+      !/改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化|只改/.test(q) &&
+      !STUDIO_REVISE_INTENT_RE.test(q);
 
     if (useAgentStream && isFollowUpConstraint) {
       const withFollow = appendFollowUp(work, q);
@@ -666,7 +657,7 @@ export default function StudioAgentDock({
     onPersist(base);
 
     if (useAgentStream) {
-      if (jobRunning && /改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化/.test(q)) {
+      if (jobRunning && STUDIO_REVISE_INTENT_RE.test(q)) {
         onQueueRevise?.(q);
         setEphemeralHint("已加入改版队列，当前任务完成后执行");
         onPersist({ ...base, agentTurns: appendToolAckTurn(prefixWithUser, "revise") });
@@ -755,34 +746,8 @@ export default function StudioAgentDock({
     await dispatchRoutedSend(prefixWithUser, newText.trim(), route, base);
   }
 
-  const composerGhost =
-    agentRouteHint ||
-    studioCommandGhost({
-      domainLabel: work.domain ? studioDomainLabel(work.domain) : undefined
-    }) ||
-    ephemeralHint ||
-    undefined;
-
   const composerFooter = (
     <>
-      {applyToast ? (
-        <StudioApplyToast
-          message={applyToast}
-          onUndo={onUndoApply}
-          onDismiss={onDismissApplyToast}
-        />
-      ) : null}
-      {!centerEmptyComposer && (turns.length > 0 || pendingPatch) ? (
-        <StudioTrustBar
-          work={work}
-          taskSummary={work.brief}
-          onCorpusClick={() => setCorpusMenuOpen(true)}
-          onDomainClick={() => {
-            const el = document.querySelector<HTMLSelectElement>('[aria-label="写作领域"]');
-            el?.focus();
-          }}
-        />
-      ) : null}
       <StudioAgentComposer
         value={input}
         onChange={setInput}
@@ -790,21 +755,9 @@ export default function StudioAgentDock({
         busy={agentBusy || (jobRunning && Boolean(input.trim()))}
         disabled={!canChat}
         placeholder={agentPlaceholder(work, Boolean(pendingPatch), Boolean(work.error), jobRunning)}
-        ghost={composerGhost}
         menuOpen={corpusMenuOpen}
         generating={jobRunning}
         onCancel={jobRunning ? onCancelStream : undefined}
-        onDiscard={jobRunning ? onDiscardStream : undefined}
-        footerLeft={
-          onEditorModeChange && onDomainChange ? (
-            <StudioEditorControls
-              editorMode={work.editorMode ?? "explore"}
-              domain={work.domain}
-              onEditorModeChange={onEditorModeChange}
-              onDomainChange={onDomainChange}
-            />
-          ) : null
-        }
         footerRight={
           <StudioCorpusBar
             work={work}
@@ -817,6 +770,15 @@ export default function StudioAgentDock({
           />
         }
       />
+      {!centerEmptyComposer && (turns.length > 0 || pendingPatch) ? (
+        <div className="mt-1.5">
+          <StudioTrustBar
+            work={work}
+            taskSummary={work.brief}
+            onCorpusClick={() => setCorpusMenuOpen(true)}
+          />
+        </div>
+      ) : null}
     </>
   );
   const loginNotice =
@@ -830,7 +792,9 @@ export default function StudioAgentDock({
     ) : null;
 
   const agentOutputStatus = showAgentOutputStatus ? (
-    showAgentSteps ? (
+    showCanvasRouteHint ? (
+      <StudioEphemeralHint text={agentRouteHint} className="text-muted" />
+    ) : showAgentSteps ? (
       <StudioAgentStepBar steps={agentSteps} />
     ) : (
       <StudioEphemeralHint text={ephemeralHint} className="text-muted" />
@@ -851,6 +815,8 @@ export default function StudioAgentDock({
       hideManuscript={false}
       streamingBlocks={streamingBlocks}
       streamingBodyText={streamingBodyText}
+      streamOptimizing={streamOptimizing}
+      canvasRouteHint={agentRouteHint}
       pendingPatch={pendingPatch}
       patchSelections={patchSelections}
       onApplyPatch={onApplyPatch}

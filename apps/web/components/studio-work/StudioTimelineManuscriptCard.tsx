@@ -215,6 +215,8 @@ export default function StudioTimelineManuscriptCard({
   busy,
   streamingBlocks = null,
   streamingBodyText = null,
+  streamOptimizing = false,
+  canvasRouteHint = "",
   pendingPatch = null,
   patchSelections = new Set<string>(),
   onApplyPatch,
@@ -233,6 +235,8 @@ export default function StudioTimelineManuscriptCard({
   busy: boolean;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
+  streamOptimizing?: boolean;
+  canvasRouteHint?: string;
   pendingPatch?: PendingPatch | null;
   patchSelections?: Set<string>;
   onApplyPatch?: (partial: boolean) => void;
@@ -247,12 +251,14 @@ export default function StudioTimelineManuscriptCard({
   const taskSentence = work.brief || "";
 
   if (isRunning) {
-    const phase = studioSemanticPhase({
-      runPhase: work.runPhase || run.summary,
-      tool: run.tool === "revise" ? "revise" : "generate",
-      streamingBlocks,
-      searchingCorpus: /搜|资料/.test(work.runPhase || "")
-    });
+    const phase =
+      canvasRouteHint ||
+      studioSemanticPhase({
+        runPhase: work.runPhase || run.summary,
+        tool: run.tool === "revise" ? "revise" : "generate",
+        streamingBlocks,
+        searchingCorpus: /搜|资料/.test(work.runPhase || "")
+      });
     const hasStream = Boolean(
       (streamingBlocks && streamingBlocks.length > 0) || streamingBodyText?.trim()
     );
@@ -261,9 +267,13 @@ export default function StudioTimelineManuscriptCard({
         <p className={`flex items-center gap-2 ${STUDIO_STATUS_TEXT}`}>
           <span className={STUDIO_STATUS_PULSE} aria-hidden />
           {phase}
+          {streamOptimizing ? (
+            <span className="text-[10px] text-muted">· 正在优化</span>
+          ) : null}
         </p>
         {hasStream ? (
-          <StudioStreamingSurface
+          <div className={streamOptimizing ? "opacity-90" : undefined}>
+            <StudioStreamingSurface
             variant="active"
             blocks={streamingBlocks}
             bodyText={streamingBodyText}
@@ -274,6 +284,7 @@ export default function StudioTimelineManuscriptCard({
             corpusNotebook={work.binding.notebook}
             corpusNoteIds={work.binding.noteIds}
           />
+          </div>
         ) : (
           <div className="min-h-[3rem] rounded-md border border-dashed border-line/50" aria-hidden />
         )}

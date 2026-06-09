@@ -1,4 +1,5 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
+import { STUDIO_REVISE_INTENT_RE } from "./studioReviseIntent";
 import { composeTaskSentenceFromTurns, hasTaskContext } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type {
@@ -94,7 +95,8 @@ export function routeStudioAction(
   if (
     (work.status === "ready" || work.status === "shipped") &&
     (work.versions?.length ?? 0) > 0 &&
-    /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化/.test(q)
+    (/改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化/.test(q) ||
+      STUDIO_REVISE_INTENT_RE.test(q))
   ) {
     return {
       tool: "revise",

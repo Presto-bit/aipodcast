@@ -40,8 +40,19 @@ import { applyPendingPatch, discardPendingPatch } from "../../lib/studioPatchApp
 import { drainFollowUps } from "../../lib/studioFollowUpQueue";
 import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { classifyStudioFailure } from "../../lib/studioAgentFailure";
-import { mergeDomainContext, type StudioDomain } from "../../lib/studioDomainProfile";
-import { shouldAutoApplyPatch, shouldShowQualityNote, type StudioEditorMode } from "../../lib/studioEditorMode";
+import { mergeDomainContext } from "../../lib/studioDomainProfile";
+import { shouldAutoApplyPatch, shouldShowQualityNote } from "../../lib/studioEditorMode";
+import { looksLikeReviseRequest } from "../../lib/studioReviseIntent";
+import {
+  abortWorkStream,
+  clearWorkStream,
+  getWorkStreamEntry,
+  patchWorkStreamRefs,
+  patchWorkStreamUi,
+  registerWorkStream,
+  subscribeWorkStream,
+  workStreamAbortMatches
+} from "../../lib/studioWorkStreamRegistry";
 import { captureUndoSnapshot, applyUndoSnapshot } from "../../lib/studioUndo";
 import { shouldSuppressStudioCanvasReply } from "../../lib/studioAgentStructured";
 import { composeTaskSentenceFromTurns, firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
@@ -67,23 +78,16 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
   const { ready, user, getAuthHeaders } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
   const [work, setWork] = useState<StudioWork | null>(null);
-  const [streamingBlocks, setStreamingBlocks] = useState<ManuscriptBlock[] | null>(null);
-  const [streamingBodyText, setStreamingBodyText] = useState<string | null>(null);
-  const [patchSelections, setPatchSelections] = useState<Set<string>>(new Set());
-  const streamingBlocksRef = useRef<ManuscriptBlock[] | null>(null);
-  const streamingBodyRef = useRef<string | null>(null);
-  const [jobBusy, setJobBusy] = useState(false);
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
   const reviseQueueRef = useRef<string[]>([]);
   const jobRunningRef = useRef(false);
-  const streamAbortRef = useRef<AbortController | null>(null);
-  const cancelModeRef = useRef<"stop" | "discard">("stop");
   const activeStreamTurnIdRef = useRef<string>("");
   const canvasSnapshotsRef = useRef<Map<string, CanvasSnapshot>>(new Map());
+  const [streamingBlocks, setStreamingBlocks] = useState<ManuscriptBlock[] | null>(null);
+  const [streamingBodyText, setStreamingBodyText] = useState<string | null>(null);
+  const [streamOptimizing, setStreamOptimizing] = useState(false);
   const [agentRouteHint, setAgentRouteHint] = useState("");
   const [agentSteps, setAgentSteps] = useState<StudioAgentStep[]>([]);
   const [selectedSnippet, setSelectedSnippet] = useState("");
-  const [applyToast, setApplyToast] = useState<string | null>(null);
   const parallelAskAbortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(() => {
@@ -92,12 +96,29 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     return w;
   }, [workId]);
 
+  const [patchSelections, setPatchSelections] = useState<Set<string>>(new Set());
+  const [jobBusy, setJobBusy] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+
   useEffect(() => {
     load();
   }, [load]);
 
+  useEffect(() => {
+    const unsub = subscribeWorkStream(workId, (ui) => {
+      setStreamingBlocks(ui.streamingBlocks);
+      setStreamingBodyText(ui.streamingBodyText);
+      setStreamOptimizing(ui.streamOptimizing);
+      setAgentRouteHint(ui.agentRouteHint);
+      setAgentSteps(ui.agentSteps);
+      setJobBusy(ui.jobBusy);
+    });
+    return () => {
+      unsub();
+    };
+  }, [workId]);
+
   useEffect(() => () => {
-    streamAbortRef.current?.abort();
     parallelAskAbortRef.current?.abort();
   }, []);
 
@@ -128,36 +149,33 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       });
       setStreamingBlocks(null);
       setStreamingBodyText(null);
+      patchWorkStreamUi(workId, {
+        streamingBlocks: null,
+        streamingBodyText: null,
+        streamOptimizing: false
+      });
     },
     [workId]
   );
 
   const clearStreamingSurface = useCallback(() => {
-    streamingBlocksRef.current = null;
-    streamingBodyRef.current = null;
-    setStreamingBlocks(null);
-    setStreamingBodyText(null);
-  }, []);
+    patchWorkStreamUi(workId, {
+      streamingBlocks: null,
+      streamingBodyText: null,
+      streamOptimizing: false
+    });
+    patchWorkStreamRefs(workId, { streamingBlocksRef: null, streamingBodyRef: null });
+  }, [workId]);
 
   const cancelAgentStreamStop = useCallback(() => {
-    cancelModeRef.current = "stop";
-    streamAbortRef.current?.abort();
-  }, []);
-
-  const cancelAgentStreamDiscard = useCallback(() => {
-    cancelModeRef.current = "discard";
-    streamAbortRef.current?.abort();
-    const turnId = activeStreamTurnIdRef.current;
-    if (turnId) restoreCanvasBeforeTurn(turnId);
-    clearStreamingSurface();
-  }, [restoreCanvasBeforeTurn, clearStreamingSurface]);
+    abortWorkStream(workId, "stop");
+  }, [workId]);
 
   const undoLastApply = useCallback(() => {
     const cur = getStudioWork(workId);
     if (!cur?.undoSnapshot) return;
     persist(applyUndoSnapshot(cur, cur.undoSnapshot));
     setPatchSelections(new Set());
-    setApplyToast(null);
   }, [workId]);
 
   const applyPatch = useCallback(
@@ -181,7 +199,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         )
       );
       setPatchSelections(new Set());
-      setApplyToast(partial ? "已采纳所选改动" : "已采纳全部改动");
     },
     [workId, patchSelections]
   );
@@ -219,6 +236,16 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         outgoingText = buildSelectionPatchOpinion(snippet, params.userText);
       }
 
+      const baseVersion =
+        cur0.versions.find((v) => v.id === cur0.activeVersionId) ?? cur0.versions.at(-1);
+      const isReviseIntent =
+        looksLikeReviseRequest(params.userText, Boolean(baseVersion)) || Boolean(snippet);
+      if (isReviseIntent && !outgoingText.startsWith("【块级改版】")) {
+        outgoingText = buildBlockPatchOpinion(params.userText);
+      }
+      const forceReviewPatch =
+        isReviseIntent && Boolean(baseVersion?.blocks.length);
+
       const domainCtx = mergeDomainContext(
         { domain: cur0.domain, format: cur0.format },
         outgoingText
@@ -236,16 +263,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const intake = buildStudioJobIntake(composeTask, cur.intake);
       const authorPrompt = buildStudioAuthorPrompt(composeTask);
 
-      const baseVersion =
-        cur.versions.find((v) => v.id === cur.activeVersionId) ?? cur.versions.at(-1);
-      const isReviseIntent =
-        Boolean(baseVersion) &&
-        (Boolean(snippet) ||
-          /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化/.test(
-            params.userText
-          ));
+      const isReviseIntentConfirmed = isReviseIntent;
       const effectiveTaskSentence =
-        isReviseIntent && baseVersion
+        isReviseIntentConfirmed && baseVersion
           ? buildStudioReviseTaskSentence(
               composeTask,
               manuscriptCopyAll(baseVersion.blocks, baseVersion.primaryTitleIndex ?? 0),
@@ -254,15 +274,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           : composeTask;
 
       activeStreamTurnIdRef.current = params.userTurnId;
-      cancelModeRef.current = "stop";
 
-      streamAbortRef.current?.abort();
       const ac = new AbortController();
-      streamAbortRef.current = ac;
-      setAgentRouteHint("");
-      setAgentSteps([]);
-      streamingBlocksRef.current = null;
-      streamingBodyRef.current = null;
+      registerWorkStream(workId, ac, params.userTurnId);
+      patchWorkStreamUi(workId, {
+        agentRouteHint: "",
+        agentSteps: [],
+        streamingBlocks: null,
+        streamingBodyText: null,
+        streamOptimizing: false,
+        jobBusy: true
+      });
       const clientRunId = crypto.randomUUID();
       let runId = clientRunId;
       let runTool: "generate" | "revise" = "generate";
@@ -283,7 +305,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               : patch.qualityNote
         };
 
-        if (shouldAutoApplyPatch(after.editorMode)) {
+        if (shouldAutoApplyPatch(after.editorMode, { forceReview: forceReviewPatch })) {
           const keys = new Set<string>(fullPatch.changedKeys ?? fullPatch.selections ?? []);
           const undoSnap = captureUndoSnapshot(after);
           const withPending = { ...after, pendingPatch: fullPatch, status: "ready" as const };
@@ -307,10 +329,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             )
           );
           setPatchSelections(new Set());
-          setApplyToast(fullPatch.summary || "已采纳改动");
-          setAgentRouteHint("");
-          setAgentSteps([]);
-          if (streamAbortRef.current === ac) clearStreamingSurface();
+          patchWorkStreamUi(workId, { agentRouteHint: "", agentSteps: [] });
+          if (workStreamAbortMatches(workId, ac)) clearStreamingSurface();
           return;
         }
 
@@ -331,9 +351,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         );
         persist(next);
         setPatchSelections(new Set(fullPatch.selections ?? fullPatch.changedKeys ?? []));
-        setAgentRouteHint("");
-        setAgentSteps([]);
-        if (streamAbortRef.current === ac) {
+        patchWorkStreamUi(workId, { agentRouteHint: "", agentSteps: [] });
+        if (workStreamAbortMatches(workId, ac)) {
           clearStreamingSurface();
         }
       };
@@ -404,10 +423,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             tool === "generate" ? "写稿中" : "改版中…"
           )
         );
-        setStreamingBlocks([]);
-        setStreamingBodyText("");
-        streamingBlocksRef.current = null;
-        streamingBodyRef.current = null;
+        patchWorkStreamUi(workId, {
+          streamingBlocks: [],
+          streamingBodyText: "",
+          streamOptimizing: false
+        });
+        patchWorkStreamRefs(workId, { streamingBlocksRef: null, streamingBodyRef: null });
       };
 
       const manuscriptBlocks = baseVersion?.blocks ?? [];
@@ -431,9 +452,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           forceCompose: params.forceCompose,
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
-          onStep: (step) => setAgentSteps((prev) => upsertAgentStep(prev, step)),
+          onStep: (step) => {
+            const entry = getWorkStreamEntry(workId);
+            const next = upsertAgentStep(entry?.ui.agentSteps ?? [], step);
+            patchWorkStreamUi(workId, { agentSteps: next });
+          },
           onRoute: (route) => {
-            setAgentRouteHint(studioAgentRouteHint(route, "write"));
+            const hint = studioAgentRouteHint(route, "write");
+            patchWorkStreamUi(workId, { agentRouteHint: hint });
             const live = getStudioWork(workId);
             if (live && route.reason?.trim()) {
               persist({ ...live, lastPlannerReason: route.reason.trim() });
@@ -465,33 +491,33 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           },
           onBlockDelta: (blocks, tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
-            streamingBlocksRef.current = blocks;
-            setStreamingBlocks(blocks);
+            patchWorkStreamRefs(workId, { streamingBlocksRef: blocks });
+            patchWorkStreamUi(workId, {
+              streamingBlocks: blocks,
+              streamOptimizing: false
+            });
           },
           onBodyDelta: (body, tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
-            streamingBodyRef.current = body;
-            setStreamingBodyText(body);
+            patchWorkStreamRefs(workId, { streamingBodyRef: body });
+            patchWorkStreamUi(workId, {
+              streamingBodyText: body,
+              streamOptimizing: false
+            });
           },
           onStreamReset: (tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
-            streamingBlocksRef.current = null;
-            streamingBodyRef.current = null;
-            setStreamingBlocks([]);
-            setStreamingBodyText("");
+            patchWorkStreamUi(workId, { streamOptimizing: true });
           }
         });
 
         if (ac.signal.aborted || result.status === "aborted") {
           const live = getStudioWork(workId);
-          const cancelMode = cancelModeRef.current as "stop" | "discard";
-          if (cancelMode === "discard") {
-            return;
-          }
           if (live && runId) {
+            const entry = getWorkStreamEntry(workId);
             const streamBlocks = blocksFromComposeStream(
-              streamingBlocksRef.current,
-              streamingBodyRef.current,
+              entry?.streamingBlocksRef ?? null,
+              entry?.streamingBodyRef ?? null,
               []
             );
             if (streamBlocks.length && hasComposePreviewContent(streamBlocks)) {
@@ -574,13 +600,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
         if (result.status === "error") {
           if (/^network error$/i.test(result.error) || /failed to fetch/i.test(result.error)) {
-            if (ac.signal.aborted || streamAbortRef.current !== ac) return;
+            if (ac.signal.aborted || !workStreamAbortMatches(workId, ac)) return;
           }
           const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, outgoingText);
           const failureKind = classifyComposeSoftFailure(result.error, composeTask);
+          const entry = getWorkStreamEntry(workId);
           const streamBlocks = blocksFromComposeStream(
-            streamingBlocksRef.current,
-            streamingBodyRef.current,
+            entry?.streamingBlocksRef ?? null,
+            entry?.streamingBodyRef ?? null,
             []
           );
           if (runId && failureKind === "needs_rewrite" && hasComposePreviewContent(streamBlocks)) {
@@ -603,8 +630,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           }
           if (runId && failureKind === "needs_brief") {
             finishSoftComposeFailure(after, failureKind, params, streamBlocks, !hasComposePreviewContent(streamBlocks));
-            setAgentRouteHint("");
-            setAgentSteps([]);
+            patchWorkStreamUi(workId, { agentRouteHint: "", agentSteps: [] });
             return;
           }
           if (runId) {
@@ -632,12 +658,16 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         let blocks =
           result.status === "patch" ? result.blocks : result.status === "done" ? result.blocks : [];
         if (!blocks.length) {
-          blocks = blocksFromComposeStream(streamingBlocksRef.current, streamingBodyRef.current, []);
+          const entry = getWorkStreamEntry(workId);
+          blocks = blocksFromComposeStream(
+            entry?.streamingBlocksRef ?? null,
+            entry?.streamingBodyRef ?? null,
+            []
+          );
         }
         if (!blocks.length) {
           finishSoftComposeFailure(after, "needs_brief", params, [], true);
-          setAgentRouteHint("");
-          setAgentSteps([]);
+          patchWorkStreamUi(workId, { agentRouteHint: "", agentSteps: [] });
           return;
         }
 
@@ -651,8 +681,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
                 fromVersionId: after.activeVersionId,
                 baseBlocks: baseVersion?.blocks ?? [],
                 proposedBlocks: blocks,
-                summary: result.tool === "revise" ? "改版提议" : "首稿",
-                reason: agentRouteHint || (result.tool === "revise" ? "按你的意见修改" : "首稿成稿"),
+                summary: result.tool === "revise" ? "改版提议" : "成稿",
+                reason: result.tool === "revise" ? "按你的意见修改" : "",
                 sourceRunId: runId
               });
         proposePendingPatch(after, patch, params, qualityWeak);
@@ -676,10 +706,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           persist({ ...failed, error: msg });
         }
       } finally {
-        if (streamAbortRef.current === ac) {
+        if (workStreamAbortMatches(workId, ac)) {
           clearStreamingSurface();
+          clearWorkStream(workId, ac);
         }
-        if (streamAbortRef.current === ac) streamAbortRef.current = null;
       }
     },
     [workId, isLoggedIn, getAuthHeaders, clearStreamingSurface]
@@ -838,24 +868,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
     );
   }, [workId, isLoggedIn, runAgentStream, runJobExclusive]);
 
-  const onEditorModeChange = useCallback(
-    (mode: StudioEditorMode) => {
-      const cur = getStudioWork(workId);
-      if (!cur) return;
-      persist({ ...cur, editorMode: mode });
-    },
-    [workId]
-  );
-
-  const onDomainChange = useCallback(
-    (domain: StudioDomain) => {
-      const cur = getStudioWork(workId);
-      if (!cur) return;
-      persist({ ...cur, domain });
-    },
-    [workId]
-  );
-
   if (!work) {
     return (
       <main className="flex min-h-[40vh] items-center justify-center text-sm text-muted">
@@ -886,6 +898,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           canvasMode
           agentRouteHint={agentRouteHint}
           agentSteps={agentSteps}
+          streamOptimizing={streamOptimizing}
           streamingBlocks={streamingBlocks}
           streamingBodyText={streamingBodyText}
           pendingPatch={work.pendingPatch}
@@ -904,16 +917,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onQueueRevise={onQueueRevise}
           onRestoreCanvasBeforeTurn={restoreCanvasBeforeTurn}
           onCancelStream={cancelAgentStreamStop}
-          onDiscardStream={cancelAgentStreamDiscard}
           onUndoApply={undoLastApply}
-          applyToast={applyToast}
-          onDismissApplyToast={() => setApplyToast(null)}
           selectedSnippet={selectedSnippet}
           onSelectionChange={setSelectedSnippet}
           onParallelAsk={runParallelAsk}
           onRetryLast={retryLast}
-          onEditorModeChange={onEditorModeChange}
-          onDomainChange={onDomainChange}
           showFeatureNudge={false}
           onDismissFeatureNudge={() => persist({ ...work, featureNudgeDismissed: true })}
           onTitleIndexChange={(index) => {

@@ -4,6 +4,7 @@ import { parseStudioPlannerDecision, studioPlannerGhostLabelZh } from "../studio
 import { buildStudioEvidenceBar } from "../studioEvidenceBar";
 import { classifyStudioFailure } from "../studioAgentFailure";
 import { shouldAutoApplyPatch } from "../studioEditorMode";
+import { looksLikeReviseRequest } from "../studioReviseIntent";
 import { diffLines } from "../studioLineDiff";
 import { STUDIO_WORK_SCHEMA_VERSION, migrateStudioWorkToV3 } from "../studioWorkMigrate";
 import type { StudioWork } from "../studioWorkTypes";
@@ -49,9 +50,15 @@ describe("studio V2", () => {
     expect(classifyStudioFailure("", true).code).toBe("cancelled");
   });
 
+  it("style revise intent", () => {
+    expect(looksLikeReviseRequest("写的更小红书体一些", true)).toBe(true);
+    expect(looksLikeReviseRequest("我想写一篇小红书推广", false)).toBe(false);
+  });
+
   it("explore mode auto applies", () => {
     expect(shouldAutoApplyPatch("explore")).toBe(true);
     expect(shouldAutoApplyPatch("review")).toBe(false);
+    expect(shouldAutoApplyPatch("explore", { forceReview: true })).toBe(false);
   });
 
   it("diff lines", () => {

@@ -25,6 +25,8 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge,
   streamingBlocks = null,
   streamingBodyText = null,
+  streamOptimizing = false,
+  canvasRouteHint = "",
   pendingPatch = null,
   patchSelections = new Set<string>(),
   onApplyPatch,
@@ -54,6 +56,8 @@ export default function StudioTimelinePanel({
   onDismissFeatureNudge: () => void;
   streamingBlocks?: ManuscriptBlock[] | null;
   streamingBodyText?: string | null;
+  streamOptimizing?: boolean;
+  canvasRouteHint?: string;
   pendingPatch?: PendingPatch | null;
   patchSelections?: Set<string>;
   onApplyPatch?: (partial: boolean) => void;
@@ -111,6 +115,8 @@ export default function StudioTimelinePanel({
               busy={busy}
               streamingBlocks={streamingBlocks}
               streamingBodyText={streamingBodyText}
+              streamOptimizing={streamOptimizing}
+              canvasRouteHint={canvasRouteHint}
               pendingPatch={item.pendingPatch ?? (pendingPatch?.sourceRunId === item.run.id ? pendingPatch : null)}
               patchSelections={patchSelections}
               onApplyPatch={onApplyPatch}

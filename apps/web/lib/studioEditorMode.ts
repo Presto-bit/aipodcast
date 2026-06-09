@@ -8,8 +8,12 @@ export function isExploreMode(mode: StudioEditorMode | undefined): boolean {
   return (mode ?? STUDIO_DEFAULT_EDITOR_MODE) === "explore";
 }
 
-/** 探索模式：自动 Apply；审阅模式：需用户确认 */
-export function shouldAutoApplyPatch(mode: StudioEditorMode | undefined): boolean {
+/** 探索模式：自动 Apply；审阅模式 / 显式改版：需用户确认 */
+export function shouldAutoApplyPatch(
+  mode: StudioEditorMode | undefined,
+  options?: { forceReview?: boolean }
+): boolean {
+  if (options?.forceReview) return false;
   return isExploreMode(mode);
 }
 
