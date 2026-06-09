@@ -189,11 +189,13 @@ export default function StudioAgentDock({
   const hasComposeStream = Boolean(streamingBlocks?.length || streamingBodyText?.trim());
   const showAgentSteps =
     canvasMode && (jobRunning || agentBusy) && agentSteps.length > 0 && !agentRouteHint;
-  const showCanvasRouteHint = canvasMode && jobRunning && Boolean(agentRouteHint);
+  const showCanvasRouteHint = canvasMode && (jobRunning || agentBusy) && Boolean(agentRouteHint);
   const showEphemeralHint =
     canvasMode && Boolean(ephemeralHint) && !agentRouteHint && !hasComposeStream;
+  const showJobBusyFallback =
+    canvasMode && (jobRunning || agentBusy) && !agentRouteHint && !hasComposeStream && agentSteps.length === 0;
   const showAgentOutputStatus =
-    showCanvasRouteHint || showAgentSteps || showEphemeralHint;
+    showCanvasRouteHint || showAgentSteps || showEphemeralHint || showJobBusyFallback;
   const dockPhase = useAgentStream ? phase || undefined : phase || undefined;
 
   const scrollToActiveUser = useCallback(() => {
@@ -601,6 +603,7 @@ export default function StudioAgentDock({
     onPersist(base);
 
     if (useAgentStream) {
+      setEphemeralHint("");
       setAgentBusyState(true);
       try {
         await onAgentRun!({
@@ -748,8 +751,10 @@ export default function StudioAgentDock({
       <StudioEphemeralHint text={agentRouteHint} className="text-muted" />
     ) : showAgentSteps ? (
       <StudioAgentStepBar steps={agentSteps} />
-    ) : (
+    ) : showEphemeralHint ? (
       <StudioEphemeralHint text={ephemeralHint} className="text-muted" />
+    ) : (
+      <StudioEphemeralHint text="正在处理…" className="text-muted" />
     )
   ) : null;
 

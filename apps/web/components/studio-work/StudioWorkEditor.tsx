@@ -280,7 +280,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const ac = new AbortController();
       registerWorkStream(workId, ac, params.userTurnId);
       patchWorkStreamUi(workId, {
-        agentRouteHint: "",
+        agentRouteHint: isReviseIntent ? "正在准备改版…" : "正在准备写稿…",
         agentSteps: [],
         streamingBlocks: null,
         streamingBodyText: null,
@@ -430,6 +430,14 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         patchWorkStreamRefs(workId, { streamingBlocksRef: null, streamingBodyRef: null });
       };
 
+      const beginComposeRun = (tool: "generate" | "revise") => {
+        ensureComposeRun(tool);
+      };
+
+      if (!baseVersion) {
+        beginComposeRun(isReviseIntent ? "revise" : "generate");
+      }
+
       const manuscriptBlocks = baseVersion?.blocks ?? [];
 
       const runOneStream = (streamMessage: string, streamTaskSentence: string) =>
@@ -464,6 +472,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             const live = getStudioWork(workId);
             if (live && route.reason?.trim()) {
               persist({ ...live, lastPlannerReason: route.reason.trim() });
+            }
+            if (route.tool === "compose" || route.tool === "revise") {
+              beginComposeRun(route.tool === "revise" ? "revise" : "generate");
             }
           },
           onReply: (text) => {
