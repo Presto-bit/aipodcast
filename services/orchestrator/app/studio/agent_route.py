@@ -81,11 +81,6 @@ def should_force_compose(
 ) -> bool:
     if version_count > 0:
         return False
-    compose_brief = str(task_sentence or "").strip()
-    if is_insufficient_brief(compose_brief):
-        return False
-    if is_ask_only(message, has_manuscript=False) and not COMPOSE_CHIP_SIGNAL.search(message.strip()):
-        return False
     if force_compose:
         return True
     return bool(COMPOSE_CHIP_SIGNAL.search(message.strip()))
@@ -107,15 +102,24 @@ def route_studio_agent(
     ):
         return "revise"
     draft_like = status in ("draft", "briefing", "planned")
-    if draft_like and task_sentence.strip() and version_count == 0:
-        compose_brief = task_sentence.strip()
+    if draft_like and version_count == 0:
+        compose_brief = task_sentence.strip() or q
         if should_force_compose(
             message=q,
             task_sentence=compose_brief,
             version_count=version_count,
         ):
             return "compose"
-        if not is_ask_only(q, has_manuscript=False) and not is_insufficient_brief(compose_brief):
+        if is_ask_only(q, has_manuscript=False):
+            return "reply"
+        if re.match(r"^(帮我想|写点|想做|来点|整点|搞个|随便)", q) and not TOPIC_FORM_SIGNAL.search(q):
+            return "reply"
+        if (
+            compose_brief
+            or WRITE_INTENT.search(q)
+            or TOPIC_FORM_SIGNAL.search(q)
+            or len(q) >= 8
+        ):
             return "compose"
     return "reply"
 

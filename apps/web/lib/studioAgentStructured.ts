@@ -60,7 +60,7 @@ export function buildStudioStructuredOutputPrompt(work: StudioWork): string {
     "- 用户问运营/发布/推广/什么时候发/怎么推：必须用 reply 给分点建议，禁止 ask_user 要求提供画布或稿件主题。",
     ready
       ? "- 稿件已在产物区：用户未明确提问时用 silent；不要主动点评或建议下一步。"
-      : "- 信息不足（缺主题/形式/受众任一项）必须用 ask_user 追问一句，禁止 silent；信息已够开工时才 silent；用户明确提问用 reply 简答。"
+      : "- 仅当用户既无主题又无形式且整句极短（约 8 字内）时用 ask_user；有 open-ended 写稿意图时 silent 并交由写稿执行；用户明确提问用 reply 简答。"
   ].join("\n");
 }
 

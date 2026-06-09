@@ -47,7 +47,7 @@ export function needsPromoBriefClarification(userMessage: string): boolean {
   return !PROMO_DETAIL_SIGNAL.test(text);
 }
 
-/** 需求过短/过模糊时不自动成稿，改走 ask 澄清 */
+/** 输入框 hint / 软失败分类；不再阻断 open-ended 成稿路由 */
 export function isInsufficientBrief(userMessage: string): boolean {
   const text = userMessage.trim();
   if (!text) return true;
@@ -72,6 +72,11 @@ function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
   if (/怎么(写|改|搭)|如何(写|改)|钩子|开头|结构/.test(q)) return true;
   if (/^(帮我)?(分析|解读|看看|讲讲)/.test(q)) return true;
   return false;
+}
+
+function isVagueOpenEnded(q: string): boolean {
+  const text = q.trim();
+  return /^(帮我想|写点|想做|来点|整点|搞个|随便)/.test(text) && !TOPIC_FORM_SIGNAL.test(text);
 }
 
 /** 当前输入是否足以触发自动成稿（与 routeStudioAction 同源） */
@@ -119,10 +124,10 @@ export function routeStudioAction(
 
   if (
     isDraftLikeStatus(work.status) &&
-    taskReady &&
     (work.versions?.length ?? 0) === 0 &&
     !isAskOnlyMessage(q, intent) &&
-    !isInsufficientBrief(composeTask)
+    !isVagueOpenEnded(q) &&
+    (taskReady || q.length >= 8 || WRITE_INTENT.test(q) || TOPIC_FORM_SIGNAL.test(q))
   ) {
     return {
       tool: "generate",

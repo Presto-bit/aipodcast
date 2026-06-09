@@ -49,7 +49,7 @@ const cupClarify = routeStudioAction(
   cupOnlyMsg,
   cupTurns
 );
-assert(cupClarify.tool === "ask", `cup-only promo should ask first, got ${cupClarify.tool}`);
+assert(cupClarify.tool === "generate", `cup-only promo should compose open-ended, got ${cupClarify.tool}`);
 
 const askOnly = routeStudioAction(
   baseWork({ status: "draft", agentTurns: turns }),

@@ -41,7 +41,6 @@ import {
 import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { shouldSuppressStudioCanvasReply } from "../../lib/studioAgentStructured";
 import { composeTaskSentenceFromTurns, firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
-import { isInsufficientBrief } from "../../lib/studioOrchestrator";
 import type {
   ManuscriptBlock,
   ManuscriptVersion,
@@ -221,6 +220,75 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         }
       };
 
+      const appendQualityNudge = (
+        work: StudioWork,
+        params: { userText: string; prefixTurns: StudioAgentTurn[] }
+      ): StudioWork => {
+        const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
+        const clarifyTurn = buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask);
+        return {
+          ...work,
+          agentTurns: appendComposeClarifyTurn(work.agentTurns ?? [], clarifyTurn)
+        };
+      };
+
+      const commitManuscriptVersion = (
+        after: StudioWork,
+        blocks: ManuscriptBlock[],
+        tool: "compose" | "revise",
+        params: { userText: string; prefixTurns: StudioAgentTurn[] },
+        qualityWeak = false
+      ) => {
+        const versionId = crypto.randomUUID();
+        const base =
+          tool === "revise"
+            ? after.versions.find((v) => v.id === after.activeVersionId) ?? after.versions.at(-1)
+            : null;
+
+        if (tool === "revise" && !base) {
+          persist(finishStudioRun({ ...after, status: "ready", runPhase: undefined }, runId, "error", "无基准版本"));
+          return;
+        }
+
+        let next: StudioWork = finishStudioRun(
+          {
+            ...after,
+            status: "ready",
+            plan: tool === "compose" ? undefined : after.plan,
+            intake: tool === "compose" ? intake : after.intake,
+            versions: [
+              ...after.versions,
+              {
+                id: versionId,
+                label: nextVersionLabel(after.versions),
+                createdAt: Date.now(),
+                blocks,
+                primaryTitleIndex: base?.primaryTitleIndex ?? 0,
+                sourceRunId: runId
+              }
+            ],
+            activeVersionId: versionId,
+            pendingPatch: undefined,
+            runPhase: undefined,
+            error: undefined,
+            lastOrchestratorNote: undefined
+          },
+          runId,
+          "done",
+          tool === "revise" ? "改版完成" : "稿件已生成"
+        );
+        if (qualityWeak) {
+          next = appendQualityNudge(next, params);
+        }
+        persist(next);
+        setAgentRouteHint("");
+        setComposePreview(null);
+        setAgentSteps([]);
+        if (streamAbortRef.current === ac) {
+          clearStreamingSurface();
+        }
+      };
+
       const finishSoftComposeFailure = (
         after: StudioWork,
         failureKind: StudioComposeSoftFailure,
@@ -230,10 +298,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       ) => {
         const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
         retainFailedComposePreview(failureKind, fallbackBlocks);
-        const clarifyTurn =
-          failureKind === "needs_rewrite"
-            ? buildStudioRewriteClarifyAssistantTurn(params.userText, composeTask)
-            : buildStudioBriefClarifyAssistantTurn(empty ? "empty" : "template", params.userText, composeTask);
+        const clarifyTurn = buildStudioBriefClarifyAssistantTurn(
+          empty ? "empty" : "template",
+          params.userText,
+          composeTask
+        );
         persist(
           finishStudioRun(
             {
@@ -422,8 +491,17 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           }
           const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
           const failureKind = classifyComposeSoftFailure(result.error, composeTask);
-          if (runId && failureKind) {
-            finishSoftComposeFailure(after, failureKind, params);
+          const streamBlocks = blocksFromComposeStream(
+            streamingBlocksRef.current,
+            streamingBodyRef.current,
+            []
+          );
+          if (runId && failureKind === "needs_rewrite" && hasComposePreviewContent(streamBlocks)) {
+            commitManuscriptVersion(after, streamBlocks, "compose", params, true);
+            return;
+          }
+          if (runId && failureKind === "needs_brief") {
+            finishSoftComposeFailure(after, failureKind, params, streamBlocks, !hasComposePreviewContent(streamBlocks));
             setAgentRouteHint("");
             setAgentSteps([]);
             return;
@@ -448,65 +526,27 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           return;
         }
 
-        const blocks = result.blocks;
-        const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
-        const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, params.userText);
-        if (!blocks.length || shouldRejectDeliverableBody(result.tool, bodyText)) {
-          const empty = !blocks.length;
-          const failureKind: StudioComposeSoftFailure =
-            !empty && !isInsufficientBrief(composeTask) ? "needs_rewrite" : "needs_brief";
-          finishSoftComposeFailure(after, failureKind, params, blocks, empty);
+        let blocks = result.blocks;
+        if (!blocks.length) {
+          blocks = blocksFromComposeStream(streamingBlocksRef.current, streamingBodyRef.current, []);
+        }
+        if (!blocks.length) {
+          finishSoftComposeFailure(after, "needs_brief", params, [], true);
           setAgentRouteHint("");
           setAgentSteps([]);
           return;
         }
 
-        const versionId = crypto.randomUUID();
-        const base =
-          result.tool === "revise"
-            ? after.versions.find((v) => v.id === after.activeVersionId) ?? after.versions.at(-1)
-            : null;
-
-        if (result.tool === "revise" && !base) {
-          persist(finishStudioRun({ ...after, status: "ready", runPhase: undefined }, runId, "error", "无基准版本"));
-          return;
-        }
-
-        persist(
-          finishStudioRun(
-            {
-              ...after,
-              status: "ready",
-              plan: result.tool === "compose" ? undefined : after.plan,
-              intake: result.tool === "compose" ? intake : after.intake,
-              versions: [
-                ...after.versions,
-                {
-                  id: versionId,
-                  label: nextVersionLabel(after.versions),
-                  createdAt: Date.now(),
-                  blocks,
-                  primaryTitleIndex: base?.primaryTitleIndex ?? 0,
-                  sourceRunId: runId
-                }
-              ],
-              activeVersionId: versionId,
-              pendingPatch: undefined,
-              runPhase: undefined,
-              error: undefined,
-              lastOrchestratorNote: undefined
-            },
-            runId,
-            "done",
-            result.tool === "revise" ? "改版完成" : "稿件已生成"
-          )
+        const bodyText = blocks.find((b) => b.kind === "body")?.text ?? "";
+        const qualityWeak =
+          result.tool === "compose" && shouldRejectDeliverableBody(result.tool, bodyText);
+        commitManuscriptVersion(
+          after,
+          blocks,
+          result.tool === "revise" ? "revise" : "compose",
+          params,
+          qualityWeak
         );
-        setAgentRouteHint("");
-        setComposePreview(null);
-        setAgentSteps([]);
-        if (streamAbortRef.current === ac) {
-          clearStreamingSurface();
-        }
       } catch (err) {
         if (ac.signal.aborted) return;
         const failed = getStudioWork(workId);

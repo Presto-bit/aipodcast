@@ -7,7 +7,6 @@ import {
   buildStudioAskPayload,
   studioTurnsToMemoryTurns
 } from "../../lib/studioAgentAsk";
-import { studioStreamPhaseLabel } from "../../lib/studioComposeProgress";
 import { STUDIO_ACK_GENERATE, STUDIO_ACK_REVISE } from "../../lib/studioTimeline";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { routeStudioAction, type StudioRouteDecision } from "../../lib/studioOrchestrator";
@@ -39,7 +38,8 @@ import {
   draftAskFallbackText,
   opsStrategySuggestedReplies,
   resolveStudioStructuredResponse,
-  studioStructuredAddsAssistantTurn
+  studioStructuredAddsAssistantTurn,
+  userMessageLooksLikeQuestion
 } from "../../lib/studioAgentStructured";
 import type { StudioComposePreview } from "../../lib/studioComposePreview";
 import type {
@@ -49,11 +49,11 @@ import type {
   StudioWork,
   WorkStatus
 } from "../../lib/studioWorkTypes";
+import StudioAgentStepBar from "./StudioAgentStepBar";
+import StudioEphemeralHint from "./StudioEphemeralHint";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
-import { composeThinkingFlashText } from "../../lib/studioComposeThinking";
-import StudioEphemeralHint from "./StudioEphemeralHint";
 
 const QUICK_PROMPTS = [
   "我想写一篇清单体内容，受众是产品新人",
@@ -194,35 +194,14 @@ export default function StudioAgentDock({
     canvasMode && turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
   const useAgentStream = Boolean(onAgentRun);
   const hasComposeStream = Boolean(streamingBlocks?.length || streamingBodyText?.trim());
-  const thinkingText = useMemo(
-    () => composeThinkingFlashText(agentSteps, work.runPhase),
-    [agentSteps, work.runPhase]
-  );
-  const [thinkingDismissed, setThinkingDismissed] = useState(false);
-  useEffect(() => {
-    if (jobRunning && !hasComposeStream) {
-      setThinkingDismissed(false);
-      const t = window.setTimeout(() => setThinkingDismissed(true), 4200);
-      return () => window.clearTimeout(t);
-    }
-    if (hasComposeStream) setThinkingDismissed(true);
-  }, [jobRunning, hasComposeStream, thinkingText]);
-  const showThinkingFlash = jobRunning && !hasComposeStream && !thinkingDismissed;
-  const composeProgressLabel = studioStreamPhaseLabel({
-    runPhase: work.runPhase,
-    hasStream: hasComposeStream,
-    isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
-  });
-  const agentStatusText = showThinkingFlash
-    ? thinkingText
-    : composeProgressLabel || agentRouteHint || ephemeralHint;
-  const showAgentOutputStatus =
+  const showAgentSteps = canvasMode && (jobRunning || agentBusy) && agentSteps.length > 0;
+  const showEphemeralHint =
     canvasMode &&
-    (jobRunning || agentBusy) &&
-    Boolean(showThinkingFlash || composeProgressLabel || agentRouteHint || ephemeralHint);
-  const dockPhase = useAgentStream
-    ? phase || undefined
-    : phase || (jobRunning ? composeProgressLabel : undefined);
+    Boolean(ephemeralHint) &&
+    !showAgentSteps &&
+    !hasComposeStream;
+  const showAgentOutputStatus = showAgentSteps || showEphemeralHint;
+  const dockPhase = useAgentStream ? phase || undefined : phase || undefined;
 
   const scrollToActiveUser = useCallback(() => {
     dialogueScrollRef.current
@@ -611,7 +590,9 @@ export default function StudioAgentDock({
       useAgentStream &&
       jobRunning &&
       !/改版|改一下|改标题|改正文|缩短|加长|重写|润色|优化/.test(q) &&
-      !shouldForceStudioCompose(q, fromChip)
+      !shouldForceStudioCompose(q, fromChip) &&
+      !userMessageLooksLikeQuestion(q) &&
+      !/钩子|开头|结构|运营|策略|解读|分析|进度|还要多久/.test(q)
     ) {
       setEphemeralHint("写稿进行中，请稍候…");
       return;
@@ -800,11 +781,11 @@ export default function StudioAgentDock({
   );
 
   const agentOutputStatus = showAgentOutputStatus ? (
-    <StudioEphemeralHint
-      text={agentStatusText}
-      ttlMs={showThinkingFlash ? 4200 : 4500}
-      className="text-muted"
-    />
+    showAgentSteps ? (
+      <StudioAgentStepBar steps={agentSteps} />
+    ) : (
+      <StudioEphemeralHint text={ephemeralHint} className="text-muted" />
+    )
   ) : null;
 
   const timelinePanel = (

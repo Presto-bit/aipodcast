@@ -146,26 +146,32 @@ export function buildStudioBriefClarifyTurn(
   };
 }
 
-/** brief 已够但终检未过 → 不展示低质量正文，引导补 1 项后重写 */
+/** 初稿已落画布但偏模板 → 非 blocking 提示 + 改版/重写 chips */
 export function buildStudioRewriteClarifyTurn(
   userMessage = "",
   taskSentence = ""
 ): StudioBriefClarifyTurn {
   const context = [taskSentence, userMessage].filter(Boolean).join("\n");
   const gaps = detectBriefGaps(context);
-  const optional = chipExamples(gaps, context).slice(0, 3);
-  const suggestedReplies = withRetryChip(optional, context, { alwaysRetry: true });
+  const optional = chipExamples(gaps, context).slice(0, 2);
+  const reviseChips = ["改开头更痛点", "再优化一版"];
+  const suggestedReplies = withRetryChip(
+    [...reviseChips, ...optional],
+    context,
+    { alwaysRetry: true }
+  );
 
   return {
     content: [
-      "这版还不够贴题，**不会展示为稿件**。补下面 **1 项** 后点「再试一次」，我会重新写一版：",
+      "初稿已在上方稿件区，可直接改。若觉得略偏模板，可以：",
       "",
-      optional.length
-        ? optional.map((c) => `· ${c}`).join("\n")
-        : "· 可补充具体场景、卖点或使用细节",
+      "· 在下方说 **改开头更痛点** / **再优化一版**",
+      optional.length ? optional.map((c) => `· 或补 ${c}`).join("\n") : "",
       "",
-      "也可直接在下方用一句话说明要改的方向。"
-    ].join("\n"),
+      "也可点 **再试一次** 整稿重写。"
+    ]
+      .filter(Boolean)
+      .join("\n"),
     suggestedReplies
   };
 }

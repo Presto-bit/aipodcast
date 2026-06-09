@@ -20,10 +20,10 @@ assert(
 );
 
 const rewriteTurn = buildStudioRewriteClarifyTurn(promoBrief, promoBrief);
-assert(rewriteTurn.content.includes("不会展示"), "rewrite says no manuscript shown");
-assert(!rewriteTurn.content.includes("预览稿"), "rewrite does not mention preview");
+assert(rewriteTurn.content.includes("初稿已在"), "rewrite mentions draft on canvas");
+assert(!rewriteTurn.content.includes("不会展示"), "rewrite does not block manuscript");
 assert(rewriteTurn.suggestedReplies.includes(STUDIO_COMPOSE_RETRY_CHIP), "retry chip on rewrite");
-assert(rewriteTurn.suggestedReplies.length >= 1, "rewrite has supplement chips");
+assert(rewriteTurn.suggestedReplies.some((c) => /改开头|再优化/.test(c)), "rewrite has revise chips");
 
 assert(
   classifyComposeSoftFailure("NEEDS_REWRITE", promoBrief) === "needs_rewrite",

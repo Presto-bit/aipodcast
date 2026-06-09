@@ -113,12 +113,11 @@ def _rule_decision(
         task_sentence=compose_brief,
     )
     if tool == "reply":
-        if is_insufficient_brief(compose_brief) and version_count == 0:
-            reply_text = reply_for_blocking(compose_brief)
-            reason = "规则：brief 不足，追问"
-        else:
-            reply_text = ""
-            reason = "规则：问答/澄清"
+        reply_text = ""
+        reason = "规则：问答/澄清"
+        if version_count == 0 and not compose_brief.strip() and len(message.strip()) < 8:
+            reply_text = reply_for_blocking(compose_brief or message)
+            reason = "规则：信息过少，追问"
         return StudioToolDecision(
             tool="reply",
             brief="",
@@ -181,40 +180,26 @@ def _reconcile_decision(
         )
 
     if version_count == 0 and llm_tool == "revise":
-        llm_tool = (
-            "compose"
-            if not is_insufficient_brief(compose_brief) and not is_ask_only(message, has_manuscript=False)
-            else "reply"
-        )
+        llm_tool = "compose" if not is_ask_only(message, has_manuscript=False) else "reply"
 
     if is_ask_only(message, has_manuscript=version_count > 0):
         llm_tool = "reply"
-
-    if llm_tool == "compose" and is_insufficient_brief(compose_brief):
-        return StudioToolDecision(
-            tool="reply",
-            brief="",
-            reply_text=llm_reply or reply_for_blocking(compose_brief),
-            source="mixed",
-            reason="护栏：compose 降级为追问",
-        )
 
     tool: StudioTool = llm_tool
     source: RouteSource = "llm"
     reason = f"LLM：{tool}"
 
     if rule.tool == "compose" and llm_tool == "reply" and not is_ask_only(message, has_manuscript=version_count > 0):
-        if not is_insufficient_brief(compose_brief):
-            tool = "compose"
-            source = "mixed"
-            reason = "规则+LLM：brief 足够，成稿"
+        tool = "compose"
+        source = "mixed"
+        reason = "规则+LLM：open-ended 成稿"
 
-    if rule.tool == "compose" and tool == "reply" and not is_insufficient_brief(compose_brief) and not is_ask_only(
+    if rule.tool == "compose" and tool == "reply" and not is_ask_only(
         message, has_manuscript=version_count > 0
     ):
         tool = "compose"
         source = "mixed"
-        reason = "规则：brief 足够，强制成稿"
+        reason = "规则：强制成稿"
 
     if rule.tool == "reply" and llm_tool == "compose" and is_ask_only(message):
         tool = "reply"

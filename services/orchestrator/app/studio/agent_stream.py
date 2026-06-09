@@ -240,6 +240,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     event_q: queue.Queue[tuple[str, Any]] = queue.Queue()
     last_sig = [""]
     last_body = [""]
+    last_blocks: list[Any] = [None]
 
     def on_stream_delta(acc: str) -> None:
         partial = extract_partial_social_json_fields(acc)
@@ -261,6 +262,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         if sig == last_sig[0]:
             return
         last_sig[0] = sig
+        last_blocks[0] = blocks
         event_q.put(("block_delta", blocks))
 
     def worker() -> None:
@@ -297,8 +299,6 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                         ]
                         event_q.put(("stream_reset", None))
                         continue
-                    event_q.put(("error", _compose_soft_failure_code(task_sentence)))
-                    return
                 blocks = deliverable_to_manuscript_blocks_dict(deliverable)
                 event_q.put(("done", {"tool": tool, "blocks": blocks}))
                 return
@@ -308,6 +308,10 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     last_errors = err.split(":", 1)[1].split("|")
                     event_q.put(("stream_reset", None))
                     continue
+                fallback = last_blocks[0] if isinstance(last_blocks[0], list) else []
+                if fallback:
+                    event_q.put(("done", {"tool": tool, "blocks": fallback}))
+                    return
                 event_q.put(("error", err[:500]))
                 return
             except Exception as exc:
