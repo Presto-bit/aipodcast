@@ -191,14 +191,14 @@ export default function StudioAgentDock({
   const dialogueEmptyHint = undefined;
   const centerEmptyComposer =
     canvasMode && turns.length === 0 && isDraftLikeStatus(work.status) && !jobRunning;
-  const showAgentOutputStatus =
-    canvasMode && (jobRunning || agentBusy) && Boolean(composeProgressLabel || agentRouteHint || ephemeralHint);
   const useAgentStream = Boolean(onAgentRun);
   const composeProgressLabel = studioStreamPhaseLabel({
     runPhase: work.runPhase,
     hasStream: Boolean(streamingBlocks?.length || streamingBodyText?.trim()),
     isRevise: Boolean(work.agentRuns?.find((r) => r.status === "running" && r.tool === "revise"))
   });
+  const showAgentOutputStatus =
+    canvasMode && (jobRunning || agentBusy) && Boolean(composeProgressLabel || agentRouteHint || ephemeralHint);
   const dockPhase = useAgentStream
     ? phase || undefined
     : phase || (jobRunning ? composeProgressLabel : undefined);
