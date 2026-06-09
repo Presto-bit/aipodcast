@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { isStudioFirstDraftPatch } from "../../lib/studioPatchApply";
 import { patchHunkLabel } from "../../lib/studioPatchHunkLabel";
 import { shouldShowQualityNote } from "../../lib/studioEditorMode";
 import { diffLines } from "../../lib/studioLineDiff";
@@ -21,6 +22,7 @@ function PatchFooter({
   patch,
   work,
   busy,
+  isFirstDraft,
   selectedCount,
   onApplyPartial,
   onApplyAll,
@@ -29,6 +31,7 @@ function PatchFooter({
   patch: PendingPatch;
   work: StudioWork;
   busy: boolean;
+  isFirstDraft: boolean;
   selectedCount: number;
   onApplyPartial?: () => void;
   onApplyAll?: () => void;
@@ -38,13 +41,15 @@ function PatchFooter({
   const hunkCount = (patch.changedKeys ?? patch.selections ?? []).length;
   return (
     <div className="mb-2 space-y-2 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2">
-      <p className="text-[12px] font-medium text-ink">待确认 · {hunkCount} 处改动</p>
+      <p className="text-[12px] font-medium text-ink">
+        {isFirstDraft ? "首稿 · 待确认" : `待确认 · ${hunkCount} 处改动`}
+      </p>
       {patch.reason ? <p className="text-[10px] text-muted">{patch.reason}</p> : null}
       {showQuality ? (
         <p className="text-[11px] text-amber-800 dark:text-amber-200">{patch.qualityNote}</p>
       ) : null}
       <div className="flex flex-wrap gap-2 text-[11px]">
-        {onApplyPartial ? (
+        {!isFirstDraft && onApplyPartial ? (
           <button
             type="button"
             disabled={busy || selectedCount <= 0}
@@ -58,10 +63,14 @@ function PatchFooter({
           <button
             type="button"
             disabled={busy}
-            className="rounded-md border border-line px-2.5 py-1 hover:bg-fill disabled:opacity-50"
+            className={
+              isFirstDraft
+                ? "rounded-md bg-brand px-2.5 py-1 text-brand-foreground disabled:opacity-50"
+                : "rounded-md border border-line px-2.5 py-1 hover:bg-fill disabled:opacity-50"
+            }
             onClick={onApplyAll}
           >
-            全部采纳
+            {isFirstDraft ? "采纳成稿" : "全部采纳"}
           </button>
         ) : null}
         {onDiscard ? (
@@ -126,15 +135,29 @@ function MinimalPatchBlocks({
   proposedBlocks,
   changedKeys,
   patchSelections,
+  isFirstDraft,
   onTogglePatchKey
 }: {
   baseBlocks: ManuscriptBlock[];
   proposedBlocks: ManuscriptBlock[];
   changedKeys: Set<string>;
   patchSelections: Set<string>;
+  isFirstDraft: boolean;
   onTogglePatchKey?: (key: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
+  if (isFirstDraft) {
+    return (
+      <StudioOutputManuscript
+        version={{
+          id: "patch-full",
+          label: "提议",
+          createdAt: Date.now(),
+          blocks: proposedBlocks
+        }}
+      />
+    );
+  }
   const baseBody = baseBlocks.find((b) => b.kind === "body")?.text ?? "";
   const proposedBody = proposedBlocks.find((b) => b.kind === "body")?.text ?? "";
   const bodyChanged = [...changedKeys].some((k) => k.startsWith("body:"));
@@ -285,6 +308,7 @@ export default function StudioTimelineManuscriptCard({
   }
 
   if (pendingPatch && pendingPatch.proposedBlocks.length > 0) {
+    const isFirstDraft = isStudioFirstDraftPatch(work, pendingPatch);
     const changed = new Set(pendingPatch.changedKeys ?? pendingPatch.selections ?? []);
     return (
       <div className="mt-2">
@@ -292,8 +316,11 @@ export default function StudioTimelineManuscriptCard({
           patch={pendingPatch}
           work={work}
           busy={busy}
+          isFirstDraft={isFirstDraft}
           selectedCount={patchSelections.size}
-          onApplyPartial={onApplyPatch ? () => onApplyPatch(true) : undefined}
+          onApplyPartial={
+            isFirstDraft || !onApplyPatch ? undefined : () => onApplyPatch(true)
+          }
           onApplyAll={onApplyPatch ? () => onApplyPatch(false) : undefined}
           onDiscard={onDiscardPatch}
         />
@@ -302,7 +329,8 @@ export default function StudioTimelineManuscriptCard({
           proposedBlocks={pendingPatch.proposedBlocks}
           changedKeys={changed}
           patchSelections={patchSelections}
-          onTogglePatchKey={onTogglePatchKey}
+          isFirstDraft={isFirstDraft}
+          onTogglePatchKey={isFirstDraft ? undefined : onTogglePatchKey}
         />
       </div>
     );

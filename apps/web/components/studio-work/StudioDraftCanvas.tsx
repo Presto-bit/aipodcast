@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { isStudioFirstDraftPatch } from "../../lib/studioPatchApply";
 import { isDraftLikeStatus } from "../../lib/studioWorkMigrate";
 import { STUDIO_DIALOGUE_SECTION } from "../../lib/studioOutputTypography";
 import type { ManuscriptBlock, ManuscriptVersion, StudioWork } from "../../lib/studioWorkTypes";
@@ -79,25 +80,38 @@ export default function StudioDraftCanvas({
     setMobileVersionOpen(false);
   }, [work.activeVersionId, compareMode]);
 
+  const pendingPatch = compareMode ? work.pendingPatch : null;
+  const isFirstDraftPatch =
+    pendingPatch && onApplyPatch && onDiscardPatch
+      ? isStudioFirstDraftPatch(work, pendingPatch)
+      : false;
   const patchFooter =
-    compareMode && work.pendingPatch && onApplyPatch && onDiscardPatch ? (
+    pendingPatch && onApplyPatch && onDiscardPatch ? (
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
-        <span className="text-muted">{work.pendingPatch.summary}</span>
+        <span className="font-medium text-ink">
+          {isFirstDraftPatch ? "首稿 · 待确认" : pendingPatch.summary}
+        </span>
+        {!isFirstDraftPatch ? (
+          <button
+            type="button"
+            disabled={busy}
+            className="rounded-md bg-brand px-2 py-1 text-brand-foreground disabled:opacity-50"
+            onClick={() => onApplyPatch(true)}
+          >
+            采纳所选 ({selectedPatchKeys.size})
+          </button>
+        ) : null}
         <button
           type="button"
           disabled={busy}
-          className="rounded-md bg-brand px-2 py-1 text-brand-foreground disabled:opacity-50"
-          onClick={() => onApplyPatch(true)}
-        >
-          采纳所选 ({selectedPatchKeys.size})
-        </button>
-        <button
-          type="button"
-          disabled={busy}
-          className="rounded-md border border-line px-2 py-1 hover:bg-fill disabled:opacity-50"
+          className={
+            isFirstDraftPatch
+              ? "rounded-md bg-brand px-2 py-1 text-brand-foreground disabled:opacity-50"
+              : "rounded-md border border-line px-2 py-1 hover:bg-fill disabled:opacity-50"
+          }
           onClick={() => onApplyPatch(false)}
         >
-          全部采纳
+          {isFirstDraftPatch ? "采纳成稿" : "全部采纳"}
         </button>
         <button
           type="button"
