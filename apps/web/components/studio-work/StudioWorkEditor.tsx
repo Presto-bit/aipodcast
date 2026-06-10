@@ -412,10 +412,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         const live = getStudioWork(workId);
         if (!live) return;
         const entry = getWorkStreamEntry(workId);
-        const hasPreview = hasComposePreviewContent(
-          entry?.streamingBlocksRef ?? null,
-          entry?.streamingBodyRef ?? null
-        );
+        const hasPreview =
+          Boolean(entry?.streamingBodyRef?.trim()) ||
+          hasComposePreviewContent(
+            blocksFromComposeStream(entry?.streamingBlocksRef ?? null, entry?.streamingBodyRef ?? null, [])
+          );
         const { work: withRun } = appendStudioRun(
           live,
           tool,
