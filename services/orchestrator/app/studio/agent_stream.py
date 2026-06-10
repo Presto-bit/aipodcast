@@ -337,13 +337,11 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         last_errors: list[str] = []
         template_retry_done = False
         for attempt in range(3):
-            stream_live = attempt == 0
             last_sig[0] = ""
             last_body[0] = ""
 
-            def on_attempt_delta(acc: str, *, live: bool = stream_live) -> None:
-                if live:
-                    on_stream_delta(acc)
+            def on_attempt_delta(acc: str) -> None:
+                on_stream_delta(acc)
 
             try:
                 deliverable = generate_xhs_expert_deliverable(
@@ -365,7 +363,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                         last_errors = [
                             "成稿过于模板化，请换开头钩子、段落结构与用词重写"
                         ]
-                        event_q.put(("stream_reset", None))
+                        event_q.put(("phase", "正在优化表述…"))
                         continue
                 blocks = deliverable_to_manuscript_blocks_dict(deliverable)
                 event_q.put(("done", {"tool": tool, "blocks": blocks}))
@@ -374,7 +372,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 err = str(exc)
                 if err.startswith("validation_failed:") and attempt < 2:
                     last_errors = err.split(":", 1)[1].split("|")
-                    event_q.put(("stream_reset", None))
+                    event_q.put(("phase", "正在优化表述…"))
                     continue
                 fallback = last_blocks[0] if isinstance(last_blocks[0], list) else []
                 if fallback:

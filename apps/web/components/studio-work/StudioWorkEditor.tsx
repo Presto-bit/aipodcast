@@ -411,6 +411,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         runTool = tool;
         const live = getStudioWork(workId);
         if (!live) return;
+        const entry = getWorkStreamEntry(workId);
+        const hasPreview = hasComposePreviewContent(
+          entry?.streamingBlocksRef ?? null,
+          entry?.streamingBodyRef ?? null
+        );
         const { work: withRun } = appendStudioRun(
           live,
           tool,
@@ -432,13 +437,15 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             tool === "generate" ? "写稿中" : "改版中…"
           )
         );
-        patchWorkStreamUi(workId, {
-          streamingBlocks: [],
-          streamingBodyText: "",
-          streamOptimizing: false,
-          agentRouteHint: tool === "generate" ? "正在写稿…" : "正在修改…"
-        });
-        patchWorkStreamRefs(workId, { streamingBlocksRef: null, streamingBodyRef: null });
+        if (!hasPreview) {
+          patchWorkStreamUi(workId, {
+            streamingBlocks: [],
+            streamingBodyText: "",
+            streamOptimizing: false,
+            agentRouteHint: tool === "generate" ? "正在写稿…" : "正在修改…"
+          });
+          patchWorkStreamRefs(workId, { streamingBlocksRef: null, streamingBodyRef: null });
+        }
       };
 
       const beginComposeRun = (tool: "generate" | "revise") => {
@@ -511,7 +518,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           },
           onPhase: (msg, tool) => {
             ensureComposeRun(tool === "revise" ? "revise" : "generate");
-            patchWorkStreamUi(workId, { agentRouteHint: msg || (tool === "revise" ? "正在修改…" : "正在写稿…") });
+            const hint = msg || (tool === "revise" ? "正在修改…" : "正在写稿…");
+            const optimizing = /优化/.test(hint);
+            patchWorkStreamUi(workId, {
+              agentRouteHint: hint,
+              ...(optimizing ? { streamOptimizing: true } : {})
+            });
             const live = getStudioWork(workId);
             if (!live || !runId) return;
             persist(patchStudioGeneratePhase(live, runId, msg));
@@ -532,9 +544,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               streamOptimizing: false
             });
           },
-          onStreamReset: (tool) => {
-            ensureComposeRun(tool === "revise" ? "revise" : "generate");
-            patchWorkStreamUi(workId, { streamOptimizing: true });
+          onStreamReset: () => {
+            patchWorkStreamUi(workId, {
+              streamOptimizing: true,
+              agentRouteHint: "正在优化表述…"
+            });
           }
         });
       };
