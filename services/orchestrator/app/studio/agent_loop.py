@@ -6,9 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from ..social_llm_utils import invoke_social_llm, parse_json_object
-from .agent_route import build_compose_task_sentence, is_ask_only, is_insufficient_brief
+from .agent_route import build_compose_task_sentence, is_ask_only
 from .agent_tool_router import StudioToolDecision, _apply_mode_guard, _reconcile_decision, _rule_decision
-from .agent_tool_schema import normalize_agent_mode
+from .agent_tool_schema import normalize_agent_mode, tool_router_system_prompt
+from .router_context import build_planner_user_blob
 
 LoopTool = Literal["read_manuscript", "reply", "compose", "revise"]
 StepStatus = Literal["pending", "running", "done", "error"]
@@ -18,6 +19,7 @@ EmitStep = Callable[[str, str, StepStatus, str | None], None]
 MAX_LOOP_ROUNDS = 3
 
 LOCAL_PATCH_SIGNAL = "【块级改版·局部】"
+BLOCK_PATCH_SIGNAL = "【块级改版】"
 
 
 @dataclass
@@ -64,25 +66,19 @@ def manuscript_plain_from_payload(payload: dict[str, Any], *, max_chars: int = 3
 
 
 def _loop_planner_system(*, agent_mode: str, has_manuscript: bool, manuscript_already_read: bool) -> str:
+    base = tool_router_system_prompt(agent_mode="ask" if agent_mode == "ask" else "write")
     read_rule = (
-        "- 已有稿件且用户问解读/改版/对比/这段怎么样时，可先 tool=read_manuscript（仅一次）。"
+        "- 已有稿件且需解读/改版对比时，可先 tool=read_manuscript（仅一次）。"
         if has_manuscript and not manuscript_already_read
         else "- 禁止 read_manuscript（已读过或无稿件）。"
     )
-    mode_line = (
-        "模式 ask：最终必须 reply，禁止 compose/revise。"
-        if agent_mode == "ask"
-        else "模式 write：信息足够可 compose/revise。"
-    )
-    tools = "read_manuscript|reply|compose|revise" if not manuscript_already_read and has_manuscript else "reply|compose|revise"
     return "\n".join(
         [
-            "你是 Studio Agent 单 loop 调度器。输出一个 JSON：",
-            f'{{"tool":"{tools}","brief":"compose/revise 任务句","reply":"reply≤120字","reason":"10字内"}}',
-            mode_line,
+            base,
+            "",
+            "loop 扩展：",
             read_rule,
-            "- 局部改版（含【块级改版·局部】）→ revise。",
-            "- 纯问答 → reply。brief 足够写首稿 → compose。",
+            '- 输出 JSON 须含 "tool" 字段；可选 read_manuscript 后再选 reply|compose|revise。',
             "只输出 JSON。",
         ]
     )
@@ -101,34 +97,18 @@ def _parse_loop_tool(raw: str) -> dict[str, Any] | None:
     return parsed
 
 
-def _planner_user_blob(
-    *,
-    message: str,
-    status: str,
-    version_count: int,
-    turns: list[dict[str, Any]],
-    agent_mode: str,
-    manuscript_excerpt: str,
-) -> str:
-    from .agent_tool_router import _format_turns_for_router
+def _route_step_label(tool: str) -> str:
+    if tool == "compose":
+        return "开始写稿"
+    if tool == "revise":
+        return "开始改版"
+    return "准备回复"
 
-    chunks = [
-        f"状态：{status}",
-        f"已有稿件：{'是' if version_count > 0 else '否'}",
-        f"模式：{agent_mode}",
-    ]
-    if manuscript_excerpt:
-        chunks.extend(["", "【已读稿件摘要】", manuscript_excerpt[:2800]])
-    chunks.extend(
-        [
-            "",
-            "近期对话：",
-            _format_turns_for_router(turns),
-            "",
-            f"用户最新一句：{message.strip()[:800]}",
-        ]
-    )
-    return "\n".join(chunks)
+
+def _payload_domain(payload: dict[str, Any]) -> tuple[str, str]:
+    domain = str(payload.get("domain") or "").strip()
+    fmt = str(payload.get("format") or "").strip()
+    return domain, fmt
 
 
 def run_agent_tool_loop(
@@ -142,10 +122,13 @@ def run_agent_tool_loop(
 ) -> AgentLoopResult:
     agent_mode = normalize_agent_mode(str(payload.get("agentMode") or payload.get("agent_mode") or "write"))
     steps: list[dict[str, str]] = []
+    has_pending_patch = bool(payload.get("pendingPatch"))
+    domain, fmt = _payload_domain(payload)
+    selection = str(payload.get("selectionSnippet") or "").strip()
 
     _emit(emit_step, "understand", "理解你的指令", "running", None)
 
-    if LOCAL_PATCH_SIGNAL in message:
+    if LOCAL_PATCH_SIGNAL in message or BLOCK_PATCH_SIGNAL in message:
         _emit(emit_step, "understand", "理解你的指令", "done", "revise")
         _emit(emit_step, "route", "选区改版", "done", "revise")
         brief = build_compose_task_sentence(turns, current_message=message)
@@ -172,14 +155,14 @@ def run_agent_tool_loop(
         _emit(emit_step, "route", "问答回复", "done", "reply")
         return AgentLoopResult(decision=decision, steps=steps)
 
-    manuscript_excerpt = ""
-    has_ms = version_count > 0 or bool(manuscript_plain_from_payload(payload))
-    manuscript_read = False
+    manuscript_excerpt = manuscript_plain_from_payload(payload)
+    has_ms = version_count > 0 or bool(manuscript_excerpt)
+    manuscript_read = bool(manuscript_excerpt)
     llm_parsed: dict[str, Any] | None = None
 
     use_llm_loop = os.getenv("STUDIO_TOOL_ROUTER_LLM", "1").strip() not in ("0", "false", "no")
 
-    if use_llm_loop and has_ms:
+    if use_llm_loop:
         for round_idx in range(MAX_LOOP_ROUNDS):
             _emit(
                 emit_step,
@@ -195,15 +178,19 @@ def run_agent_tool_loop(
                         has_manuscript=has_ms,
                         manuscript_already_read=manuscript_read,
                     ),
-                    _planner_user_blob(
+                    build_planner_user_blob(
                         message=message,
                         status=status,
                         version_count=version_count,
                         turns=turns,
                         agent_mode=agent_mode,
                         manuscript_excerpt=manuscript_excerpt,
+                        has_pending_patch=has_pending_patch,
+                        domain=domain,
+                        fmt=fmt,
+                        selection_snippet=selection,
                     ),
-                    max_tokens=320,
+                    max_tokens=360,
                 )
                 llm_parsed = _parse_loop_tool(str(raw or ""))
             except Exception:
@@ -243,7 +230,7 @@ def run_agent_tool_loop(
             force_compose=bool(payload.get("forceCompose")),
         )
         decision = _apply_mode_guard(decision, agent_mode=agent_mode, message=message)
-        _emit(emit_step, "route", "开始写稿" if decision.tool == "compose" else "开始改版", "done", decision.tool)
+        _emit(emit_step, "route", _route_step_label(decision.tool), "done", decision.tool)
         return AgentLoopResult(
             decision=decision,
             manuscript_excerpt=manuscript_excerpt,
@@ -259,11 +246,16 @@ def run_agent_tool_loop(
         turns=turns,
         agent_mode=agent_mode,
         force_compose=bool(payload.get("forceCompose")),
+        manuscript_excerpt=manuscript_excerpt,
+        has_pending_patch=has_pending_patch,
+        domain=domain,
+        fmt=fmt,
+        selection_snippet=selection,
     )
     _emit(
         emit_step,
         "route",
-        "开始写稿" if decision.tool == "compose" else "开始改版" if decision.tool == "revise" else "准备回复",
+        _route_step_label(decision.tool),
         "done",
         decision.tool,
     )

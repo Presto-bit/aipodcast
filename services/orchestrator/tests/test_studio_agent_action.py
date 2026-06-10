@@ -30,3 +30,33 @@ def test_explicit_question_converses():
         task_sentence="推广水杯",
     )
     assert action == "converse"
+
+
+def test_ops_question_converses_with_manuscript():
+    action = resolve_studio_action(
+        message="发布之后怎么运营",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert action == "converse"
+
+
+def test_length_edit_with_manuscript():
+    action = resolve_studio_action(
+        message="写500字",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert action == "edit"
+
+
+def test_ambiguous_short_with_manuscript_defaults_converse():
+    action = resolve_studio_action(
+        message="好啊",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert action == "converse"

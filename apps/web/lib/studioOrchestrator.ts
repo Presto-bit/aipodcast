@@ -1,11 +1,9 @@
 import { inferStudioAgentIntent } from "./studioAgentAsk";
-import { actionToLegacyRunTool, resolveStudioAgentAction } from "./studioAgentAction";
+import { actionToLegacyRunTool, isStudioAskOnlyMessage, resolveStudioAgentAction } from "./studioAgentAction";
 import {
   isExplicitAskWhileReady,
   looksLikeManuscriptEditRequest,
-  STUDIO_LENGTH_CONSTRAINT_RE,
-  STUDIO_MANUSCRIPT_READ_RE,
-  STUDIO_REVISE_INTENT_RE
+  STUDIO_MANUSCRIPT_READ_RE
 } from "./studioReviseIntent";
 import { composeTaskSentenceFromTurns, hasTaskContext } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
@@ -48,14 +46,11 @@ export function isInsufficientBrief(_userMessage: string): boolean {
 }
 
 /** 纯问答（无写稿意图）时不触发自动 generate */
-function isAskOnlyMessage(q: string, intent: StudioAgentIntent): boolean {
+function isAskOnlyMessage(q: string, intent: StudioAgentIntent, hasManuscript: boolean): boolean {
+  if (isStudioAskOnlyMessage(q, hasManuscript)) return true;
   const hasWriteIntent = WRITE_INTENT.test(q);
   if (intent === "manuscript_coach") return true;
   if (intent === "ops_strategy" && !hasWriteIntent) return true;
-  if (hasWriteIntent) return false;
-  if (/[?？]$/.test(q.trim())) return true;
-  if (/怎么(写|改|搭)|如何(写|改)|钩子|开头|结构/.test(q)) return true;
-  if (/^(帮我)?(分析|解读|看看|讲讲)/.test(q)) return true;
   return false;
 }
 
@@ -101,7 +96,7 @@ export function routeStudioAction(
 
   const hasMs = (work.versions?.length ?? 0) > 0;
   if ((work.status === "ready" || work.status === "shipped") && hasMs) {
-    if (isExplicitAskWhileReady(q) || STUDIO_MANUSCRIPT_READ_RE.test(q)) {
+    if (isExplicitAskWhileReady(q) || STUDIO_MANUSCRIPT_READ_RE.test(q) || isStudioAskOnlyMessage(q, hasMs)) {
       return {
         tool: "ask",
         intent,
@@ -119,12 +114,7 @@ export function routeStudioAction(
     }
   }
 
-  const action = resolveStudioAgentAction({
-    work,
-    message: q,
-    turns: turnList,
-    agentMode: "write"
-  });
+  const action = resolveStudioAgentAction({ work, message: q, turns: turnList, agentMode: "write" });
   if (action === "create") {
     return {
       tool: actionToLegacyRunTool(action),

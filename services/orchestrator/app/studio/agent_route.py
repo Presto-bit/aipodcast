@@ -55,9 +55,11 @@ def is_explicit_ask_while_ready(message: str) -> bool:
     q = message.strip()
     if not q:
         return False
-    if not ASK_SIGNAL.search(q) and not q.endswith("?") and not q.endswith("？"):
-        return False
-    return bool(re.search(r"怎么|如何|为什么|为啥|是否|能不能|可以吗", q))
+    if re.search(r"运营|策略|涨粉|流量|算法|发布|推广|什么时候发|怎么推", q) and not WRITE_INTENT.search(q):
+        return True
+    if q.endswith("?") or q.endswith("？"):
+        return True
+    return bool(re.search(r"怎么|如何|为什么|为啥|是否|能不能|可以吗|什么|多少", q))
 
 
 def is_manuscript_read_intent(message: str) -> bool:
@@ -75,11 +77,15 @@ def is_manuscript_edit(message: str, *, has_manuscript: bool) -> bool:
         return False
     if is_explicit_ask_while_ready(q) or is_manuscript_read_intent(q):
         return False
+    if re.search(r"运营|策略|涨粉|流量|算法|发布|推广|什么时候发|怎么推", q) and not WRITE_INTENT.search(q):
+        return False
+    if WRITE_INTENT.search(q):
+        return False
+    if ASK_SIGNAL.search(q):
+        return False
     if EDIT_SIGNAL.search(q):
         return True
     if REVISE_SIGNAL.search(q) or LENGTH_CONSTRAINT_SIGNAL.search(q) or BLOCK_PATCH_SIGNAL.search(q):
-        return True
-    if len(q) <= 56 and not q.endswith("?") and not q.endswith("？"):
         return True
     return False
 

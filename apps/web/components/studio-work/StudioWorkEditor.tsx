@@ -13,6 +13,7 @@ import {
   buildStudioReviseTaskSentence
 } from "../../lib/studioWorkIntake";
 import { getComposerPrefsFeatureCore, getStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
+import { isStudioAskOnlyMessage } from "../../lib/studioAgentAction";
 import {
   appendStudioRun,
   finishStudioRun,
@@ -453,10 +454,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         ensureComposeRun(tool);
       };
 
-      if (!baseVersion) {
-        beginComposeRun(isReviseIntent ? "revise" : "generate");
-      }
-
       const runOneStream = (streamMessage: string, streamTaskSentence: string) => {
         const liveWork = getStudioWork(workId) ?? cur;
         const streamBase =
@@ -518,7 +515,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             });
           },
           onPhase: (msg, tool) => {
-            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            if (tool === "compose" || tool === "revise") {
+              ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            }
             const hint = msg || (tool === "revise" ? "正在修改…" : "正在写稿…");
             const optimizing = /优化/.test(hint);
             patchWorkStreamUi(workId, {
@@ -530,7 +529,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             persist(patchStudioGeneratePhase(live, runId, msg));
           },
           onBlockDelta: (blocks, tool) => {
-            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            if (tool === "compose" || tool === "revise") {
+              ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            }
             patchWorkStreamRefs(workId, { streamingBlocksRef: blocks });
             patchWorkStreamUi(workId, {
               streamingBlocks: blocks,
@@ -538,7 +539,9 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             });
           },
           onBodyDelta: (body, tool) => {
-            ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            if (tool === "compose" || tool === "revise") {
+              ensureComposeRun(tool === "revise" ? "revise" : "generate");
+            }
             patchWorkStreamRefs(workId, { streamingBodyRef: body });
             patchWorkStreamUi(workId, {
               streamingBodyText: body,
@@ -561,6 +564,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           result.status === "reply" &&
           liveAfterStream &&
           !liveAfterStream.versions.length &&
+          !isStudioAskOnlyMessage(params.userText, false) &&
           wouldAutoGenerate(liveAfterStream, params.userText, params.prefixTurns)
         ) {
           result = await runOneStream(outgoingText, composeTask);

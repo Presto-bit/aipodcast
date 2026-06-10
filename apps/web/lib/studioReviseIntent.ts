@@ -1,7 +1,8 @@
-/** 客户端改版 / 篇幅 / 编辑意图（对齐 Cursor：有稿默认 edit） */
+/** 客户端改版 / 篇幅 / 编辑意图（仅显式信号；语义路由由后端 Planner 决定） */
 
 import { userMessageLooksLikeQuestion } from "./studioAgentStructured";
 import { buildBlockPatchOpinion } from "./studioBlockPatch";
+import { isOpsStrategyQuestion } from "./studioOpsStrategy";
 
 export const STUDIO_REVISE_INTENT_RE =
   /改版|改一下|改标题|改正文|缩短|加长|重写|重新写|更犀利|别动正文|只改|润色|优化|更.{0,6}体|小红书体|风格|语气|口吻|更像|口语|书面|网感|再.{0,4}一点|再.{0,4}一些/;
@@ -14,24 +15,27 @@ export const STUDIO_LENGTH_CONSTRAINT_RE =
 export function isExplicitAskWhileReady(text: string): boolean {
   const q = text.trim();
   if (!q) return false;
-  return userMessageLooksLikeQuestion(q) && /怎么|如何|为什么|为啥|是否|能不能|可以吗/.test(q);
+  if (isOpsStrategyQuestion(q)) return true;
+  if (/[?？]$/.test(q)) return true;
+  return /怎么|如何|为什么|为啥|是否|能不能|可以吗|什么|多少/.test(q);
 }
 
 /** 解读 / 总结类：有稿时走 reply，不改版 */
 export const STUDIO_MANUSCRIPT_READ_RE =
   /总结|概括|要点|解读|分析|看看|讲讲|什么意思|怎么样|评价|点评|优缺点|说了什么|讲了什么/;
 
-/** 有稿时是否应走改版（含篇幅约束；排除纯问句与解读） */
+/** 有稿时是否应走改版（仅显式 edit 信号；无 len≤56 形态猜测） */
 export function looksLikeManuscriptEditRequest(text: string, hasManuscript: boolean): boolean {
   if (!hasManuscript) return false;
   const q = text.trim();
   if (!q) return false;
   if (isExplicitAskWhileReady(q)) return false;
+  if (isOpsStrategyQuestion(q)) return false;
   if (STUDIO_MANUSCRIPT_READ_RE.test(q) && !STUDIO_REVISE_INTENT_RE.test(q) && !STUDIO_LENGTH_CONSTRAINT_RE.test(q)) {
     return false;
   }
   if (STUDIO_REVISE_INTENT_RE.test(q) || STUDIO_LENGTH_CONSTRAINT_RE.test(q)) return true;
-  if (q.length <= 56 && !/[?？]$/.test(q)) return true;
+  if (q.startsWith("【块级改版】")) return true;
   return false;
 }
 

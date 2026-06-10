@@ -139,6 +139,40 @@ describe("studioOrchestrator", () => {
     expect(ask.tool).toBe("ask");
   });
 
+  it("routes ready terse style edit to revise", () => {
+    const readyWork = baseWork({
+      status: "ready",
+      versions: [
+        {
+          id: "v1",
+          label: "v1",
+          createdAt: 1,
+          blocks: [{ id: "b1", kind: "body", text: "正文" }]
+        }
+      ],
+      activeVersionId: "v1"
+    });
+    const revise = routeStudioAction(readyWork, "更犀利");
+    expect(revise.tool).toBe("revise");
+  });
+
+  it("routes ready ops question to ask not revise", () => {
+    const readyWork = baseWork({
+      status: "ready",
+      versions: [
+        {
+          id: "v1",
+          label: "v1",
+          createdAt: 1,
+          blocks: [{ id: "b1", kind: "body", text: "正文" }]
+        }
+      ],
+      activeVersionId: "v1"
+    });
+    const ask = routeStudioAction(readyWork, "发布之后怎么运营");
+    expect(ask.tool).toBe("ask");
+  });
+
   it("routes merged chip brief to generate", () => {
     const listTurns = [
       { id: "u1", role: "user" as const, content: "我想写一篇清单体内容", createdAt: 1 }

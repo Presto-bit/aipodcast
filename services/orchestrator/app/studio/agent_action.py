@@ -63,11 +63,13 @@ def resolve_studio_action(
         return "create"
 
     if lifecycle == "running":
-        if is_manuscript_read_intent(q) or is_explicit_ask_while_ready(q):
+        if is_manuscript_read_intent(q) or is_explicit_ask_while_ready(q) or is_ask_only(q, has_manuscript=has_ms):
             return "converse"
         if has_ms and is_manuscript_edit(q, has_manuscript=True):
             return "edit"
-        if WRITE_INTENT.search(q) or TOPIC_FORM_SIGNAL.search(q) or brief:
+        if WRITE_INTENT.search(q) or (TOPIC_FORM_SIGNAL.search(q) and not is_ask_only(q, has_manuscript=has_ms)):
+            return "create"
+        if brief and not is_ask_only(q, has_manuscript=has_ms):
             return "create"
         return "converse"
 
@@ -76,6 +78,7 @@ def resolve_studio_action(
             return "converse"
         if is_manuscript_edit(q, has_manuscript=True):
             return "edit"
+        return "converse"
 
     if is_ask_only(q, has_manuscript=has_ms):
         return "converse"

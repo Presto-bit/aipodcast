@@ -77,3 +77,23 @@ def test_ready_explicit_ask_routes_reply():
         task_sentence="推广水杯",
     )
     assert tool == "reply"
+
+
+def test_ready_terse_style_edit_routes_revise():
+    tool = route_studio_agent(
+        message="更犀利",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert tool == "revise"
+
+
+def test_ready_ops_question_routes_reply_not_revise():
+    tool = route_studio_agent(
+        message="发布之后怎么运营",
+        status="ready",
+        version_count=1,
+        task_sentence="推广水杯",
+    )
+    assert tool == "reply"

@@ -28,7 +28,6 @@ from .agent_route import (
     compose_soft_failure_code,
     is_ask_only,
     is_insufficient_brief,
-    is_manuscript_edit,
     reply_for_blocking,
     should_compose_without_manuscript,
 )
@@ -178,22 +177,16 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             }
         )
 
-    if tool == "reply" and version_count > 0 and is_manuscript_edit(message, has_manuscript=True):
-        tool = "revise"
-        decision = StudioToolDecision(
-            tool="revise",
-            brief=decision.brief or message,
-            reply_text="",
-            source=decision.source,
-            reason=decision.reason or "护栏：有稿改稿",
-        )
-
     compose_brief = build_compose_task_sentence(turns, current_message=message)
-    if tool == "reply" and should_compose_without_manuscript(
-        message=message,
-        task_sentence=compose_brief,
-        version_count=version_count,
-        status=status,
+    if (
+        tool == "reply"
+        and should_compose_without_manuscript(
+            message=message,
+            task_sentence=compose_brief,
+            version_count=version_count,
+            status=status,
+        )
+        and not is_ask_only(message, has_manuscript=version_count > 0)
     ):
         tool = "compose"
         decision = StudioToolDecision(

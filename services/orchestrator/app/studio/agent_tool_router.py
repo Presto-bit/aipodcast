@@ -13,13 +13,12 @@ from .agent_tool_schema import (
 )
 from .agent_route import (
     build_compose_task_sentence,
-    build_task_sentence_from_turns,
     is_ask_only,
-    is_insufficient_brief,
     reply_for_blocking,
     route_studio_agent,
     should_force_compose,
 )
+from .router_context import build_planner_user_blob
 
 StudioTool = Literal["reply", "compose", "revise"]
 StudioAgentMode = Literal["ask", "write"]
@@ -36,17 +35,9 @@ class StudioToolDecision:
 
 
 def _format_turns_for_router(turns: list[dict[str, Any]], *, limit: int = 8) -> str:
-    lines: list[str] = []
-    for t in turns[-limit:]:
-        role = str(t.get("role") or "").strip()
-        if role not in ("user", "assistant"):
-            continue
-        text = str(t.get("content") or "").strip()
-        if not text:
-            continue
-        label = "用户" if role == "user" else "助手"
-        lines.append(f"{label}：{text[:400]}")
-    return "\n".join(lines) if lines else "（无历史）"
+    from .router_context import format_turns_for_planner
+
+    return format_turns_for_planner(turns, limit=limit)
 
 
 def _router_system_prompt(agent_mode: StudioAgentMode) -> str:
@@ -150,6 +141,7 @@ def _reconcile_decision(
     turns: list[dict[str, Any]],
     force_compose: bool = False,
 ) -> StudioToolDecision:
+    """Planner-first：LLM 为主，规则仅做安全护栏。"""
     compose_brief = _compose_brief_for_route(turns, message)
     if should_force_compose(
         message=message,
@@ -164,11 +156,13 @@ def _reconcile_decision(
             source="rules",
             reason="规则：chip 强制成稿",
         )
+
     llm_tool = str(llm.get("tool") or "reply").strip().lower()
     if llm_tool not in ("reply", "compose", "revise"):
         llm_tool = "reply"
     llm_brief = str(llm.get("brief") or "").strip()
     llm_reply = str(llm.get("reply") or "").strip()[:480]
+    llm_reason = str(llm.get("reason") or "").strip()[:120]
 
     if status == "generating":
         return StudioToolDecision(
@@ -185,45 +179,17 @@ def _reconcile_decision(
     if is_ask_only(message, has_manuscript=version_count > 0):
         llm_tool = "reply"
 
-    if (
-        version_count > 0
-        and status in ("ready", "shipped")
-        and rule.tool == "revise"
-        and not is_ask_only(message, has_manuscript=True)
-    ):
+    if version_count > 0 and llm_tool == "compose":
         llm_tool = "revise"
 
     tool: StudioTool = llm_tool
     source: RouteSource = "llm"
-    reason = f"LLM：{tool}"
+    reason = llm_reason or f"LLM：{tool}"
 
-    if rule.tool == "compose" and llm_tool == "reply" and not is_ask_only(message, has_manuscript=version_count > 0):
-        tool = "compose"
-        source = "mixed"
-        reason = "规则+LLM：open-ended 成稿"
-
-    if rule.tool == "compose" and tool == "reply" and not is_ask_only(
-        message, has_manuscript=version_count > 0
-    ):
-        tool = "compose"
-        source = "mixed"
-        reason = "规则：强制成稿"
-
-    if rule.tool == "reply" and llm_tool == "compose" and is_ask_only(message):
+    if rule.tool == "reply" and llm_tool == "compose" and is_ask_only(message, has_manuscript=version_count > 0):
         tool = "reply"
         source = "mixed"
         reason = "护栏：纯问答禁止成稿"
-
-    if (
-        version_count > 0
-        and status in ("ready", "shipped")
-        and rule.tool == "revise"
-        and not is_ask_only(message, has_manuscript=True)
-        and tool in ("reply", "compose")
-    ):
-        tool = "revise"
-        source = "mixed"
-        reason = "护栏：有稿禁止降为 reply/compose"
 
     if rule.tool == tool:
         source = "mixed" if source == "llm" else "rules"
@@ -241,6 +207,8 @@ def _reconcile_decision(
     brief = _sanitize_brief(turns=turns, current_message=message, llm_brief=llm_brief)
     if tool == "compose" and not brief.strip():
         brief = build_compose_task_sentence(turns, current_message=message)
+    if tool == "revise" and not brief.strip():
+        brief = str(message).strip() or compose_brief
     return StudioToolDecision(
         tool=tool,
         brief=brief,
@@ -278,8 +246,13 @@ def resolve_studio_agent_tool(
     turns: list[dict[str, Any]],
     agent_mode: str = "write",
     force_compose: bool = False,
+    manuscript_excerpt: str = "",
+    has_pending_patch: bool = False,
+    domain: str = "",
+    fmt: str = "",
+    selection_snippet: str = "",
 ) -> StudioToolDecision:
-    """单 loop 结构化 tool：LLM tool_call + 规则护栏 + 显式模式。"""
+    """Planner-first fallback：LLM 失败时用规则，有稿模糊默认 reply。"""
     mode = normalize_agent_mode(agent_mode)
     rule = _rule_decision(
         message=message,
@@ -294,20 +267,20 @@ def resolve_studio_agent_tool(
     if os.getenv("STUDIO_TOOL_ROUTER_LLM", "1").strip() in ("0", "false", "no"):
         return rule
 
-    user = "\n".join(
-        [
-            f"作品状态：{status}",
-            f"是否已有稿件：{'是' if version_count > 0 else '否'}",
-            f"用户模式：{mode}",
-            "",
-            "近期对话：",
-            _format_turns_for_router(turns),
-            "",
-            f"用户最新一句：{message.strip()[:800]}",
-        ]
+    user = build_planner_user_blob(
+        message=message,
+        status=status,
+        version_count=version_count,
+        turns=turns,
+        agent_mode=mode,
+        manuscript_excerpt=manuscript_excerpt,
+        has_pending_patch=has_pending_patch,
+        domain=domain,
+        fmt=fmt,
+        selection_snippet=selection_snippet,
     )
     try:
-        raw, _ = invoke_social_llm(_router_system_prompt(mode), user, max_tokens=320)
+        raw, _ = invoke_social_llm(_router_system_prompt(mode), user, max_tokens=360)
         parsed = _parse_router_response(str(raw or ""))
         if not parsed:
             return rule
