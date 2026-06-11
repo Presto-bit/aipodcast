@@ -299,6 +299,7 @@ export default function StudioTimelineManuscriptCard({
             isRevise={run.tool === "revise"}
             corpusNotebook={work.binding.notebook}
             corpusNoteIds={work.binding.noteIds}
+            corpusSources={work.corpusSources}
           />
           </div>
         ) : (
@@ -344,6 +345,7 @@ export default function StudioTimelineManuscriptCard({
           version={version}
           corpusNotebook={work.binding.notebook}
           corpusNoteIds={work.binding.noteIds}
+          corpusSources={work.corpusSources}
           selectionHighlight={selectionHighlight}
           onTextSelect={onTextSelect}
         />

@@ -55,10 +55,21 @@ import StudioAgentComposer from "./StudioAgentComposer";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
 import StudioExplicitGoalChips from "./StudioExplicitGoalChips";
+import StudioSceneChips from "./StudioSceneChips";
+import StudioReviseTierChips from "./StudioReviseTierChips";
+import {
+  applySceneChip,
+  sceneChipPlaceholder,
+  type StudioSceneChip
+} from "../../lib/studioSceneChips";
 import {
   normalizeStudioExplicitGoal,
   type StudioExplicitGoal
 } from "../../lib/studioExplicitGoal";
+import {
+  normalizeStudioReviseTier,
+  type StudioReviseTier
+} from "../../lib/studioReviseTier";
 
 function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]): StudioWork {
   let next: StudioWork = {
@@ -143,6 +154,7 @@ export default function StudioAgentDock({
     userTurnId: string;
     forceCompose?: boolean;
     selectionSnippet?: string;
+    reviseTier?: StudioReviseTier;
   }) => void | Promise<void>;
   onGenerate?: () => void | Promise<void>;
   onReviseFromChat?: (opinion: string) => void | Promise<void>;
@@ -156,6 +168,8 @@ export default function StudioAgentDock({
 }) {
   const router = useRouter();
   const [input, setInput] = useState("");
+  const [scenePlaceholder, setScenePlaceholder] = useState("");
+  const [reviseTier, setReviseTier] = useState<StudioReviseTier>("rephrase");
   const [agentBusy, setAgentBusy] = useState(false);
   const agentBusyRef = useRef(false);
   const [phase, setPhase] = useState("");
@@ -617,7 +631,8 @@ export default function StudioAgentDock({
         prefixTurns: prefixWithUser,
         userTurnId: userTurn.id,
         forceCompose: shouldForceStudioCompose(q, fromChip),
-        selectionSnippet: selectionOverride?.trim() || selectedSnippet.trim() || undefined
+        selectionSnippet: selectionOverride?.trim() || selectedSnippet.trim() || undefined,
+        reviseTier: showReviseTier ? normalizeStudioReviseTier(reviseTier) : undefined
       });
     } finally {
       setAgentBusyState(false);
@@ -663,6 +678,20 @@ export default function StudioAgentDock({
     }
   }
 
+  const showReviseTier =
+    Boolean(selectedSnippet.trim()) ||
+    normalizeStudioExplicitGoal(work.explicitGoal) === "revise";
+
+  function handleSceneChip(chip: StudioSceneChip) {
+    const next = applySceneChip(work, chip);
+    onPersist(next);
+    setScenePlaceholder(sceneChipPlaceholder(chip));
+  }
+
+  const resolvedComposerPlaceholder =
+    scenePlaceholder.trim() ||
+    agentPlaceholder(work, Boolean(pendingPatch), Boolean(work.error), jobRunning);
+
   const composerFooter = (
     <>
       {selectedSnippet.trim() ? (
@@ -691,6 +720,17 @@ export default function StudioAgentDock({
           </button>
         </div>
       ) : null}
+      <StudioSceneChips
+        disabled={agentBusy || jobRunning}
+        onSelect={handleSceneChip}
+      />
+      {showReviseTier ? (
+        <StudioReviseTierChips
+          tier={reviseTier}
+          disabled={agentBusy || jobRunning}
+          onChange={setReviseTier}
+        />
+      ) : null}
       <StudioExplicitGoalChips
         goal={normalizeStudioExplicitGoal(work.explicitGoal)}
         disabled={agentBusy || jobRunning}
@@ -702,7 +742,7 @@ export default function StudioAgentDock({
         onSend={() => void handleSend()}
         busy={agentBusy || (jobRunning && Boolean(input.trim()))}
         disabled={!canChat}
-        placeholder={agentPlaceholder(work, Boolean(pendingPatch), Boolean(work.error), jobRunning)}
+        placeholder={resolvedComposerPlaceholder}
         menuOpen={corpusMenuOpen}
         generating={jobRunning}
         onCancel={jobRunning ? onCancelStream : undefined}

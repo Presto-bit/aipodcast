@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from ..social_llm_utils import invoke_social_llm
 from .agent_route import is_manuscript_read_intent
@@ -54,6 +54,7 @@ def _build_user_blob(
     manuscript_excerpt: str,
     feature_summary: str,
     corpus_excerpt: str = "",
+    corpus_sources: list[dict[str, Any]] | None = None,
 ) -> str:
     chunks = [f"用户问题：{message.strip()[:800]}"]
     clipped = _clip_excerpt(manuscript_excerpt)
@@ -62,6 +63,14 @@ def _build_user_blob(
     corpus = corpus_excerpt.strip()[:4000]
     if corpus:
         chunks.extend(["", "【相关资料摘录】", corpus])
+    if corpus_sources:
+        manifest = "\n".join(
+            f"[{s.get('index')}] {s.get('title') or s.get('noteId')}"
+            for s in corpus_sources
+            if str(s.get("index") or "").strip()
+        )
+        if manifest.strip():
+            chunks.extend(["", "【资料脚注编号】", manifest.strip()])
     if feature_summary.strip():
         chunks.extend(["", f"【作者偏好】{feature_summary.strip()[:240]}"])
     return "\n".join(chunks)
@@ -104,7 +113,8 @@ def _system_for_tier(tier: ReplyTier, *, grounded: bool, corpus_grounded: bool =
         return "\n".join(
             [
                 "你是创作助手。用户勾选了资料库，请结合【相关资料摘录】回答（Markdown，约 200–500 字）。",
-                "至少引用 1 处资料细节；不要输出完整新稿；不要 JSON。",
+                "引用资料处用 [1]、[2] 等角标（与【资料脚注编号】对齐），至少 1 处。",
+                "不要输出完整新稿；不要 JSON。",
             ]
         )
     return "\n".join(
@@ -149,6 +159,7 @@ def generate_studio_reply(
     task_sentence: str = "",
     feature_summary: str = "",
     corpus_excerpt: str = "",
+    corpus_sources: list[dict[str, Any]] | None = None,
 ) -> str:
     """reply 统一入口：按 tier 选 max_tokens 与输出上限。"""
     _ = task_sentence
@@ -163,6 +174,7 @@ def generate_studio_reply(
         manuscript_excerpt=excerpt,
         feature_summary=feature_summary,
         corpus_excerpt=corpus,
+        corpus_sources=corpus_sources,
     )
     try:
         raw, _ = invoke_social_llm(system, user, max_tokens=max_tokens)

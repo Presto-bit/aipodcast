@@ -6,6 +6,7 @@ import {
   resolvePrimaryTitleIndex
 } from "../../lib/studioManuscriptView";
 import type { ManuscriptVersion } from "../../lib/studioWorkTypes";
+import type { NotesAskSource } from "../../lib/notesAskCitation";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 import StudioManuscriptReadable from "./StudioManuscriptReadable";
 
@@ -33,6 +34,7 @@ export default function StudioOutputManuscript({
   generatingPhase,
   corpusNotebook = "",
   corpusNoteIds = [],
+  corpusSources,
   selectionHighlight,
   onTextSelect
 }: {
@@ -42,6 +44,7 @@ export default function StudioOutputManuscript({
   generatingTask?: string;
   corpusNotebook?: string;
   corpusNoteIds?: string[];
+  corpusSources?: NotesAskSource[];
   selectionHighlight?: string;
   onTextSelect?: (text: string) => void;
 }) {
@@ -63,6 +66,7 @@ export default function StudioOutputManuscript({
         variant={variant}
         corpusNotebook={corpusNotebook}
         corpusNoteIds={corpusNoteIds}
+        corpusSources={corpusSources}
         selectionHighlight={selectionHighlight}
         onTextSelect={onTextSelect}
       />

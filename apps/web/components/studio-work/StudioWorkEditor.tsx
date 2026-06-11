@@ -61,6 +61,7 @@ import {
   workStreamAbortMatches
 } from "../../lib/studioWorkStreamRegistry";
 import { captureUndoSnapshot, applyUndoSnapshot } from "../../lib/studioUndo";
+import type { StudioReviseTier } from "../../lib/studioReviseTier";
 import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
@@ -224,6 +225,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       userTurnId: string;
       forceCompose?: boolean;
       selectionSnippet?: string;
+      reviseTier?: StudioReviseTier;
     }) => {
       const cur0 = getStudioWork(workId);
       if (!cur0 || !isLoggedIn) return;
@@ -464,6 +466,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           ),
           pendingPatch: Boolean(liveWork.pendingPatch),
           selectionSnippet: params.selectionSnippet?.trim() || "",
+          reviseTier: params.reviseTier,
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
           onStep: (step) => {
@@ -500,7 +503,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               beginComposeRun(route.tool === "revise" ? "revise" : "generate");
             }
           },
-          onReply: (text) => {
+          onReply: (text, sources) => {
             const live = getStudioWork(workId);
             if (!live || !text.trim()) return;
             const lastAssistant = live.agentTurns?.filter((t: StudioAgentTurn) => t.role === "assistant").at(-1);
@@ -509,13 +512,19 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               id: crypto.randomUUID(),
               role: "assistant",
               content: text.trim(),
-              createdAt: Date.now()
+              createdAt: Date.now(),
+              askSources: sources?.length ? sources : undefined
             };
             persist({
               ...live,
               agentTurns: [...(live.agentTurns ?? []), assistantTurn],
               error: undefined
             });
+          },
+          onSources: (sources) => {
+            const live = getStudioWork(workId);
+            if (!live || !sources.length) return;
+            persist({ ...live, corpusSources: sources });
           },
           onPhase: (msg, tool) => {
             if (tool === "compose" || tool === "revise") {
@@ -623,7 +632,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
                   id: crypto.randomUUID(),
                   role: "assistant",
                   content: text,
-                  createdAt: Date.now()
+                  createdAt: Date.now(),
+                  askSources: result.sources?.length ? result.sources : undefined
                 }
               ],
               status: runTool === "generate" && !after.versions.length ? "draft" : after.status,
@@ -632,6 +642,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             });
           } else if (!text) {
             persist({ ...after, error: undefined, runPhase: undefined });
+          } else if (result.sources?.length) {
+            persist({ ...after, corpusSources: result.sources, error: undefined, runPhase: undefined });
           }
           if (runId && ackAppended) {
             persist(
@@ -740,7 +752,11 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
                 reason: result.tool === "revise" ? "按你的意见修改" : "",
                 sourceRunId: runId
               });
-        proposePendingPatch(after, patch, params, qualityWeak);
+        const composeSources =
+          result.status === "patch" || result.status === "done" ? result.sources : undefined;
+        const workForPatch =
+          composeSources?.length ? { ...after, corpusSources: composeSources } : after;
+        proposePendingPatch(workForPatch, patch, params, qualityWeak);
       } catch (err) {
         if (ac.signal.aborted) return;
         const failed = getStudioWork(workId);
@@ -854,10 +870,10 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onTogglePatchKey={togglePatchKey}
           getAuthHeaders={getAuthHeaders}
           onPersist={persist}
-          onAgentRun={async ({ userText, prefixTurns, userTurnId, forceCompose, selectionSnippet }) => {
+          onAgentRun={async ({ userText, prefixTurns, userTurnId, forceCompose, selectionSnippet, reviseTier }) => {
             if (selectionSnippet) setSelectedSnippet("");
             await runJobExclusive(() =>
-              runAgentStream({ userText, prefixTurns, userTurnId, forceCompose, selectionSnippet })
+              runAgentStream({ userText, prefixTurns, userTurnId, forceCompose, selectionSnippet, reviseTier })
             );
           }}
           onRestoreCanvasBeforeTurn={restoreCanvasBeforeTurn}

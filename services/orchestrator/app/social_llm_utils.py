@@ -81,6 +81,7 @@ def invoke_social_llm(
     *,
     max_tokens: int | None = None,
     timeout_sec: int = 75,
+    temperature: float = 0.65,
 ) -> tuple[str, None]:
     """自媒体文案：固定 DeepSeek（DEEPSEEK_API_KEY），不回退 MiniMax。"""
     messages = [
@@ -92,7 +93,7 @@ def invoke_social_llm(
     wait = max(30, min(120, int(timeout_sec)))
     return invoke_llm_chat_messages_deepseek_only(
         messages,
-        temperature=0.65,
+        temperature=float(temperature),
         timeout_sec=wait,
         max_tokens=tok,
     )

@@ -49,6 +49,7 @@ class StudioToolDecision:
     assumptions: tuple[str, ...] = ()
     revise_blocks: tuple[str, ...] = ()
     revise_intent: str = ""
+    revise_tier: str = "rephrase"
     full_rewrite: bool = False
 
 
@@ -181,12 +182,19 @@ def _revise_scope_fields(
     *,
     message: str,
     selection_snippet: str = "",
-) -> tuple[tuple[str, ...], str, bool]:
-    scope = parse_revise_scope_from_llm(llm, message=message, selection_snippet=selection_snippet)
+    tier_override: str = "",
+) -> tuple[tuple[str, ...], str, str, bool]:
+    scope = parse_revise_scope_from_llm(
+        llm,
+        message=message,
+        selection_snippet=selection_snippet,
+        tier_override=tier_override,
+    )
     blocks = tuple(str(b) for b in (scope.get("blocks") or []) if str(b).strip())
     intent = str(scope.get("intent") or "").strip()
+    tier = str(scope.get("tier") or "rephrase").strip()
     full_rewrite = bool(scope.get("fullRewrite"))
-    return blocks, intent, full_rewrite
+    return blocks, intent, tier, full_rewrite
 
 
 def _reconcile_decision(
@@ -202,6 +210,7 @@ def _reconcile_decision(
     hint_format: str = "",
     explicit_goal: str = "",
     selection_snippet: str = "",
+    tier_override: str = "",
 ) -> StudioToolDecision:
     """Planner-first：LLM 为主，规则仅做安全护栏。"""
     compose_brief = _compose_brief_for_route(turns, message)
@@ -212,8 +221,8 @@ def _reconcile_decision(
         task_sentence=compose_brief,
         message=message,
     )
-    revise_blocks, revise_intent, full_rewrite = _revise_scope_fields(
-        llm, message=message, selection_snippet=selection_snippet
+    revise_blocks, revise_intent, revise_tier, full_rewrite = _revise_scope_fields(
+        llm, message=message, selection_snippet=selection_snippet, tier_override=tier_override
     )
 
     if should_force_compose(
@@ -304,6 +313,7 @@ def _reconcile_decision(
             assumptions=assumptions,
             revise_blocks=revise_blocks,
             revise_intent=revise_intent,
+            revise_tier=revise_tier,
             full_rewrite=full_rewrite,
         )
 
@@ -323,6 +333,7 @@ def _reconcile_decision(
         assumptions=assumptions,
         revise_blocks=revise_blocks,
         revise_intent=revise_intent,
+        revise_tier=revise_tier,
         full_rewrite=full_rewrite,
     )
 
@@ -365,6 +376,7 @@ def resolve_studio_agent_tool(
     feature_summary: str = "",
     explicit_goal: str = "",
     work_brief: str = "",
+    revise_tier: str = "",
 ) -> StudioToolDecision:
     """Planner-first fallback：LLM 失败时用规则，有稿模糊默认 reply。"""
     mode = normalize_agent_mode(agent_mode)
@@ -415,6 +427,7 @@ def resolve_studio_agent_tool(
             hint_format=fmt,
             explicit_goal=explicit_goal,
             selection_snippet=selection_snippet,
+            tier_override=revise_tier,
         )
         return _apply_mode_guard(decision, agent_mode=mode, message=message)
     except Exception:

@@ -11,6 +11,8 @@ import { plannerAgentTurns } from "./studioPlannerTurns";
 import type { StudioExplicitGoal } from "./studioExplicitGoal";
 import { normalizeStudioExplicitGoal } from "./studioExplicitGoal";
 import type { StudioDomain, StudioFormat } from "./studioDomainProfile";
+import type { StudioReviseTier } from "./studioReviseTier";
+import { normalizeNotesAskSources, type NotesAskSource } from "./notesAskCitation";
 import type { ManuscriptBlock, PendingPatch, StudioAgentTurn, WorkStatus } from "./studioWorkTypes";
 
 export type StudioAgentTool = "reply" | "compose" | "revise";
@@ -37,6 +39,7 @@ export type StudioAgentStreamInput = {
   explicitGoal?: StudioExplicitGoal;
   pendingPatch?: boolean;
   selectionSnippet?: string;
+  reviseTier?: StudioReviseTier;
   workBrief?: string;
   domain?: StudioDomain;
   format?: StudioFormat;
@@ -46,7 +49,8 @@ export type StudioAgentStreamInput = {
   onToolCall?: (call: StudioAgentToolCall & { mode?: StudioAgentMode; source?: string }) => void;
   onStep?: (step: StudioAgentStep) => void;
   onRoute?: (route: StudioAgentRouteEvent) => void;
-  onReply?: (text: string) => void;
+  onReply?: (text: string, sources?: NotesAskSource[]) => void;
+  onSources?: (sources: NotesAskSource[]) => void;
   onPhase?: (message: string, tool: StudioAgentTool) => void;
   onBlockDelta?: (blocks: ManuscriptBlock[], tool: StudioAgentTool) => void;
   onBodyDelta?: (body: string, tool: StudioAgentTool) => void;
@@ -55,9 +59,9 @@ export type StudioAgentStreamInput = {
 };
 
 export type StudioAgentStreamResult =
-  | { status: "reply"; text: string }
-  | { status: "patch"; tool: "compose" | "revise"; pendingPatch: PendingPatch; blocks: ManuscriptBlock[] }
-  | { status: "done"; tool: "compose" | "revise"; blocks: ManuscriptBlock[] }
+  | { status: "reply"; text: string; sources?: NotesAskSource[] }
+  | { status: "patch"; tool: "compose" | "revise"; pendingPatch: PendingPatch; blocks: ManuscriptBlock[]; sources?: NotesAskSource[] }
+  | { status: "done"; tool: "compose" | "revise"; blocks: ManuscriptBlock[]; sources?: NotesAskSource[] }
   | { status: "error"; error: string }
   | { status: "aborted" };
 
@@ -97,6 +101,7 @@ export async function streamStudioAgent(
       explicitGoal: normalizeStudioExplicitGoal(input.explicitGoal),
       pendingPatch: Boolean(input.pendingPatch),
       selectionSnippet: input.selectionSnippet?.trim() || "",
+      reviseTier: input.reviseTier,
       workBrief: input.workBrief?.trim() || "",
       useRag: input.noteIds.length > 0,
       sourceType: input.noteIds.length > 0 ? "notes_rag" : "composer_prompt"
@@ -122,6 +127,7 @@ export async function streamStudioAgent(
   let buffer = "";
   let replyText = "";
   let replyNotified = false;
+  let streamSources: NotesAskSource[] | undefined;
   let doneTool: "compose" | "revise" | null = null;
   let doneBlocks: ManuscriptBlock[] = [];
   let pendingPatch: PendingPatch | null = null;
@@ -174,11 +180,17 @@ export async function streamStudioAgent(
           } else if (type === "route") {
             const route = parseStudioAgentRouteEvent(ev);
             if (route) input.onRoute?.(route);
+          } else if (type === "sources") {
+            const sources = normalizeNotesAskSources(ev.sources);
+            if (sources?.length) {
+              streamSources = sources;
+              input.onSources?.(sources);
+            }
           } else if (type === "reply") {
             replyText = String(ev.text || "").trim();
             if (replyText && !replyNotified) {
               replyNotified = true;
-              input.onReply?.(replyText);
+              input.onReply?.(replyText, streamSources);
             }
           } else if (type === "phase") {
             const msg = String(ev.message || "").trim();
@@ -222,14 +234,16 @@ export async function streamStudioAgent(
             const dt = String(ev.tool || "");
             if (dt === "reply") {
               const text = (replyText || "好的。").trim();
+              const doneSources = normalizeNotesAskSources(ev.sources) ?? streamSources;
               if (text && !replyNotified) {
                 replyNotified = true;
-                input.onReply?.(text);
+                input.onReply?.(text, doneSources);
               }
-              return { status: "reply", text };
+              return { status: "reply", text, sources: doneSources };
             }
             doneTool = dt === "revise" ? "revise" : "compose";
             doneBlocks = normalizeStreamManuscriptBlocks(ev.blocks);
+            streamSources = normalizeNotesAskSources(ev.sources) ?? streamSources;
           } else if (type === "error") {
             return { status: "error", error: String(ev.message || "生成失败") };
           }
@@ -249,7 +263,7 @@ export async function streamStudioAgent(
   }
 
   if (replyText && !doneTool) {
-    return { status: "reply", text: replyText };
+    return { status: "reply", text: replyText, sources: streamSources };
   }
 
   if (doneTool && (doneBlocks.length || pendingPatch)) {
@@ -261,10 +275,11 @@ export async function streamStudioAgent(
         status: "patch",
         tool: doneTool,
         pendingPatch,
-        blocks: doneBlocks.length ? doneBlocks : pendingPatch.proposedBlocks
+        blocks: doneBlocks.length ? doneBlocks : pendingPatch.proposedBlocks,
+        sources: streamSources
       };
     }
-    return { status: "done", tool: doneTool, blocks: doneBlocks };
+    return { status: "done", tool: doneTool, blocks: doneBlocks, sources: streamSources };
   }
 
   return { status: "error", error: "Agent 未返回完整结果" };

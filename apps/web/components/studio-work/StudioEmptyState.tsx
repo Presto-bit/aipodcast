@@ -14,7 +14,7 @@ export default function StudioEmptyState({
   return (
     <div className="py-8 text-center">
       <p className="text-sm text-ink">直接描述想写什么</p>
-      <p className="mt-1 text-[11px] text-muted">无需选渠道或填表 · 先出一版再迭代</p>
+      <p className="mt-1 text-[11px] text-muted">点下方场景快速开始，或直接描述想写什么</p>
       <div className="mt-4 flex flex-wrap justify-center gap-1.5">
         {prompts.map((p) => (
           <button

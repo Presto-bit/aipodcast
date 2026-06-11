@@ -8,7 +8,40 @@ from typing import Any
 from ..social_llm_utils import invoke_social_llm, parse_json_object
 from .domain_profile import domain_author_overlay
 from .patch_utils import mask_proposed_to_scope
-from .studio_revise_scope import scopes_to_block_kinds
+from .studio_revise_scope import normalize_revise_tier, scopes_to_block_kinds
+
+_TIER_CONFIG: dict[str, dict[str, Any]] = {
+    "preserve": {
+        "label": "保守润色",
+        "temperature": 0.35,
+        "max_tokens": 900,
+        "rules": [
+            "禁止改变段落顺序与段落数量。",
+            "禁止增删论点、事实与例子。",
+            "仅修正语法、用词与标点，使表达更通顺。",
+        ],
+    },
+    "rephrase": {
+        "label": "标准改写",
+        "temperature": 0.65,
+        "max_tokens": 1200,
+        "rules": [
+            "保留全部事实、结构与关键信息。",
+            "句式与用词应有明显变化（约 40% 以上），避免简单同义词替换堆砌。",
+            "可微调句序，但不要合并或拆分段落。",
+        ],
+    },
+    "rewrite": {
+        "label": "强力重写",
+        "temperature": 0.85,
+        "max_tokens": 1600,
+        "rules": [
+            "保留主题、核心事实与结论，可重组段落与论证顺序。",
+            "语气与钩子可大幅调整，但不要换题或引入原文没有的新事实。",
+            "允许重写开头与过渡句，使整体更贴合用户意见。",
+        ],
+    },
+}
 
 
 def _blocks_to_context(blocks: list[dict[str, Any]]) -> str:
@@ -81,16 +114,23 @@ def build_revise_executor_prompt(
     manuscript_context: str,
     selection_snippet: str = "",
     intent: str = "",
+    tier: str = "rephrase",
     domain: str = "general",
 ) -> tuple[str, str]:
+    tier_key = normalize_revise_tier(tier)
+    cfg = _TIER_CONFIG[tier_key]
     scope_list = ", ".join(sorted(scopes))
     domain_hint = domain_author_overlay({"domain": domain, "format": "general"})
+    rule_lines = "\n".join(f"- {line}" for line in cfg["rules"])
     system = "\n".join(
         [
             "你是稿件局部改版助手。只修改用户指定的块，输出一个 JSON 对象。",
+            f"改写档位：{cfg['label']}（{tier_key}）。",
             f"允许修改的块：{scope_list}。",
             "JSON 键仅可包含：title, body, hashtags(数组), coverBrief, interaction。",
             "只输出 JSON，不要 markdown，不要解释。",
+            "档位约束：",
+            rule_lines,
             domain_hint,
         ]
     )
@@ -115,6 +155,8 @@ def execute_patch_blocks(
     scopes = scopes_to_block_kinds(revise_scope)
     if not scopes or not from_blocks:
         return list(from_blocks)
+    tier = normalize_revise_tier(str(revise_scope.get("tier") or "rephrase"))
+    cfg = _TIER_CONFIG[tier]
     context = _blocks_to_context(from_blocks)
     system, user = build_revise_executor_prompt(
         message=message,
@@ -122,10 +164,16 @@ def execute_patch_blocks(
         manuscript_context=context,
         selection_snippet=selection_snippet,
         intent=str(revise_scope.get("intent") or ""),
+        tier=tier,
         domain=domain,
     )
     try:
-        raw, _ = invoke_social_llm(system, user, max_tokens=1200)
+        raw, _ = invoke_social_llm(
+            system,
+            user,
+            max_tokens=int(cfg["max_tokens"]),
+            temperature=float(cfg["temperature"]),
+        )
         parsed = parse_json_object(str(raw or ""))
         if not isinstance(parsed, dict):
             return mask_proposed_to_scope(from_blocks, list(from_blocks), scopes)

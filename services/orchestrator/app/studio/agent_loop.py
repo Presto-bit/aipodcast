@@ -112,6 +112,7 @@ def run_agent_tool_loop(
         feature_summary=_feature_summary(payload),
         explicit_goal=explicit_goal_from_payload(payload),
         work_brief=str(payload.get("workBrief") or payload.get("brief") or "").strip(),
+        revise_tier=str(payload.get("reviseTier") or "").strip(),
     )
     _emit(emit_step, "understand", "理解你的指令", "done", decision.tool)
     _emit(emit_step, "route", "决定下一步", "done", decision.tool)

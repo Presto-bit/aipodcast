@@ -164,6 +164,7 @@ export default function StudioManuscriptReadable({
   className = "",
   corpusNotebook = "",
   corpusNoteIds = [],
+  corpusSources: corpusSourcesOverride,
   selectionHighlight,
   onTextSelect
 }: {
@@ -173,12 +174,18 @@ export default function StudioManuscriptReadable({
   className?: string;
   corpusNotebook?: string;
   corpusNoteIds?: string[];
+  /** enriched sources（优先于 noteIds 构建的占位） */
+  corpusSources?: NotesAskSource[];
   /** 选区高亮片段（patch 进行中） */
   selectionHighlight?: string;
   onTextSelect?: (text: string) => void;
 }) {
   const corpusSources =
-    corpusNoteIds.length > 0 ? buildStudioCorpusSources(corpusNotebook, corpusNoteIds) : undefined;
+    corpusSourcesOverride?.length
+      ? corpusSourcesOverride
+      : corpusNoteIds.length > 0
+        ? buildStudioCorpusSources(corpusNotebook, corpusNoteIds)
+        : undefined;
   const hasBody = Boolean(variant.body.trim());
   const hasTail = Boolean(variant.interaction.trim() || variant.hashtags.length || variant.cover.trim());
 

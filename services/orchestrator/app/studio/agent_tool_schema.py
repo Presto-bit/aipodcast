@@ -14,7 +14,7 @@ STUDIO_AGENT_TOOL_JSON_SHAPE = (
     '"domain":"social|article|business|narrative|script|academic|general",'
     '"format":"short_post|long_form|listicle|email|tutorial|script_beats|summary|general",'
     '"assumptions":["可选假设"],'
-    '"reviseScope":{"blocks":["title|body|hashtags|coverBrief"],"intent":"sharper","fullRewrite":false}}'
+    '"reviseScope":{"blocks":["title|body|hashtags|coverBrief"],"tier":"preserve|rephrase|rewrite","intent":"sharper","fullRewrite":false}}'
 )
 
 
@@ -93,6 +93,7 @@ def tool_router_system_prompt(*, agent_mode: StudioAgentMode) -> str:
             "规则：",
             "- open-ended 写稿意图 → compose；缺细节假设，勿降级 reply。",
             "- 只改标题/段落/语气 → revise，brief 注明 scope；reviseScope.blocks 列出块。",
+            "- reviseScope.tier：preserve=润色保结构，rephrase=同义改写，rewrite=同题大改（仍非全稿）。",
             "- 全稿重写/换主题 → compose 或 reviseScope.fullRewrite=true。",
             "- 推断 domain/format 写入 JSON（social/article/business/…）。",
             "- 无稿件禁止 revise。",

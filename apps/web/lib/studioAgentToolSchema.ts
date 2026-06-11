@@ -17,7 +17,7 @@ export type StudioAgentToolCall = {
   domain?: string;
   format?: string;
   assumptions?: string[];
-  reviseScope?: { blocks?: string[]; intent?: string; fullRewrite?: boolean };
+  reviseScope?: { blocks?: string[]; intent?: string; tier?: string; fullRewrite?: boolean };
 };
 
 export type StudioAgentRouteSource = "rules" | "llm" | "mixed";

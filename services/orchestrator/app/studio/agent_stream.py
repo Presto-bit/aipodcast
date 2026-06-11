@@ -28,7 +28,7 @@ from .studio_constants import (
     STUDIO_USER_REPLY_MAX_CHARS,
 )
 from .studio_reply import generate_studio_reply
-from .studio_corpus_snippet import fetch_reply_corpus_excerpt
+from .studio_corpus_snippet import build_compose_corpus_sources, fetch_reply_corpus_with_sources
 from .agent_route import (
     build_compose_task_sentence,
     compose_soft_failure_code,
@@ -155,6 +155,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         "reviseScope": {
             "blocks": list(decision.revise_blocks),
             "intent": decision.revise_intent,
+            "tier": decision.revise_tier,
             "fullRewrite": decision.full_rewrite,
         },
         "requestId": rid,
@@ -194,8 +195,10 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         )[:80]
         if is_insufficient_brief(compose_brief) and version_count == 0:
             text = reply_for_blocking(compose_brief)
+            corpus_sources: list[dict[str, Any]] = []
         else:
             corpus_excerpt = ""
+            corpus_sources: list[dict[str, Any]] = []
             note_ids = payload.get("noteIds") or payload.get("selected_note_ids") or []
             if isinstance(note_ids, list) and note_ids:
                 yield _sse(
@@ -206,11 +209,20 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                         "tool": "reply",
                     }
                 )
-                corpus_excerpt = fetch_reply_corpus_excerpt(
+                corpus_excerpt, corpus_sources = fetch_reply_corpus_with_sources(
                     user_ref=user_ref,
                     payload=payload,
                     query=message,
                 )
+                if corpus_sources:
+                    yield _sse(
+                        {
+                            "type": "sources",
+                            "sources": corpus_sources,
+                            "requestId": rid,
+                            "tool": "reply",
+                        }
+                    )
             text = generate_studio_reply(
                 message,
                 has_manuscript=version_count > 0,
@@ -218,20 +230,22 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 task_sentence=compose_brief,
                 feature_summary=feature_summary,
                 corpus_excerpt=corpus_excerpt,
+                corpus_sources=corpus_sources,
             )
         text = text[:STUDIO_USER_REPLY_MAX_CHARS]
         yield _sse({"type": "reply", "text": text, "requestId": rid})
-        yield _sse(
-            {
-                "type": "done",
-                "tool": "reply",
-                "domain": decision.domain or "",
-                "format": decision.format or "",
-                "assumptions": list(decision.assumptions),
-                "requestId": rid,
-                "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
-            }
-        )
+        done_payload: dict[str, Any] = {
+            "type": "done",
+            "tool": "reply",
+            "domain": decision.domain or "",
+            "format": decision.format or "",
+            "assumptions": list(decision.assumptions),
+            "requestId": rid,
+            "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
+        }
+        if corpus_sources:
+            done_payload["sources"] = corpus_sources
+        yield _sse(done_payload)
         return
 
     planner_domain = str(decision.domain or payload.get("domain") or "general").strip()
@@ -241,6 +255,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         revise_scope = {
             "blocks": list(decision.revise_blocks),
             "intent": decision.revise_intent,
+            "tier": decision.revise_tier,
             "fullRewrite": decision.full_rewrite,
         }
         if is_local_patch_scope(revise_scope):
@@ -576,6 +591,22 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 source_run_id=str(payload.get("clientRunId") or rid),
                 quality_note=quality_note,
             )
+            compose_sources: list[dict[str, Any]] = []
+            if corpus_used > 0:
+                compose_sources = build_compose_corpus_sources(
+                    user_ref=user_ref,
+                    payload=stream_payload,
+                    query=task_sentence,
+                )
+                if compose_sources:
+                    yield _sse(
+                        {
+                            "type": "sources",
+                            "sources": compose_sources,
+                            "requestId": rid,
+                            "tool": data.get("tool") or tool,
+                        }
+                    )
             yield _sse(
                 {
                     "type": "patch_proposed",
@@ -584,15 +615,16 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     "tool": data.get("tool") or tool,
                 }
             )
-            yield _sse(
-                {
-                    "type": "done",
-                    "tool": data.get("tool") or tool,
-                    "outcome": "patch",
-                    "blocks": blocks,
-                    "silent": True,
-                    "requestId": rid,
-                    "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
-                }
-            )
+            done_ev: dict[str, Any] = {
+                "type": "done",
+                "tool": data.get("tool") or tool,
+                "outcome": "patch",
+                "blocks": blocks,
+                "silent": True,
+                "requestId": rid,
+                "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
+            }
+            if compose_sources:
+                done_ev["sources"] = compose_sources
+            yield _sse(done_ev)
             return

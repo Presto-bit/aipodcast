@@ -172,6 +172,8 @@ export type StudioWork = {
   lastPlannerReason?: string;
   /** P2：显式本轮目标（auto=Planner 自行判断） */
   explicitGoal?: StudioExplicitGoal;
+  /** 成稿资料角标（SSE sources  enriched） */
+  corpusSources?: NotesAskSource[];
   /** V2：探索（自动 Apply）| 审阅（需确认） */
   editorMode?: StudioEditorMode;
   /** V2：Apply 后一层 Undo */
