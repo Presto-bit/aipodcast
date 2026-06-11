@@ -75,6 +75,14 @@ def format_hashtag_line(tags: list[str]) -> str:
     return " ".join(parts)
 
 
+def _social_llm_timeout_sec(max_tokens: int | None, timeout_sec: int | None = None) -> int:
+    tok = max(1024, min(8192, int(max_tokens or 4096)))
+    scaled = max(120, min(600, int(tok * 0.12)))
+    if timeout_sec is not None and int(timeout_sec) > scaled:
+        return min(600, int(timeout_sec))
+    return scaled
+
+
 def invoke_social_llm(
     system: str,
     user: str,
@@ -90,7 +98,7 @@ def invoke_social_llm(
     ]
     tok = int(max_tokens) if max_tokens is not None else 4096
     tok = max(1024, min(8192, tok))
-    wait = max(30, min(120, int(timeout_sec)))
+    wait = _social_llm_timeout_sec(tok, timeout_sec)
     return invoke_llm_chat_messages_deepseek_only(
         messages,
         temperature=float(temperature),
@@ -120,7 +128,7 @@ def invoke_social_llm_stream_iter(
     ]
     tok = int(max_tokens) if max_tokens is not None else 4096
     tok = max(1024, min(8192, tok))
-    wait = max(30, min(120, int(timeout_sec)))
+    wait = _social_llm_timeout_sec(tok, timeout_sec)
     yield from iter_chat_completion_openai_compatible_stream(
         messages=messages,
         api_base=base,

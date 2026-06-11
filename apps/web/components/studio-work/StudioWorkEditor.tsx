@@ -265,6 +265,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       activeStreamTurnIdRef.current = params.userTurnId;
 
       const ac = new AbortController();
+      const composeWallTimer = window.setTimeout(() => ac.abort(), 12 * 60 * 1000);
       registerWorkStream(workId, ac, params.userTurnId);
       patchWorkStreamUi(workId, {
         agentRouteHint: "正在理解你的指令…",
@@ -777,6 +778,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           persist({ ...failed, error: msg });
         }
       } finally {
+        window.clearTimeout(composeWallTimer);
         if (workStreamAbortMatches(workId, ac)) {
           clearStreamingSurface();
           clearWorkStream(workId, ac);

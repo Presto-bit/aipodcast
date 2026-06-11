@@ -90,15 +90,12 @@ def build_compose_corpus_sources(
     *,
     user_ref: str,
     payload: dict[str, Any],
-    query: str,
-    max_chars: int = 4_000,
+    query: str = "",
 ) -> list[dict[str, Any]]:
-    """成稿/改版完成后构建可点击的资料 sources。"""
-    _, sources = fetch_reply_corpus_with_sources(
-        user_ref=user_ref,
-        payload=payload,
-        query=query,
-        max_chars=max_chars,
-        top_k=6,
-    )
-    return sources
+    """成稿完成后构建可点击的资料 sources（快速路径，不二次 RAG）。"""
+    _ = query
+    nids = _ordered_note_ids(payload.get("noteIds") or payload.get("selected_note_ids"))
+    if not nids:
+        return []
+    owner = str(payload.get("notes_source_owner_user_id") or "").strip() or None
+    return _base_sources(nids, user_ref=user_ref, owner=owner)

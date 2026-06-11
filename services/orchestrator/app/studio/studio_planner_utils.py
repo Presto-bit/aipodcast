@@ -135,6 +135,28 @@ def target_chars_for_domain(domain: str, fmt: str, task_sentence: str) -> int:
     return 900
 
 
+def compose_stream_deadline_seconds(
+    *,
+    intake: dict[str, Any] | None = None,
+    domain: str = "",
+    fmt: str = "",
+    task_sentence: str = "",
+    has_corpus: bool = False,
+) -> float:
+    """成稿流式阶段 wall-clock 上限（秒）：长文 + 资料需更久，但仍硬顶防无限挂起。"""
+    merged = intake if isinstance(intake, dict) else {}
+    try:
+        target = int(merged.get("_domainTargetChars") or 0)
+    except (TypeError, ValueError):
+        target = 0
+    if target <= 0:
+        target = target_chars_for_domain(domain, fmt, task_sentence)
+    base = 150.0 + float(target) * 0.22
+    if has_corpus:
+        base += 60.0
+    return max(180.0, min(900.0, base))
+
+
 def explicit_goal_from_payload(payload: dict[str, Any]) -> str:
     return str(payload.get("explicitGoal") or payload.get("explicit_goal") or "").strip().lower()
 

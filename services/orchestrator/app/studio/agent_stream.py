@@ -48,6 +48,7 @@ from .domain_profile import (
 )
 from .agent_tool_schema import normalize_agent_mode
 from .patch_utils import build_pending_patch_payload
+from .studio_planner_utils import compose_stream_deadline_seconds
 
 STUDIO_NEEDS_BRIEF = "NEEDS_BRIEF"
 STUDIO_NEEDS_REWRITE = "NEEDS_REWRITE"
@@ -380,35 +381,35 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     stream_payload, corpus_total, corpus_used = _cap_stream_note_ids(stream_payload)
 
     yield _sse({"type": "phase", "message": "开始写稿…", "requestId": rid, "tool": tool})
-    yield _sse(
-        {
-            "type": "step",
-            "id": "compose_stream",
-            "label": "撰写成稿" if tool == "compose" else "按你的意见修改",
-            "status": "running",
-            "tool": tool,
-            "requestId": rid,
-        }
-    )
-
-    if corpus_used > 0 and corpus_total > corpus_used:
+    if corpus_used > 0:
         yield _sse(
             {
-                "type": "phase",
-                "message": f"资料共 {corpus_total} 篇，先检索其中 {corpus_used} 篇…",
-                "requestId": rid,
+                "type": "step",
+                "id": "corpus_prep",
+                "label": "检索资料",
+                "status": "running",
                 "tool": tool,
+                "requestId": rid,
             }
         )
-    elif corpus_used > 0:
-        yield _sse(
-            {
-                "type": "phase",
-                "message": f"正在检索资料（{corpus_used} 篇）…",
-                "requestId": rid,
-                "tool": tool,
-            }
-        )
+        if corpus_total > corpus_used:
+            yield _sse(
+                {
+                    "type": "phase",
+                    "message": f"资料共 {corpus_total} 篇，先检索其中 {corpus_used} 篇…",
+                    "requestId": rid,
+                    "tool": tool,
+                }
+            )
+        else:
+            yield _sse(
+                {
+                    "type": "phase",
+                    "message": f"正在检索资料（{corpus_used} 篇）…",
+                    "requestId": rid,
+                    "tool": tool,
+                }
+            )
 
     prep_q: queue.Queue[tuple[str, Any]] = queue.Queue()
 
@@ -457,6 +458,45 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         yield _sse({"type": "error", "message": "资料准备失败", "requestId": rid})
         return
 
+    if corpus_used > 0:
+        yield _sse(
+            {
+                "type": "step",
+                "id": "corpus_prep",
+                "label": "检索资料",
+                "status": "done",
+                "tool": tool,
+                "requestId": rid,
+            }
+        )
+
+    gen_deadline = compose_stream_deadline_seconds(
+        intake=intake,
+        domain=planner_domain,
+        fmt=planner_format,
+        task_sentence=task_sentence,
+        has_corpus=corpus_used > 0,
+    )
+
+    yield _sse(
+        {
+            "type": "step",
+            "id": "compose_stream",
+            "label": "撰写成稿" if tool == "compose" else "按你的意见修改",
+            "status": "running",
+            "tool": tool,
+            "requestId": rid,
+        }
+    )
+    yield _sse(
+        {
+            "type": "phase",
+            "message": "正在撰写完整成稿…",
+            "requestId": rid,
+            "tool": tool,
+        }
+    )
+
     event_q: queue.Queue[tuple[str, Any]] = queue.Queue()
     last_sig = [""]
     last_body = [""]
@@ -488,7 +528,12 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
     def worker() -> None:
         last_errors: list[str] = []
         template_retry_done = False
+        wall_started = time.perf_counter()
+        wall_limit = gen_deadline * 2.2
         for attempt in range(3):
+            if time.perf_counter() - wall_started > wall_limit:
+                event_q.put(("error", "生成超时，请缩短篇幅或稍后重试"))
+                return
             last_sig[0] = ""
             last_body[0] = ""
 
@@ -540,7 +585,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
 
     threading.Thread(target=worker, daemon=True).start()
 
-    for kind, item in iter_compose_queue_events(event_q):
+    for kind, item in iter_compose_queue_events(event_q, deadline_seconds=gen_deadline):
         if kind == "phase":
             yield _sse({"type": "phase", "message": str(item), "requestId": rid, "tool": tool})
         elif kind == "body_delta":
@@ -596,7 +641,6 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 compose_sources = build_compose_corpus_sources(
                     user_ref=user_ref,
                     payload=stream_payload,
-                    query=task_sentence,
                 )
                 if compose_sources:
                     yield _sse(

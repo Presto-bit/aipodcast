@@ -7,7 +7,7 @@ import {
 
 const STUDIO_STREAM_TIMEOUT_MS = 0;
 
-export const maxDuration = 180;
+export const maxDuration = 800;
 
 /** Studio 单 Agent SSE：与编排器 /api/v1/studio/agent/stream 对齐 */
 export async function POST(req: NextRequest) {

@@ -5,6 +5,7 @@ const STEP_LABELS: Record<string, string> = {
   read_manuscript: "阅读当前成稿",
   route: "决定下一步",
   compose_stream: "撰写成稿",
+  corpus_prep: "检索资料",
   plan_0: "分析指令",
   plan_1: "确认动作",
   plan_2: "再次确认"
