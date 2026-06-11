@@ -21,6 +21,7 @@ from ..composer_expert.manuscript_stream import (
     iter_compose_queue_events,
     partial_social_to_manuscript_blocks,
 )
+from ..social_llm_utils import extract_partial_social_json_fields
 from .studio_constants import STUDIO_MANUSCRIPT_EXCERPT_CHARS, STUDIO_USER_REPLY_MAX_CHARS
 from .studio_reply import generate_studio_reply
 from .agent_route import (
