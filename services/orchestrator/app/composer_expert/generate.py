@@ -9,7 +9,7 @@ from typing import Any, Callable
 from ..social_llm_utils import invoke_and_parse_social_json
 from ..social_publish_draft import generate_social_publish_draft, resolve_social_publish_material
 from ..social_xhs import build_xhs_native_readability_block
-from .intake import _infer_xhs
+from .intake import _infer_xhs, resolve_xhs_intake_length, xhs_body_para_max_chars
 from .schema import validate_expert_deliverable
 
 logger = logging.getLogger(__name__)
@@ -176,13 +176,17 @@ def _xhs_corpus_anchor_errors(content: dict[str, Any], *, used_rag: bool) -> lis
 def _compose_expert_writer_instructions(
     *, task_sentence: str, intake: dict[str, Any], used_rag: bool = False
 ) -> str:
+    length = resolve_xhs_intake_length(intake, task_sentence)
+    para_max = xhs_body_para_max_chars(length)
+    target = _XHS_LENGTH_CHARS.get(length, 600)
     hints = [
         "你是小红书种草/推广笔记写手。根据用户任务与偏好，撰写完整、可直接发布的笔记 JSON。",
         "必须写出具体产品卖点、目标用户痛点、使用场景与行动引导，禁止空泛占位。",
         "输出必须是可直接发布的种草/推广笔记正文，禁止写「怎么写钩子/步骤拆解/同行可套用/今天拆解写法」类创作课或方法论。",
         "禁止把任务描述或本说明文字照抄进正文；禁止输出「请先结论/展开」类模板结构。",
         build_xhs_native_readability_block(composer_mode=True),
-        "正文须分段：每段不超过 80 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
+        f"正文须分段：每段不超过 {para_max} 字，段间空行；清单体用「·」或 ①②③ 分行，禁止整屏大段文字。",
+        f"目标篇幅档位：{length}（主体约 {target} 字）。",
         "标题中的数量承诺（如「3个坑」「三大误区」）须与正文分点条数完全一致，禁止标题写 3 条正文列 4 条。",
         "输出单篇完整笔记：1 个标题 + 1 篇正文 + 1 句互动引导；禁止 directions/bodies/interactions 多方向数组。",
         "开头前两行须有强钩子：具体场景、痛点问句、数字结果或反常识，禁止「很多人/近年来」式空泛开场。",
@@ -474,12 +478,26 @@ def _composer_anti_template_extras(intake: dict[str, Any]) -> dict[str, Any]:
     return extras
 
 
+def _xhs_compose_must_include(intake: dict[str, Any], task_sentence: str) -> list[str]:
+    length = resolve_xhs_intake_length(intake, task_sentence)
+    para_max = xhs_body_para_max_chars(length)
+    target = _XHS_LENGTH_CHARS.get(length, 600)
+    return [
+        "产品或主题的核心卖点",
+        "目标用户痛点或使用场景",
+        "可执行的行动引导（如试用/关注/评论）",
+        f"正文分段，每段不超过{para_max}字",
+        f"目标篇幅约{target}字",
+    ]
+
+
 def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dict[str, Any]:
     options: dict[str, Any] = {"platform": "xiaohongshu", "source_type": "composer_prompt"}
     tone = str(intake.get("tone") or "").strip()
     if tone in _XHS_TONE:
         options["tone"] = _XHS_TONE[tone]
-    length = str(intake.get("length") or "").strip()
+    length = resolve_xhs_intake_length(intake, task_sentence)
+    intake["length"] = length
     if length in _XHS_LENGTH_CHARS:
         options["target_chars"] = _XHS_LENGTH_CHARS[length]
     audience_raw = intake.get("audience")
@@ -1165,12 +1183,7 @@ def run_composer_expert_deliverable_job(
         persona["otherRequirements"] = other_req[:1600]
         options["persona"] = persona
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
-    extras["mustInclude"] = [
-        "产品或主题的核心卖点",
-        "目标用户痛点或使用场景",
-        "可执行的行动引导（如试用/关注/评论）",
-        "正文分段，每段不超过80字",
-    ]
+    extras["mustInclude"] = _xhs_compose_must_include(intake, task_sentence)
     options["extras"] = extras
 
     if on_progress:

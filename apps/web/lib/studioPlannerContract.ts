@@ -23,7 +23,7 @@ export type StudioPlannerDecision = {
 };
 
 export const STUDIO_PLANNER_JSON_SHAPE =
-  '{"tool":"read_manuscript|search_corpus|compose|patch|reply","brief":"任务句","reply":"reply≤120字","reason":"必填","domain":"可选","format":"可选","assumptions":["可选假设"]}';
+  '{"tool":"read_manuscript|search_corpus|compose|patch|reply","brief":"任务句","reply":"可选草稿（下游扩展）","reason":"必填","domain":"可选","format":"可选","assumptions":["可选假设"]}';
 
 export function normalizePlannerTool(raw: string): StudioPlannerTool | null {
   const t = raw.trim().toLowerCase();

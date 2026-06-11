@@ -75,7 +75,9 @@ function intentSystemPrompt(intent: StudioAgentIntent, work: StudioWork): string
     case "ops_strategy":
       return work.status === "ready" || work.status === "shipped"
         ? [
-            "你是内容运营策略顾问，结合当前稿件与渠道作答。",
+            "你是内容运营策略顾问。用户已有成稿，输出「针对本篇笔记」的运营 memo（Markdown，400–800字）。",
+            "必须含：这篇在推什么（引用「」稿内原句）、适合谁、3条绑定稿内关键词的发布动作、1条不建议、下一步。",
+            "禁止泛化建议（如与稿无关的「效率工具合集」）；禁止「画布」「稿件主题」。",
             "勿提示「确认任务」、生成计划或确认执行。"
           ].join("\n")
         : [

@@ -1,4 +1,4 @@
-import { isOpsStrategyQuestion, opsStrategyFallbackReply } from "./studioOpsStrategy";
+import { isOpsStrategyQuestion, opsStrategyFallbackReply, STUDIO_OPS_WITH_MANUSCRIPT_CHIPS } from "./studioOpsStrategy";
 import { STUDIO_OPS_FOLLOWUP_CHIPS } from "./studioBriefMerge";
 import { wouldAutoGenerate } from "./studioOrchestrator";
 import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "./studioWorkTask";
@@ -149,9 +149,11 @@ export function resolveStudioStructuredResponse(
   return { kind: "silent" };
 }
 
-/** 运营回复后附带的 Cursor 式下一步 chips（无成稿时） */
+/** 运营回复后附带的 Cursor 式下一步 chips */
 export function opsStrategySuggestedReplies(work: StudioWork): string[] | undefined {
-  if (work.versions.length > 0) return undefined;
+  if (work.versions.length > 0) {
+    return [...STUDIO_OPS_WITH_MANUSCRIPT_CHIPS];
+  }
   return [...STUDIO_OPS_FOLLOWUP_CHIPS];
 }
 

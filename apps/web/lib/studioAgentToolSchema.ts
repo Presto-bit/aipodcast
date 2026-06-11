@@ -28,7 +28,7 @@ export type StudioAgentRouteEvent = StudioAgentToolCall & {
 };
 
 export const STUDIO_AGENT_TOOL_JSON_SHAPE =
-  '{"tool":"read_manuscript|search_corpus|compose|patch|reply|revise","brief":"任务句","reply":"reply≤120","reason":"必填","domain":"可选","format":"可选","assumptions":[]}';
+  '{"tool":"read_manuscript|search_corpus|compose|patch|reply|revise","brief":"任务句","reply":"可选草稿（下游扩展）","reason":"必填","domain":"可选","format":"可选","assumptions":[]}';
 
 export function parseStudioAgentToolCall(raw: unknown): StudioAgentToolCall | null {
   if (!raw || typeof raw !== "object") return null;

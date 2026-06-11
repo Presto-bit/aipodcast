@@ -30,6 +30,36 @@ EXPERT_META: dict[str, dict[str, str]] = {
     },
 }
 
+_XHS_LENGTH_CHARS = {"short": 400, "medium": 600, "long": 1200}
+_XHS_PARA_MAX = {"short": 80, "medium": 100, "long": 120}
+
+
+def resolve_xhs_intake_length(intake: dict[str, Any], task_sentence: str = "") -> str:
+    """从 intake 或任务句推断篇幅档位 short/medium/long。"""
+    existing = str(intake.get("length") or "").strip()
+    if existing in _XHS_LENGTH_CHARS:
+        return existing
+    note = str(intake.get("userNote") or "")
+    text = f"{task_sentence} {note}"
+    m = re.search(r"(?:写|约|到|至少)\s*(\d{3,4})\s*字", text)
+    if m:
+        n = int(m.group(1))
+        if n >= 800:
+            return "long"
+        if n >= 450:
+            return "medium"
+        return "short"
+    if re.search(r"长文|长篇|详尽|1000字|800字|扩写", text):
+        return "long"
+    if re.search(r"短篇|精简|短帖|250字", text):
+        return "short"
+    return "medium"
+
+
+def xhs_body_para_max_chars(length: str) -> int:
+    return _XHS_PARA_MAX.get(str(length or "").strip(), 88)
+
+
 XHS_STEP0_FIELDS = [
     {
         "fieldId": "accountStage",
@@ -281,7 +311,7 @@ def _infer_xhs(task_sentence: str) -> tuple[dict[str, Any], bool, str | None]:
     else:
         intake["tone"] = "casual"
 
-    intake["length"] = "short" if re.search(r"短|精简", text) else "medium"
+    intake["length"] = resolve_xhs_intake_length(intake, text)
     intake["titleCount"] = "3"
     intake["withHashtags"] = "yes" if re.search(r"tag|话题|#", lower) else "yes"
     if re.search(r"私信", text):

@@ -19,6 +19,7 @@ from .agent_route import (
     should_force_compose,
 )
 from .router_context import build_planner_user_blob
+from .studio_constants import STUDIO_PLANNER_REPLY_MAX_CHARS
 
 StudioTool = Literal["reply", "compose", "revise"]
 StudioAgentMode = Literal["ask", "write"]
@@ -161,7 +162,7 @@ def _reconcile_decision(
     if llm_tool not in ("reply", "compose", "revise"):
         llm_tool = "reply"
     llm_brief = str(llm.get("brief") or "").strip()
-    llm_reply = str(llm.get("reply") or "").strip()[:480]
+    llm_reply = str(llm.get("reply") or "").strip()[:STUDIO_PLANNER_REPLY_MAX_CHARS]
     llm_reason = str(llm.get("reason") or "").strip()[:120]
 
     if status == "generating":

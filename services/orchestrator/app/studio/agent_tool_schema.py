@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from .studio_constants import STUDIO_PLANNER_REPLY_MAX_CHARS
+
 StudioAgentMode = Literal["ask", "write"]
 StudioTool = Literal["reply", "compose", "revise", "patch", "read_manuscript", "search_corpus"]
 
 STUDIO_AGENT_TOOL_JSON_SHAPE = (
     '{"tool":"read_manuscript|search_corpus|compose|patch|reply|revise",'
-    '"brief":"compose/patch 任务句","reply":"reply 时≤120字","reason":"必填",'
+    '"brief":"compose/patch 任务句","reply":"reply 可选草稿（下游按场景扩展）","reason":"必填",'
     '"domain":"social|article|business|narrative|script|academic|general",'
     '"format":"short_post|long_form|listicle|email|tutorial|script_beats|summary|general",'
     '"assumptions":["可选假设"]}'
@@ -44,7 +46,7 @@ def parse_tool_call(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     if brief:
         out["brief"] = brief[:2000]
     if reply:
-        out["reply"] = reply[:480]
+        out["reply"] = reply[:STUDIO_PLANNER_REPLY_MAX_CHARS]
     if reason:
         out["reason"] = reason[:120]
     if domain:
@@ -70,7 +72,7 @@ def tool_router_system_prompt(*, agent_mode: StudioAgentMode) -> str:
             f"JSON 形状：{STUDIO_AGENT_TOOL_JSON_SHAPE}",
             "",
             "tool（revise = patch 局部改）：",
-            "- reply：纯问答、运营/发布/推广策略、解读稿件；不写完整正文。",
+            "- reply：问答/运营/解读；reply 字段可写简短要点，完整回答由下游扩展。",
             "- compose：写首稿；缺细节由成稿模型合理假设，禁止 ask 追问 blocking。",
             "- revise：已有稿件局部改版或润色；brief 写清 scope。",
             "- read_manuscript / search_corpus：仅在 loop 内使用，对外映射 revise/reply/compose。",

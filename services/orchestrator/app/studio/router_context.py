@@ -5,6 +5,7 @@ from typing import Any
 
 from .agent_route import build_compose_task_sentence
 from .lifecycle import derive_studio_lifecycle
+from .studio_constants import STUDIO_MANUSCRIPT_EXCERPT_CHARS
 
 
 def format_turns_for_planner(turns: list[dict[str, Any]], *, limit: int = 8) -> str:
@@ -49,7 +50,7 @@ def build_planner_user_blob(
     if task_sentence.strip():
         chunks.append(f"【任务句】{task_sentence[:1200]}")
     if manuscript_excerpt.strip():
-        chunks.extend(["【当前稿件】", manuscript_excerpt.strip()[:2800]])
+        chunks.extend(["【当前稿件】", manuscript_excerpt.strip()[:STUDIO_MANUSCRIPT_EXCERPT_CHARS]])
     if selection_snippet.strip():
         chunks.extend(["【选区】", selection_snippet.strip()[:600]])
     chunks.extend(

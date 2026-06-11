@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import queue
-import re
 import threading
 import time
 import uuid
@@ -22,7 +21,8 @@ from ..composer_expert.manuscript_stream import (
     iter_compose_queue_events,
     partial_social_to_manuscript_blocks,
 )
-from ..social_llm_utils import extract_partial_social_json_fields, invoke_social_llm
+from .studio_constants import STUDIO_MANUSCRIPT_EXCERPT_CHARS, STUDIO_USER_REPLY_MAX_CHARS
+from .studio_reply import generate_studio_reply
 from .agent_route import (
     build_compose_task_sentence,
     compose_soft_failure_code,
@@ -43,57 +43,6 @@ STUDIO_NEEDS_REWRITE = "NEEDS_REWRITE"
 
 def _compose_soft_failure_code(task_sentence: str) -> str:
     return compose_soft_failure_code(task_sentence)
-_OPS_SIGNAL = re.compile(
-    r"运营|策略|涨粉|流量|什么时候发|怎么推|推广方案|发布计划|发布节奏"
-)
-
-
-def _ops_strategy_fallback(message: str, task_sentence: str = "") -> str:
-    ctx = f"{message} {task_sentence}".strip()
-    audience = "产品新人" if re.search(r"产品新人|新人", ctx) else "职场读者"
-    return (
-        f"假设：小红书笔记、面向{audience}。"
-        "发布时间：工作日晚20–22点或午休12点；首发30分钟内留首评。"
-        "推广：选2–3个垂类话题，2小时内回复前5条评论。"
-        "若要更贴题：在下方补充成稿需求（主题+受众）。"
-    )
-
-
-def _short_coach_reply(
-    message: str,
-    *,
-    has_manuscript: bool,
-    manuscript_excerpt: str = "",
-    task_sentence: str = "",
-) -> str:
-    if _OPS_SIGNAL.search(message) and not has_manuscript and not manuscript_excerpt.strip():
-        return _ops_strategy_fallback(message, task_sentence)[:480]
-
-    system = (
-        "你是小红书创作助手。用不超过120字中文直接回答用户问题。"
-        "不要输出完整笔记正文；不要 JSON。若用户应改稿，提示其在输入框描述改版意见。"
-    )
-    if has_manuscript or manuscript_excerpt:
-        system += "当前已有稿件，请结合稿件内容作答。"
-    else:
-        system += "无稿件时禁止要求用户提供画布或稿件主题；运营类问题直接给发布时间与推广建议。"
-    user = message.strip()[:800]
-    if manuscript_excerpt.strip():
-        user = f"【当前稿件摘要】\n{manuscript_excerpt.strip()[:2400]}\n\n用户问题：{user}"
-    try:
-        raw, _ = invoke_social_llm(system, user, max_tokens=220)
-        text = str(raw or "").strip()
-        if text and not re.search(r"画布上稿件|请先提供.*主题", text):
-            return text[:480]
-        if _OPS_SIGNAL.search(message):
-            return _ops_strategy_fallback(message, task_sentence)[:480]
-    except Exception:
-        pass
-    if _OPS_SIGNAL.search(message):
-        return _ops_strategy_fallback(message, task_sentence)[:480]
-    if has_manuscript or manuscript_excerpt:
-        return "可以在下方输入更具体的改稿意见，我会直接修改稿件。"
-    return "可以在下方描述想写的内容或继续提问。"
 
 
 def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Iterator[str]:
@@ -156,7 +105,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         "type": "tool_call",
         "tool": tool,
         "brief": decision.brief[:500] if decision.brief else "",
-        "reply": decision.reply_text[:480] if decision.reply_text else "",
+        "reply": decision.reply_text[:STUDIO_USER_REPLY_MAX_CHARS] if decision.reply_text else "",
         "source": decision.source,
         "reason": decision.reason[:200],
         "mode": agent_mode,
@@ -198,17 +147,27 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         )
 
     if tool == "reply":
-        if decision.reply_text:
-            text = decision.reply_text
-        elif is_insufficient_brief(compose_brief) and version_count == 0:
+        if not manuscript_excerpt.strip() and version_count > 0:
+            manuscript_excerpt = manuscript_plain_from_payload(
+                payload, max_chars=STUDIO_MANUSCRIPT_EXCERPT_CHARS
+            )
+        feature_core = payload.get("featureCore") if isinstance(payload.get("featureCore"), dict) else {}
+        feature_summary = " · ".join(
+            str(feature_core.get(k) or "").strip()
+            for k in ("who", "remember", "avoid")
+            if str(feature_core.get(k) or "").strip()
+        )[:80]
+        if is_insufficient_brief(compose_brief) and version_count == 0:
             text = reply_for_blocking(compose_brief)
         else:
-            text = _short_coach_reply(
+            text = generate_studio_reply(
                 message,
                 has_manuscript=version_count > 0,
                 manuscript_excerpt=manuscript_excerpt,
                 task_sentence=compose_brief,
+                feature_summary=feature_summary,
             )
+        text = text[:STUDIO_USER_REPLY_MAX_CHARS]
         yield _sse({"type": "reply", "text": text, "requestId": rid})
         yield _sse(
             {

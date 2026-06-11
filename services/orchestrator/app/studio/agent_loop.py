@@ -10,6 +10,7 @@ from .agent_route import build_compose_task_sentence, is_ask_only
 from .agent_tool_router import StudioToolDecision, _apply_mode_guard, _reconcile_decision, _rule_decision
 from .agent_tool_schema import normalize_agent_mode, tool_router_system_prompt
 from .router_context import build_planner_user_blob
+from .studio_constants import STUDIO_MANUSCRIPT_EXCERPT_CHARS
 
 LoopTool = Literal["read_manuscript", "reply", "compose", "revise"]
 StepStatus = Literal["pending", "running", "done", "error"]
@@ -34,7 +35,9 @@ def _emit(emit: EmitStep | None, step_id: str, label: str, status: StepStatus, t
         emit(step_id, label, status, tool)
 
 
-def manuscript_plain_from_payload(payload: dict[str, Any], *, max_chars: int = 3200) -> str:
+def manuscript_plain_from_payload(
+    payload: dict[str, Any], *, max_chars: int = STUDIO_MANUSCRIPT_EXCERPT_CHARS
+) -> str:
     blocks = payload.get("manuscriptBlocks") if isinstance(payload.get("manuscriptBlocks"), list) else []
     if not blocks:
         return ""

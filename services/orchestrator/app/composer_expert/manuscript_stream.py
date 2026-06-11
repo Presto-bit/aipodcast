@@ -19,6 +19,7 @@ from .generate import (
     _intake_human_summary,
     _intake_to_social_options,
     _looks_like_xhs_template_body,
+    _xhs_compose_must_include,
     generate_xhs_expert_deliverable,
 )
 
@@ -184,12 +185,7 @@ def _prepare_material(
         persona["otherRequirements"] = other_req[:1600]
         options["persona"] = persona
     extras = options.get("extras") if isinstance(options.get("extras"), dict) else {}
-    extras["mustInclude"] = [
-        "产品或主题的核心卖点",
-        "目标用户痛点或使用场景",
-        "可执行的行动引导（如试用/关注/评论）",
-        "正文分段，每段不超过80字",
-    ]
+    extras["mustInclude"] = _xhs_compose_must_include(intake, task_sentence)
     options["extras"] = extras
 
     if on_progress:
