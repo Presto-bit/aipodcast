@@ -7,14 +7,15 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { ONBOARDING_STARTER_NOTEBOOK_NAME } from "../../lib/onboardingStarter";
 import { useInvalidateNotebooksHub } from "../../lib/queries/notebooksQueries";
 import { useNotebooksMetaQuery } from "../../lib/queries/notebooksMetaQueries";
+import type { NotebookMeta } from "./notesNotebookTypes";
 
 type Props = {
   className?: string;
 };
 
-function totalNoteCount(stats: Record<string, { note_count?: number }> | undefined): number {
+function totalNoteCount(stats: Record<string, NotebookMeta> | undefined): number {
   if (!stats) return 0;
-  return Object.values(stats).reduce((sum, row) => sum + Number(row?.note_count || 0), 0);
+  return Object.values(stats).reduce((sum, row) => sum + Number(row?.noteCount || 0), 0);
 }
 
 /**
