@@ -54,6 +54,11 @@ export function normalizePathname(p: string): string {
   return p;
 }
 
+/** 侧栏外链（营销站等）：跳过工作台软路由与预取 */
+export function isExternalNavHref(href: string): boolean {
+  return /^https?:\/\//i.test(String(href || "").trim());
+}
+
 /** 侧栏 / 软路由：比较 path + query，避免同 pathname 不同 query（如 create mode）被误判为同页。 */
 export function parseWorkbenchNavHref(href: string): { path: string; query: string } {
   const [pathPart, queryPart = ""] = href.split("?");

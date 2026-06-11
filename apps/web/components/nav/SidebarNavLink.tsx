@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, type ComponentProps, type MouseEvent } from "react";
 import { isLoggedInAccountUser, useAuth, userAccountRef } from "../../lib/auth";
 import {
+  isExternalNavHref,
   isSameWorkbenchNavDestination,
   matchesNotesWorkbench,
   normalizePathname,
@@ -43,9 +44,10 @@ function SidebarNavLinkInner({
   const { getAuthHeaders, user, ready } = useAuth();
   const workbenchNav = useWorkbenchNavOptional();
   const hrefStr = typeof href === "string" ? href : String(href);
+  const isExternal = isExternalNavHref(hrefStr);
   const { path: target } = parseWorkbenchNavHref(hrefStr);
   const current = normalizePathname(pathname);
-  const sameDestination = isSameWorkbenchNavDestination(hrefStr, pathname, currentQuery);
+  const sameDestination = !isExternal && isSameWorkbenchNavDestination(hrefStr, pathname, currentQuery);
   const leavingNotes = matchesNotesWorkbench(pathname) && target !== current;
   const loggedIn = isLoggedInAccountUser(user);
   const prefetchOpts =
@@ -59,6 +61,7 @@ function SidebarNavLinkInner({
       : undefined);
 
   const runPrefetch = () => {
+    if (isExternal) return;
     prefetchWorkbenchRoute(router, hrefStr, prefetchOpts);
   };
 
@@ -87,6 +90,7 @@ function SidebarNavLinkInner({
   const handleClick = (e: MouseEvent<HTMLAnchorElement>) => {
     onClick?.(e);
     if (e.defaultPrevented) return;
+    if (isExternal) return;
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     if (sameDestination) {
       e.preventDefault();

@@ -4,7 +4,8 @@ import Link from "next/link";
 import { IconGrid, IconMic, IconNotes } from "../icons";
 import BrandGlyph from "../brand/BrandGlyph";
 import { dispatchNotesShowNotebookHub } from "../../lib/notesLastNotebook";
-import { WORKBENCH_NAV_PREFETCH, WORKBENCH_PODCAST_STUDIO_PATH } from "../../lib/navPaths";
+import { WORKBENCH_NAV_PREFETCH } from "../../lib/navPaths";
+import { marketingPodcastHref } from "../../lib/marketingSiteUrl";
 
 const RAIL_BTN =
   "flex h-10 w-10 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill hover:text-ink";
@@ -52,15 +53,9 @@ export default function NotesWorkbenchMinimalRail({ notesLabel, worksLabel, tool
         >
           <IconGrid width={20} height={20} aria-hidden />
         </Link>
-        <Link
-          href={WORKBENCH_PODCAST_STUDIO_PATH}
-          prefetch={WORKBENCH_NAV_PREFETCH}
-          className={RAIL_BTN}
-          title={toolsLabel}
-          aria-label={toolsLabel}
-        >
+        <a href={marketingPodcastHref()} className={RAIL_BTN} title={toolsLabel} aria-label={toolsLabel}>
           <IconMic width={20} height={20} aria-hidden />
-        </Link>
+        </a>
       </nav>
     </aside>
   );

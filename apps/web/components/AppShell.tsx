@@ -78,11 +78,10 @@ import {
   pathNeedsWorkAudio,
   WORKBENCH_PODCAST_CLIP_PATH,
   WORKBENCH_PODCAST_SHOWNOTES_PATH,
-  WORKBENCH_PODCAST_STUDIO_PATH,
-  WORKBENCH_PODCAST_VOICE_PATH,
-  WORKBENCH_TTS_STUDIO_PATH
+  WORKBENCH_PODCAST_VOICE_PATH
 } from "../lib/navPaths";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
+import { marketingPodcastHref, marketingPodcastTtsHref } from "../lib/marketingSiteUrl";
 
 type NavItem = {
   href: string;
@@ -184,10 +183,12 @@ function StudioToolsNavExpanded({
 
   const parentTip = t("nav.podcastNav");
   const parentClass = navButtonClass(podcastStudioActive, collapsed);
+  const podcastMarketingHref = marketingPodcastHref();
+  const ttsMarketingHref = marketingPodcastTtsHref();
 
   const subs: { href: string; label: string; active: boolean }[] = [
     {
-      href: WORKBENCH_TTS_STUDIO_PATH,
+      href: ttsMarketingHref,
       label: t("nav.toolTts"),
       active: ttsStudioActive
     },
@@ -211,7 +212,7 @@ function StudioToolsNavExpanded({
   if (collapsed) {
     return (
       <SidebarNavLink
-        href={WORKBENCH_PODCAST_STUDIO_PATH}
+        href={podcastMarketingHref}
         className={parentClass}
         title={parentTip}
         aria-current={podcastStudioActive ? "page" : undefined}
@@ -226,7 +227,7 @@ function StudioToolsNavExpanded({
   return (
     <div className="flex w-full flex-col gap-0.5">
       <SidebarNavLink
-        href={WORKBENCH_PODCAST_STUDIO_PATH}
+        href={podcastMarketingHref}
         className={parentClass}
         title={parentTip}
         aria-current={podcastStudioActive ? "page" : undefined}
