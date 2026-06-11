@@ -6,6 +6,7 @@ import {
   resolveManuscriptVariant
 } from "../../lib/studioManuscriptView";
 import { studioStreamPhaseLabel } from "../../lib/studioComposeProgress";
+import type { NotesAskSource } from "../../lib/notesAskCitation";
 import type { ManuscriptBlock, ManuscriptVersion } from "../../lib/studioWorkTypes";
 import StudioOutputManuscript from "./StudioOutputManuscript";
 import StudioManuscriptReadable from "./StudioManuscriptReadable";
@@ -34,7 +35,8 @@ export default function StudioStreamingSurface({
   flowLayout = false,
   isRevise = false,
   corpusNotebook = "",
-  corpusNoteIds = []
+  corpusNoteIds = [],
+  corpusSources
 }: {
   phase?: string;
   taskSentence?: string;
@@ -48,6 +50,7 @@ export default function StudioStreamingSurface({
   isRevise?: boolean;
   corpusNotebook?: string;
   corpusNoteIds?: string[];
+  corpusSources?: NotesAskSource[];
 }) {
   void taskSentence;
   const isActive = variant === "active";
@@ -74,6 +77,7 @@ export default function StudioStreamingSurface({
         version={version}
         corpusNotebook={corpusNotebook}
         corpusNoteIds={corpusNoteIds}
+        corpusSources={corpusSources}
       />
     );
   }
@@ -102,6 +106,7 @@ export default function StudioStreamingSurface({
           trailingCursor={isActive}
           corpusNotebook={corpusNotebook}
           corpusNoteIds={corpusNoteIds}
+          corpusSources={corpusSources}
         />
 
         {onCancel && isActive ? (
