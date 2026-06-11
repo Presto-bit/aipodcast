@@ -28,17 +28,24 @@ from .studio_constants import (
     STUDIO_USER_REPLY_MAX_CHARS,
 )
 from .studio_reply import generate_studio_reply
+from .studio_corpus_snippet import fetch_reply_corpus_excerpt
 from .agent_route import (
     build_compose_task_sentence,
     compose_soft_failure_code,
-    is_ask_only,
     is_insufficient_brief,
     reply_for_blocking,
-    should_compose_without_manuscript,
 )
 from .agent_tool_router import StudioToolDecision
 from .agent_loop import manuscript_plain_from_payload, run_agent_tool_loop
-from .domain_profile import domain_author_overlay, expert_id_for_payload
+from .studio_brief import build_compose_brief_from_work, build_revise_task_in_executor
+from .studio_patch_blocks import execute_patch_blocks
+from .studio_revise_scope import is_local_patch_scope
+from .domain_profile import (
+    apply_domain_compose_intake,
+    compose_writer_preamble,
+    domain_author_overlay,
+    expert_id_for_payload,
+)
 from .agent_tool_schema import normalize_agent_mode
 from .patch_utils import build_pending_patch_payload
 
@@ -86,6 +93,8 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         str(payload.get("agentMode") or payload.get("agent_mode") or "write")
     )
     force_compose = bool(payload.get("forceCompose"))
+    selection_snippet = str(payload.get("selectionSnippet") or "").strip()
+    has_pending_patch = bool(payload.get("pendingPatch"))
 
     pending_steps: list[dict[str, Any]] = []
 
@@ -116,7 +125,13 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         status=status,
         version_count=version_count,
         turns=turns,
-        payload={**payload, "agentMode": agent_mode, "forceCompose": force_compose},
+        payload={
+            **payload,
+            "agentMode": agent_mode,
+            "forceCompose": force_compose,
+            "selectionSnippet": selection_snippet,
+            "pendingPatch": has_pending_patch,
+        },
         emit_step=emit_step,
     )
     for step_ev in pending_steps:
@@ -134,6 +149,14 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         "source": decision.source,
         "reason": decision.reason[:200],
         "mode": agent_mode,
+        "domain": decision.domain or "",
+        "format": decision.format or "",
+        "assumptions": list(decision.assumptions),
+        "reviseScope": {
+            "blocks": list(decision.revise_blocks),
+            "intent": decision.revise_intent,
+            "fullRewrite": decision.full_rewrite,
+        },
         "requestId": rid,
     }
     yield _sse(tool_call_payload)
@@ -151,25 +174,12 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             }
         )
 
-    compose_brief = build_compose_task_sentence(turns, current_message=message)
-    if (
-        tool == "reply"
-        and should_compose_without_manuscript(
-            message=message,
-            task_sentence=compose_brief,
-            version_count=version_count,
-            status=status,
-        )
-        and not is_ask_only(message, has_manuscript=version_count > 0)
-    ):
-        tool = "compose"
-        decision = StudioToolDecision(
-            tool="compose",
-            brief=compose_brief or message,
-            reply_text="",
-            source="mixed",
-            reason="护栏：无成稿时写成稿",
-        )
+    work_brief = str(payload.get("workBrief") or payload.get("brief") or "").strip()
+    compose_brief = build_compose_brief_from_work(
+        work_brief=work_brief,
+        message=message,
+        turns=turns,
+    )
 
     if tool == "reply":
         if not manuscript_excerpt.strip() and version_count > 0:
@@ -185,12 +195,29 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         if is_insufficient_brief(compose_brief) and version_count == 0:
             text = reply_for_blocking(compose_brief)
         else:
+            corpus_excerpt = ""
+            note_ids = payload.get("noteIds") or payload.get("selected_note_ids") or []
+            if isinstance(note_ids, list) and note_ids:
+                yield _sse(
+                    {
+                        "type": "phase",
+                        "message": "正在检索相关资料…",
+                        "requestId": rid,
+                        "tool": "reply",
+                    }
+                )
+                corpus_excerpt = fetch_reply_corpus_excerpt(
+                    user_ref=user_ref,
+                    payload=payload,
+                    query=message,
+                )
             text = generate_studio_reply(
                 message,
                 has_manuscript=version_count > 0,
                 manuscript_excerpt=manuscript_excerpt,
                 task_sentence=compose_brief,
                 feature_summary=feature_summary,
+                corpus_excerpt=corpus_excerpt,
             )
         text = text[:STUDIO_USER_REPLY_MAX_CHARS]
         yield _sse({"type": "reply", "text": text, "requestId": rid})
@@ -198,33 +225,116 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
             {
                 "type": "done",
                 "tool": "reply",
+                "domain": decision.domain or "",
+                "format": decision.format or "",
+                "assumptions": list(decision.assumptions),
                 "requestId": rid,
                 "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
             }
         )
         return
 
+    planner_domain = str(decision.domain or payload.get("domain") or "general").strip()
+    planner_format = str(decision.format or payload.get("format") or "general").strip()
+
+    if tool == "revise" and version_count > 0:
+        revise_scope = {
+            "blocks": list(decision.revise_blocks),
+            "intent": decision.revise_intent,
+            "fullRewrite": decision.full_rewrite,
+        }
+        if is_local_patch_scope(revise_scope):
+            from_blocks = [
+                b for b in (payload.get("manuscriptBlocks") or []) if isinstance(b, dict)
+            ]
+            if not manuscript_excerpt.strip():
+                manuscript_excerpt = manuscript_plain_from_payload(payload, max_chars=2400)
+            yield _sse(
+                {
+                    "type": "phase",
+                    "message": "正在修改指定块…",
+                    "requestId": rid,
+                    "tool": "revise",
+                }
+            )
+            yield _sse(
+                {
+                    "type": "step",
+                    "id": "patch_blocks",
+                    "label": "块级改版",
+                    "status": "running",
+                    "tool": "revise",
+                    "requestId": rid,
+                }
+            )
+            proposed = execute_patch_blocks(
+                message=message,
+                from_blocks=from_blocks,
+                revise_scope=revise_scope,
+                selection_snippet=selection_snippet,
+                domain=planner_domain,
+            )
+            from_version_id = str(payload.get("activeVersionId") or "").strip()
+            patch = build_pending_patch_payload(
+                from_version_id=from_version_id,
+                from_blocks=from_blocks,
+                proposed_blocks=proposed,
+                message=message,
+                reason=decision.reason or "块级改版",
+                source_run_id=str(payload.get("clientRunId") or rid),
+            )
+            yield _sse(
+                {
+                    "type": "step",
+                    "id": "patch_blocks",
+                    "label": "块级改版",
+                    "status": "done",
+                    "tool": "revise",
+                    "requestId": rid,
+                }
+            )
+            yield _sse(
+                {
+                    "type": "patch_proposed",
+                    "pendingPatch": patch,
+                    "requestId": rid,
+                    "tool": "revise",
+                }
+            )
+            yield _sse(
+                {
+                    "type": "done",
+                    "tool": "revise",
+                    "outcome": "patch",
+                    "blocks": proposed,
+                    "silent": True,
+                    "requestId": rid,
+                    "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
+                }
+            )
+            return
+
     intake_raw = payload.get("intake") if isinstance(payload.get("intake"), dict) else {}
     if tool == "revise":
-        task_sentence = str(payload.get("taskSentence") or decision.brief or message).strip() or message
-        ms_plain = manuscript_plain_from_payload(payload, max_chars=2400)
-        if ms_plain and "【当前稿件】" not in task_sentence:
-            task_sentence = "\n\n".join(
-                [
-                    task_sentence,
-                    f"【当前稿件】\n{ms_plain}",
-                    f"改版意见：{message.strip()}",
-                ]
-            ).strip()
-        if "勿另起新篇" not in task_sentence:
-            task_sentence += "\n\n（在现有正文基础上修改，勿另起新篇；保留主题与结构）"
-    elif tool == "compose":
-        task_sentence = decision.brief.strip() or build_compose_task_sentence(
-            turns, current_message=message
+        if not manuscript_excerpt.strip():
+            manuscript_excerpt = manuscript_plain_from_payload(payload, max_chars=2400)
+        task_sentence = build_revise_task_in_executor(
+            message=message,
+            manuscript_excerpt=manuscript_excerpt,
+            selection_snippet=selection_snippet,
+            intent=decision.revise_intent,
         )
+    elif tool == "compose":
+        task_sentence = decision.brief.strip() or compose_brief
     else:
         task_sentence = decision.brief.strip() or message
     intake = _ensure_intake_from_task(intake_raw, task_sentence)
+    intake = apply_domain_compose_intake(
+        intake,
+        domain=planner_domain,
+        fmt=planner_format,
+        task_sentence=task_sentence,
+    )
     feature_core = payload.get("featureCore") if isinstance(payload.get("featureCore"), dict) else {}
     feature_summary = " · ".join(
         str(feature_core.get(k) or "").strip()
@@ -232,17 +342,20 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         if str(feature_core.get(k) or "").strip()
     )[:80]
 
-    domain_overlay = domain_author_overlay(payload)
+    domain_overlay = domain_author_overlay({"domain": planner_domain, "format": planner_format})
+    writer_preamble = compose_writer_preamble(planner_domain, planner_format)
     author_extra = str(payload.get("authorPrompt") or "").strip()
-    merged_author = "\n\n".join(x for x in (author_extra, domain_overlay) if x).strip()
+    merged_author = "\n\n".join(x for x in (author_extra, writer_preamble, domain_overlay) if x).strip()
 
     stream_payload = {
         **payload,
+        "domain": planner_domain,
+        "format": planner_format,
         "taskSentence": task_sentence,
         "task_sentence": task_sentence,
         "intake": intake,
         "authorPrompt": merged_author,
-        "expertId": expert_id_for_payload(payload),
+        "expertId": expert_id_for_payload({**payload, "domain": planner_domain}),
     }
     if stream_payload.get("noteIds"):
         stream_payload["source_type"] = "notes_rag"
@@ -379,6 +492,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     feature_summary=feature_summary,
                     on_stream_delta=on_attempt_delta,
                     validation_errors=last_errors or None,
+                    domain=planner_domain,
                 )
                 content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
                 if _looks_like_xhs_template_body(content, task_sentence):
@@ -476,6 +590,7 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                     "tool": data.get("tool") or tool,
                     "outcome": "patch",
                     "blocks": blocks,
+                    "silent": True,
                     "requestId": rid,
                     "elapsedMs": round((time.perf_counter() - t0) * 1000.0, 1),
                 }

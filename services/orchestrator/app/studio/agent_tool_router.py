@@ -20,6 +20,17 @@ from .agent_route import (
 )
 from .router_context import build_planner_user_blob
 from .studio_constants import STUDIO_PLANNER_REPLY_MAX_CHARS
+from .studio_revise_scope import parse_revise_scope_from_llm
+from .studio_planner_utils import (
+    apply_explicit_goal_tool,
+    assumptions_imply_local_revise,
+    assumptions_imply_new_draft,
+    has_compose_write_intent,
+    is_new_draft_intent,
+    merge_planner_domain_format,
+    normalize_planner_domain,
+    normalize_planner_format,
+)
 
 StudioTool = Literal["reply", "compose", "revise"]
 StudioAgentMode = Literal["ask", "write"]
@@ -33,6 +44,12 @@ class StudioToolDecision:
     reply_text: str
     source: RouteSource
     reason: str
+    domain: str = ""
+    format: str = ""
+    assumptions: tuple[str, ...] = ()
+    revise_blocks: tuple[str, ...] = ()
+    revise_intent: str = ""
+    full_rewrite: bool = False
 
 
 def _format_turns_for_router(turns: list[dict[str, Any]], *, limit: int = 8) -> str:
@@ -132,6 +149,46 @@ def _rule_decision(
     )
 
 
+def _parse_assumptions(llm: dict[str, Any]) -> tuple[str, ...]:
+    raw = llm.get("assumptions")
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(a).strip()[:80] for a in raw if str(a).strip())[:5]
+
+
+def _planner_meta_from_llm(
+    llm: dict[str, Any],
+    *,
+    hint_domain: str,
+    hint_format: str,
+    task_sentence: str,
+    message: str,
+) -> tuple[str, str, tuple[str, ...]]:
+    assumptions = _parse_assumptions(llm)
+    domain, fmt = merge_planner_domain_format(
+        llm_domain=str(llm.get("domain") or ""),
+        llm_format=str(llm.get("format") or ""),
+        hint_domain=hint_domain,
+        hint_format=hint_format,
+        task_sentence=task_sentence,
+        message=message,
+    )
+    return domain, fmt, assumptions
+
+
+def _revise_scope_fields(
+    llm: dict[str, Any],
+    *,
+    message: str,
+    selection_snippet: str = "",
+) -> tuple[tuple[str, ...], str, bool]:
+    scope = parse_revise_scope_from_llm(llm, message=message, selection_snippet=selection_snippet)
+    blocks = tuple(str(b) for b in (scope.get("blocks") or []) if str(b).strip())
+    intent = str(scope.get("intent") or "").strip()
+    full_rewrite = bool(scope.get("fullRewrite"))
+    return blocks, intent, full_rewrite
+
+
 def _reconcile_decision(
     *,
     rule: StudioToolDecision,
@@ -141,9 +198,24 @@ def _reconcile_decision(
     version_count: int,
     turns: list[dict[str, Any]],
     force_compose: bool = False,
+    hint_domain: str = "",
+    hint_format: str = "",
+    explicit_goal: str = "",
+    selection_snippet: str = "",
 ) -> StudioToolDecision:
     """Planner-first：LLM 为主，规则仅做安全护栏。"""
     compose_brief = _compose_brief_for_route(turns, message)
+    domain, fmt, assumptions = _planner_meta_from_llm(
+        llm,
+        hint_domain=hint_domain,
+        hint_format=hint_format,
+        task_sentence=compose_brief,
+        message=message,
+    )
+    revise_blocks, revise_intent, full_rewrite = _revise_scope_fields(
+        llm, message=message, selection_snippet=selection_snippet
+    )
+
     if should_force_compose(
         message=message,
         task_sentence=compose_brief,
@@ -156,6 +228,9 @@ def _reconcile_decision(
             reply_text="",
             source="rules",
             reason="规则：chip 强制成稿",
+            domain=domain,
+            format=fmt,
+            assumptions=assumptions,
         )
 
     llm_tool = str(llm.get("tool") or "reply").strip().lower()
@@ -172,22 +247,43 @@ def _reconcile_decision(
             reply_text=llm_reply,
             source="mixed",
             reason="护栏：生成中仅 reply",
+            domain=domain,
+            format=fmt,
+            assumptions=assumptions,
         )
 
     if version_count == 0 and llm_tool == "revise":
-        llm_tool = "compose" if not is_ask_only(message, has_manuscript=False) else "reply"
+        llm_tool = "compose" if has_compose_write_intent(message, compose_brief) else "reply"
 
-    if is_ask_only(message, has_manuscript=version_count > 0):
+    write_intent = has_compose_write_intent(message, compose_brief)
+    new_draft = is_new_draft_intent(message) or assumptions_imply_new_draft(assumptions)
+    local_revise = assumptions_imply_local_revise(assumptions)
+
+    if is_ask_only(message, has_manuscript=version_count > 0) and not write_intent:
         llm_tool = "reply"
+    elif version_count == 0 and llm_tool == "reply" and write_intent:
+        llm_tool = "compose"
+        llm_reason = llm_reason or "护栏：写稿意图强制 compose"
 
-    if version_count > 0 and llm_tool == "compose":
+    if version_count > 0 and llm_tool == "compose" and not new_draft:
         llm_tool = "revise"
+    if version_count > 0 and new_draft and not local_revise:
+        llm_tool = "compose"
+        llm_reason = llm_reason or "护栏：新稿意图"
+    if llm_tool == "revise" and (full_rewrite or new_draft):
+        llm_tool = "compose"
+        llm_reason = llm_reason or "护栏：全稿重写走 compose"
 
-    tool: StudioTool = llm_tool
+    tool: StudioTool = apply_explicit_goal_tool(llm_tool, explicit_goal)
     source: RouteSource = "llm"
     reason = llm_reason or f"LLM：{tool}"
 
-    if rule.tool == "reply" and llm_tool == "compose" and is_ask_only(message, has_manuscript=version_count > 0):
+    if (
+        rule.tool == "reply"
+        and tool == "compose"
+        and is_ask_only(message, has_manuscript=version_count > 0)
+        and not write_intent
+    ):
         tool = "reply"
         source = "mixed"
         reason = "护栏：纯问答禁止成稿"
@@ -203,6 +299,12 @@ def _reconcile_decision(
             reply_text=reply_text,
             source=source,
             reason=reason,
+            domain=domain,
+            format=fmt,
+            assumptions=assumptions,
+            revise_blocks=revise_blocks,
+            revise_intent=revise_intent,
+            full_rewrite=full_rewrite,
         )
 
     brief = _sanitize_brief(turns=turns, current_message=message, llm_brief=llm_brief)
@@ -216,6 +318,12 @@ def _reconcile_decision(
         reply_text="",
         source=source,
         reason=reason,
+        domain=domain,
+        format=fmt,
+        assumptions=assumptions,
+        revise_blocks=revise_blocks,
+        revise_intent=revise_intent,
+        full_rewrite=full_rewrite,
     )
 
 
@@ -252,6 +360,11 @@ def resolve_studio_agent_tool(
     domain: str = "",
     fmt: str = "",
     selection_snippet: str = "",
+    notebook: str = "",
+    note_ids: list[str] | None = None,
+    feature_summary: str = "",
+    explicit_goal: str = "",
+    work_brief: str = "",
 ) -> StudioToolDecision:
     """Planner-first fallback：LLM 失败时用规则，有稿模糊默认 reply。"""
     mode = normalize_agent_mode(agent_mode)
@@ -279,6 +392,11 @@ def resolve_studio_agent_tool(
         domain=domain,
         fmt=fmt,
         selection_snippet=selection_snippet,
+        notebook=notebook,
+        note_ids=note_ids or [],
+        feature_summary=feature_summary,
+        explicit_goal=explicit_goal,
+        work_brief=work_brief,
     )
     try:
         raw, _ = invoke_social_llm(_router_system_prompt(mode), user, max_tokens=360)
@@ -293,6 +411,10 @@ def resolve_studio_agent_tool(
             version_count=version_count,
             turns=turns,
             force_compose=force_compose,
+            hint_domain=domain,
+            hint_format=fmt,
+            explicit_goal=explicit_goal,
+            selection_snippet=selection_snippet,
         )
         return _apply_mode_guard(decision, agent_mode=mode, message=message)
     except Exception:

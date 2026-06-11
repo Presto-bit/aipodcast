@@ -17,6 +17,7 @@ export type StudioAgentToolCall = {
   domain?: string;
   format?: string;
   assumptions?: string[];
+  reviseScope?: { blocks?: string[]; intent?: string; fullRewrite?: boolean };
 };
 
 export type StudioAgentRouteSource = "rules" | "llm" | "mixed";
@@ -63,7 +64,11 @@ export function parseStudioAgentToolCall(raw: unknown): StudioAgentToolCall | nu
     reason: String(rec.reason || "").trim() || undefined,
     domain: rec.domain ? String(rec.domain).trim() : undefined,
     format: rec.format ? String(rec.format).trim() : undefined,
-    assumptions
+    assumptions,
+    reviseScope:
+      rec.reviseScope && typeof rec.reviseScope === "object"
+        ? (rec.reviseScope as StudioAgentToolCall["reviseScope"])
+        : undefined
   };
 }
 

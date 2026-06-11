@@ -5,6 +5,7 @@ import type { NotesAskSessionState } from "./notesAskMemoryTypes";
 import type { NotesAskSource } from "./notesAskCitation";
 import type { StudioDomain, StudioFormat } from "./studioDomainProfile";
 import type { StudioEditorMode } from "./studioEditorMode";
+import type { StudioExplicitGoal } from "./studioExplicitGoal";
 
 export type StudioAgentIntent =
   | "brief_clarify"
@@ -169,6 +170,8 @@ export type StudioWork = {
   /** V2：Planner assumptions（trace 可见） */
   plannerAssumptions?: string[];
   lastPlannerReason?: string;
+  /** P2：显式本轮目标（auto=Planner 自行判断） */
+  explicitGoal?: StudioExplicitGoal;
   /** V2：探索（自动 Apply）| 审阅（需确认） */
   editorMode?: StudioEditorMode;
   /** V2：Apply 后一层 Undo */

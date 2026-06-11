@@ -54,6 +54,11 @@ import StudioEphemeralHint from "./StudioEphemeralHint";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
+import StudioExplicitGoalChips from "./StudioExplicitGoalChips";
+import {
+  normalizeStudioExplicitGoal,
+  type StudioExplicitGoal
+} from "../../lib/studioExplicitGoal";
 
 function workAfterTruncateTurns(work: StudioWork, prefixTurns: StudioAgentTurn[]): StudioWork {
   let next: StudioWork = {
@@ -571,9 +576,11 @@ export default function StudioAgentDock({
     return mergeBriefChipReply(priorCompose, text);
   }
 
-  async function handleSend(overrideText?: string, fromChip = false) {
+  async function handleSend(overrideText?: string, fromChip = false, selectionOverride?: string) {
     const q = resolveOutgoingMessage(overrideText ?? input, fromChip);
     if (!q || !canChat) return;
+
+    if (!onAgentRun) return;
 
     if (useAgentStream && jobRunning) {
       onCancelStream?.();
@@ -602,38 +609,20 @@ export default function StudioAgentDock({
     );
     onPersist(base);
 
-    if (useAgentStream) {
+    setEphemeralHint("");
+    setAgentBusyState(true);
+    try {
+      await onAgentRun({
+        userText: q,
+        prefixTurns: prefixWithUser,
+        userTurnId: userTurn.id,
+        forceCompose: shouldForceStudioCompose(q, fromChip),
+        selectionSnippet: selectionOverride?.trim() || selectedSnippet.trim() || undefined
+      });
+    } finally {
+      setAgentBusyState(false);
       setEphemeralHint("");
-      setAgentBusyState(true);
-      try {
-        await onAgentRun!({
-          userText: q,
-          prefixTurns: prefixWithUser,
-          userTurnId: userTurn.id,
-          forceCompose: shouldForceStudioCompose(q, fromChip),
-          selectionSnippet: selectedSnippet || undefined
-        });
-      } finally {
-        setAgentBusyState(false);
-        setEphemeralHint("");
-      }
-      return;
     }
-
-    const route = routeStudioAction(
-      { ...work, agentTurns: prefixWithUser },
-      q,
-      prefixWithUser
-    );
-    const routedBase = syncWorkTitleFromTurns(
-      {
-        ...base,
-        lastOrchestratorNote: route.note
-      },
-      prefixWithUser
-    );
-    onPersist(routedBase);
-    await dispatchRoutedSend(prefixWithUser, q, route, routedBase);
   }
 
   async function handleEditUserTurn(turnId: string, newText: string) {
@@ -654,38 +643,24 @@ export default function StudioAgentDock({
     };
     const prefixWithUser = [...prefix, userTurn];
 
-    if (useAgentStream) {
-      const base = syncWorkTitleFromTurns(
-        { ...truncated, agentTurns: prefixWithUser, error: undefined },
-        prefixWithUser
-      );
-      onPersist(base);
-      setAgentBusyState(true);
-      try {
-        await onAgentRun!({
-          userText: newText.trim(),
-          prefixTurns: prefixWithUser,
-          userTurnId: userTurn.id,
-          forceCompose: shouldForceStudioCompose(newText.trim(), false)
-        });
-      } finally {
-        setAgentBusyState(false);
-      }
-      return;
-    }
+    if (!onAgentRun) return;
 
-    const route = routeStudioAction(
-      { ...truncated, agentTurns: prefixWithUser },
-      newText.trim(),
-      prefixWithUser
-    );
     const base = syncWorkTitleFromTurns(
-      { ...truncated, agentTurns: prefixWithUser, lastOrchestratorNote: route.note, error: undefined },
+      { ...truncated, agentTurns: prefixWithUser, error: undefined },
       prefixWithUser
     );
     onPersist(base);
-
-    await dispatchRoutedSend(prefixWithUser, newText.trim(), route, base);
+    setAgentBusyState(true);
+    try {
+      await onAgentRun({
+        userText: newText.trim(),
+        prefixTurns: prefixWithUser,
+        userTurnId: userTurn.id,
+        forceCompose: shouldForceStudioCompose(newText.trim(), false)
+      });
+    } finally {
+      setAgentBusyState(false);
+    }
   }
 
   const composerFooter = (
@@ -699,7 +674,11 @@ export default function StudioAgentDock({
           <button
             type="button"
             className="shrink-0 rounded-md bg-brand px-2.5 py-1 text-brand-foreground"
-            onClick={() => void handleSend(`【块级改版】改这段：${selectedSnippet.trim()}`)}
+            onClick={() => {
+              const opinion = input.trim() || "改这段";
+              void handleSend(opinion, false, selectedSnippet.trim());
+              onSelectionChange?.("");
+            }}
           >
             改这段
           </button>
@@ -712,6 +691,11 @@ export default function StudioAgentDock({
           </button>
         </div>
       ) : null}
+      <StudioExplicitGoalChips
+        goal={normalizeStudioExplicitGoal(work.explicitGoal)}
+        disabled={agentBusy || jobRunning}
+        onChange={(goal: StudioExplicitGoal) => onPersist({ ...work, explicitGoal: goal })}
+      />
       <StudioAgentComposer
         value={input}
         onChange={setInput}

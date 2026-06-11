@@ -53,17 +53,21 @@ def _build_user_blob(
     message: str,
     manuscript_excerpt: str,
     feature_summary: str,
+    corpus_excerpt: str = "",
 ) -> str:
     chunks = [f"用户问题：{message.strip()[:800]}"]
     clipped = _clip_excerpt(manuscript_excerpt)
     if clipped:
         chunks.extend(["", "【当前稿件】", clipped])
+    corpus = corpus_excerpt.strip()[:4000]
+    if corpus:
+        chunks.extend(["", "【相关资料摘录】", corpus])
     if feature_summary.strip():
         chunks.extend(["", f"【作者偏好】{feature_summary.strip()[:240]}"])
     return "\n".join(chunks)
 
 
-def _system_for_tier(tier: ReplyTier, *, grounded: bool) -> str:
+def _system_for_tier(tier: ReplyTier, *, grounded: bool, corpus_grounded: bool = False) -> str:
     if tier == "ops":
         if grounded:
             return "\n".join(
@@ -94,6 +98,13 @@ def _system_for_tier(tier: ReplyTier, *, grounded: bool) -> str:
             [
                 "你是小红书创作助手。用户已有成稿，请结合正文回答（Markdown，约 200–500 字）。",
                 "至少 1 处「」引用；不要输出完整新稿；不要 JSON。",
+            ]
+        )
+    if corpus_grounded:
+        return "\n".join(
+            [
+                "你是创作助手。用户勾选了资料库，请结合【相关资料摘录】回答（Markdown，约 200–500 字）。",
+                "至少引用 1 处资料细节；不要输出完整新稿；不要 JSON。",
             ]
         )
     return "\n".join(
@@ -137,15 +148,22 @@ def generate_studio_reply(
     manuscript_excerpt: str = "",
     task_sentence: str = "",
     feature_summary: str = "",
+    corpus_excerpt: str = "",
 ) -> str:
     """reply 统一入口：按 tier 选 max_tokens 与输出上限。"""
     _ = task_sentence
     excerpt = _clip_excerpt(manuscript_excerpt)
+    corpus = corpus_excerpt.strip()[:4000]
     grounded = has_manuscript or bool(excerpt)
     tier = classify_reply_tier(message, has_manuscript=has_manuscript, manuscript_excerpt=excerpt)
     max_tokens, out_cap = _TIER_LIMITS[tier]
-    system = _system_for_tier(tier, grounded=grounded)
-    user = _build_user_blob(message=message, manuscript_excerpt=excerpt, feature_summary=feature_summary)
+    system = _system_for_tier(tier, grounded=grounded, corpus_grounded=bool(corpus))
+    user = _build_user_blob(
+        message=message,
+        manuscript_excerpt=excerpt,
+        feature_summary=feature_summary,
+        corpus_excerpt=corpus,
+    )
     try:
         raw, _ = invoke_social_llm(system, user, max_tokens=max_tokens)
         text = str(raw or "").strip()

@@ -34,6 +34,11 @@ def build_planner_user_blob(
     domain: str = "",
     fmt: str = "",
     selection_snippet: str = "",
+    notebook: str = "",
+    note_ids: list[str] | None = None,
+    feature_summary: str = "",
+    explicit_goal: str = "",
+    work_brief: str = "",
 ) -> str:
     lifecycle = derive_studio_lifecycle(
         status=status,
@@ -47,6 +52,20 @@ def build_planner_user_blob(
     ]
     if domain.strip():
         chunks.append(f"【领域】domain={domain.strip()[:32]} format={fmt.strip()[:32]}")
+    nids = [str(x).strip() for x in (note_ids or []) if str(x).strip()]
+    if notebook.strip() or nids:
+        chunks.append(
+            f"【资料】notebook={notebook.strip()[:64]} notes={len(nids)} useRag={bool(nids)}"
+        )
+    if feature_summary.strip():
+        chunks.append(f"【作者偏好】{feature_summary.strip()[:240]}")
+    if has_pending_patch:
+        chunks.append("【待采纳改版】有未合并的 patch，用户可能只想问答或局部改")
+    if explicit_goal.strip():
+        chunks.append(f"【本轮目标】{explicit_goal.strip()[:32]}")
+    brief_stable = str(work_brief or "").strip()
+    if brief_stable:
+        chunks.append(f"【稳定 brief】{brief_stable[:1200]}")
     if task_sentence.strip():
         chunks.append(f"【任务句】{task_sentence[:1200]}")
     if manuscript_excerpt.strip():

@@ -481,7 +481,14 @@ def _composer_anti_template_extras(intake: dict[str, Any]) -> dict[str, Any]:
 def _xhs_compose_must_include(intake: dict[str, Any], task_sentence: str) -> list[str]:
     length = resolve_xhs_intake_length(intake, task_sentence)
     para_max = xhs_body_para_max_chars(length)
-    target = _XHS_LENGTH_CHARS.get(length, 600)
+    domain_target = intake.get("_domainTargetChars")
+    if domain_target is not None:
+        try:
+            target = int(domain_target)
+        except (TypeError, ValueError):
+            target = _XHS_LENGTH_CHARS.get(length, 600)
+    else:
+        target = _XHS_LENGTH_CHARS.get(length, 600)
     return [
         "产品或主题的核心卖点",
         "目标用户痛点或使用场景",
@@ -498,7 +505,14 @@ def _intake_to_social_options(intake: dict[str, Any], task_sentence: str) -> dic
         options["tone"] = _XHS_TONE[tone]
     length = resolve_xhs_intake_length(intake, task_sentence)
     intake["length"] = length
-    if length in _XHS_LENGTH_CHARS:
+    domain_target = intake.get("_domainTargetChars")
+    if domain_target is not None:
+        try:
+            options["target_chars"] = int(domain_target)
+        except (TypeError, ValueError):
+            if length in _XHS_LENGTH_CHARS:
+                options["target_chars"] = _XHS_LENGTH_CHARS[length]
+    elif length in _XHS_LENGTH_CHARS:
         options["target_chars"] = _XHS_LENGTH_CHARS[length]
     audience_raw = intake.get("audience")
     aud_ids = audience_raw if isinstance(audience_raw, list) else [audience_raw]
@@ -1091,6 +1105,7 @@ def generate_xhs_expert_deliverable(
     feature_summary: str,
     on_stream_delta: Callable[[str], None] | None = None,
     validation_errors: list[str] | None = None,
+    domain: str = "social",
 ) -> dict[str, Any]:
     extra = ""
     if validation_errors:
@@ -1115,20 +1130,22 @@ def generate_xhs_expert_deliverable(
     if errors:
         raise ValueError("validation_failed:" + "|".join(errors[:6]))
     content = deliverable.get("content") if isinstance(deliverable.get("content"), dict) else {}
-    count_errors = _xhs_title_body_count_errors(content)
+    domain_norm = str(domain or "social").strip().lower()
+    is_social_domain = domain_norm in ("social", "general", "")
+    count_errors = _xhs_title_body_count_errors(content) if is_social_domain else []
     if count_errors:
         raise ValueError("validation_failed:" + "|".join(count_errors[:4]))
-    bodies_errors = _xhs_bodies_count_errors(content)
+    bodies_errors = _xhs_bodies_count_errors(content) if is_social_domain else []
     if bodies_errors:
         raise ValueError("validation_failed:" + "|".join(bodies_errors[:2]))
-    similarity_errors = _xhs_bodies_similarity_errors(content)
+    similarity_errors = _xhs_bodies_similarity_errors(content) if is_social_domain else []
     if similarity_errors:
         raise ValueError("validation_failed:" + "|".join(similarity_errors[:2]))
-    hook_errors = _xhs_opening_hook_errors(content)
+    hook_errors = _xhs_opening_hook_errors(content) if is_social_domain else []
     if hook_errors:
         raise ValueError("validation_failed:" + "|".join(hook_errors[:2]))
     anchor_errors = _xhs_corpus_anchor_errors(content, used_rag=used_rag)
-    if anchor_errors:
+    if anchor_errors and is_social_domain:
         raise ValueError("validation_failed:" + "|".join(anchor_errors[:2]))
     return deliverable
 

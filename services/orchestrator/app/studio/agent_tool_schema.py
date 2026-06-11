@@ -13,7 +13,8 @@ STUDIO_AGENT_TOOL_JSON_SHAPE = (
     '"brief":"compose/patch 任务句","reply":"reply 可选草稿（下游按场景扩展）","reason":"必填",'
     '"domain":"social|article|business|narrative|script|academic|general",'
     '"format":"short_post|long_form|listicle|email|tutorial|script_beats|summary|general",'
-    '"assumptions":["可选假设"]}'
+    '"assumptions":["可选假设"],'
+    '"reviseScope":{"blocks":["title|body|hashtags|coverBrief"],"intent":"sharper","fullRewrite":false}}'
 )
 
 
@@ -55,6 +56,9 @@ def parse_tool_call(raw: dict[str, Any] | None) -> dict[str, Any] | None:
         out["format"] = fmt[:32]
     if isinstance(assumptions, list):
         out["assumptions"] = [str(a).strip()[:80] for a in assumptions if str(a).strip()][:5]
+    scope_raw = raw.get("reviseScope")
+    if isinstance(scope_raw, dict):
+        out["reviseScope"] = scope_raw
     return out
 
 
@@ -88,7 +92,8 @@ def tool_router_system_prompt(*, agent_mode: StudioAgentMode) -> str:
             "",
             "规则：",
             "- open-ended 写稿意图 → compose；缺细节假设，勿降级 reply。",
-            "- 只改标题/段落/语气 → revise，brief 注明 scope。",
+            "- 只改标题/段落/语气 → revise，brief 注明 scope；reviseScope.blocks 列出块。",
+            "- 全稿重写/换主题 → compose 或 reviseScope.fullRewrite=true。",
             "- 推断 domain/format 写入 JSON（social/article/business/…）。",
             "- 无稿件禁止 revise。",
             "- reason 必填：用户可见 trace。",

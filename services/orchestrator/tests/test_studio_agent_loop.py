@@ -1,4 +1,4 @@
-from app.studio.agent_loop import LOCAL_PATCH_SIGNAL, manuscript_plain_from_payload, run_agent_tool_loop
+from app.studio.agent_loop import manuscript_plain_from_payload, run_agent_tool_loop
 
 
 def test_selection_patch_forces_revise():
@@ -8,7 +8,7 @@ def test_selection_patch_forces_revise():
             {"kind": "body", "text": "刚改完方案，一上午没喝水。"},
         ],
     }
-    msg = f"{LOCAL_PATCH_SIGNAL}仅修改 body 块中以下片段：「一上午没喝水」。要求：更口语"
+    msg = "【块级改版】仅修改 body 块中以下片段：「一上午没喝水」。要求：更口语"
     steps: list[tuple[str, str, str, str | None]] = []
 
     def emit(step_id: str, label: str, status: str, tool: str | None) -> None:

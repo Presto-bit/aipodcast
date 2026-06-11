@@ -8,6 +8,8 @@ import {
 } from "./studioAgentToolSchema";
 import { parseStudioAgentStep, upsertAgentStep, type StudioAgentStep } from "./studioAgentSteps";
 import { plannerAgentTurns } from "./studioPlannerTurns";
+import type { StudioExplicitGoal } from "./studioExplicitGoal";
+import { normalizeStudioExplicitGoal } from "./studioExplicitGoal";
 import type { StudioDomain, StudioFormat } from "./studioDomainProfile";
 import type { ManuscriptBlock, PendingPatch, StudioAgentTurn, WorkStatus } from "./studioWorkTypes";
 
@@ -32,6 +34,10 @@ export type StudioAgentStreamInput = {
   activeVersionId?: string;
   clientRunId?: string;
   forceCompose?: boolean;
+  explicitGoal?: StudioExplicitGoal;
+  pendingPatch?: boolean;
+  selectionSnippet?: string;
+  workBrief?: string;
   domain?: StudioDomain;
   format?: StudioFormat;
   authHeaders: Record<string, string>;
@@ -88,6 +94,10 @@ export async function streamStudioAgent(
       activeVersionId: input.activeVersionId?.trim() || "",
       clientRunId: input.clientRunId?.trim() || "",
       forceCompose: Boolean(input.forceCompose),
+      explicitGoal: normalizeStudioExplicitGoal(input.explicitGoal),
+      pendingPatch: Boolean(input.pendingPatch),
+      selectionSnippet: input.selectionSnippet?.trim() || "",
+      workBrief: input.workBrief?.trim() || "",
       useRag: input.noteIds.length > 0,
       sourceType: input.noteIds.length > 0 ? "notes_rag" : "composer_prompt"
     }),

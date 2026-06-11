@@ -17,6 +17,28 @@ export function isEmptyStudioWork(work: StudioWork): boolean {
   return !hasTurns && !hasBinding;
 }
 
+/** 自动填充稳定 brief（无 UI；首条非问答 user 句） */
+export function syncWorkBriefFromTurns(work: StudioWork, turns: StudioAgentTurn[]): StudioWork {
+  if (work.brief.trim()) return work;
+  const first = turns
+    .filter((t) => t.role === "user" && !t.streaming)
+    .map((t) => t.content.trim())
+    .find((text) => text && !isAskOnlyUserTurn(text));
+  if (!first) return work;
+  return { ...work, brief: normalizeStudioComposeBrief(first) };
+}
+
+/** compose 用稳定 brief + 本轮补充 */
+export function composeBriefForWork(work: StudioWork, currentMessage = ""): string {
+  const stable = work.brief.trim();
+  const msg = currentMessage.trim();
+  if (stable && msg && !stable.includes(msg)) {
+    return normalizeStudioComposeBrief(`${stable}\n\n${msg}`);
+  }
+  if (stable) return normalizeStudioComposeBrief(stable);
+  return composeTaskSentenceFromTurns(work.agentTurns ?? [], msg);
+}
+
 /** 从对话用户消息拼任务句（不再维护会话 Brief 字段） */
 export function taskSentenceFromWork(work: StudioWork): string {
   const users = (work.agentTurns ?? [])

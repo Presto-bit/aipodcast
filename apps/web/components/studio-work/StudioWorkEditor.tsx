@@ -6,19 +6,12 @@ import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 import { manuscriptCopyAll } from "../../lib/studioDeliverable";
 import { shouldRejectDeliverableBody } from "../../lib/studioDeliverableQuality";
 import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
-import { buildSelectionPatchOpinion } from "../../lib/studioBlockPatch";
-import {
-  buildStudioAuthorPrompt,
-  buildStudioJobIntake,
-  buildStudioReviseTaskSentence
-} from "../../lib/studioWorkIntake";
+import { buildStudioAuthorPrompt, buildStudioJobIntake } from "../../lib/studioWorkIntake";
 import { getComposerPrefsFeatureCore, getStudioWork, upsertStudioWork } from "../../lib/studioWorkStorage";
-import { isStudioAskOnlyMessage } from "../../lib/studioAgentAction";
 import {
   appendStudioRun,
   finishStudioRun,
-  patchStudioGeneratePhase,
-  wouldAutoGenerate
+  patchStudioGeneratePhase
 } from "../../lib/studioOrchestrator";
 import {
   appendComposeClarifyTurn,
@@ -39,11 +32,24 @@ import {
 import { shouldForceStudioCompose } from "../../lib/studioComposeChip";
 import { classifyStudioFailure } from "../../lib/studioAgentFailure";
 import { applyDomainHint, resolveStudioDomainContext } from "../../lib/studioDomainProfile";
+import type { StudioDomain, StudioFormat } from "../../lib/studioDomainProfile";
+import { resolveStreamExplicitGoal } from "../../lib/studioExplicitGoal";
 import { shouldAutoApplyPatch, shouldShowQualityNote } from "../../lib/studioEditorMode";
 import {
-  looksLikeManuscriptEditRequest,
-  wrapManuscriptEditOpinion
-} from "../../lib/studioReviseIntent";
+  composeBriefForWork,
+  composeTaskSentenceFromTurns,
+  syncWorkBriefFromTurns,
+  syncWorkTitleFromTurns
+} from "../../lib/studioWorkTask";
+import type {
+  ManuscriptBlock,
+  ManuscriptVersion,
+  PendingPatch,
+  StudioAgentTurn,
+  StudioWork,
+  WorkStatus
+} from "../../lib/studioWorkTypes";
+import { buildPendingPatchFromBlocks } from "../../lib/studioPatchApply";
 import {
   abortWorkStream,
   clearWorkStream,
@@ -55,20 +61,10 @@ import {
   workStreamAbortMatches
 } from "../../lib/studioWorkStreamRegistry";
 import { captureUndoSnapshot, applyUndoSnapshot } from "../../lib/studioUndo";
-import { shouldSuppressStudioCanvasReply } from "../../lib/studioAgentStructured";
 import { streamStudioAgent } from "../../lib/studioAgentStream";
 import { studioAgentRouteHint } from "../../lib/studioAgentToolSchema";
 import { upsertAgentStep, type StudioAgentStep } from "../../lib/studioAgentSteps";
-import { composeTaskSentenceFromTurns, firstUserSentenceFromTurns, syncWorkTitleFromTurns } from "../../lib/studioWorkTask";
-import type {
-  ManuscriptBlock,
-  ManuscriptVersion,
-  PendingPatch,
-  StudioAgentTurn,
-  StudioWork,
-  WorkStatus
-} from "../../lib/studioWorkTypes";
-import { buildPendingPatchFromBlocks } from "../../lib/studioPatchApply";
+import { firstUserSentenceFromTurns } from "../../lib/studioWorkTask";
 import StudioAgentDock from "./StudioAgentDock";
 import StudioSessionRail from "./StudioSessionRail";
 
@@ -232,36 +228,28 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const cur0 = getStudioWork(workId);
       if (!cur0 || !isLoggedIn) return;
 
-      let outgoingText = params.userText;
+      let outgoingText = params.userText.trim();
       const queuedFollowUps = (cur0.followUps ?? []).map((f) => f.text.trim()).filter(Boolean);
       if (queuedFollowUps.length) {
         outgoingText = [...queuedFollowUps, params.userText.trim()].filter(Boolean).join("\n\n");
         persist({ ...cur0, followUps: [] });
       }
       const snippet = params.selectionSnippet?.trim();
-      if (snippet && !outgoingText.startsWith("【块级改版】")) {
-        outgoingText = buildSelectionPatchOpinion(snippet, params.userText);
-      }
 
       const baseVersion =
         cur0.versions.find((v) => v.id === cur0.activeVersionId) ?? cur0.versions.at(-1);
-      const isReviseIntent =
-        looksLikeManuscriptEditRequest(params.userText, Boolean(baseVersion)) || Boolean(snippet);
-      if (isReviseIntent && !outgoingText.startsWith("【块级改版】")) {
-        outgoingText = wrapManuscriptEditOpinion(params.userText);
-      }
-      const forceReviewPatch =
-        isReviseIntent && Boolean(baseVersion?.blocks.length);
+      const forceReviewPatch = Boolean(snippet && baseVersion?.blocks.length);
 
-      const composeTask = composeTaskSentenceFromTurns(params.prefixTurns, outgoingText);
+      const withBrief = syncWorkBriefFromTurns(cur0, params.prefixTurns);
+      const composeTask = composeBriefForWork(withBrief, outgoingText);
       const domainCtx = resolveStudioDomainContext({
-        hint: { domain: cur0.domain, format: cur0.format },
+        hint: { domain: withBrief.domain, format: withBrief.format },
         userMessage: params.userText,
         taskText: composeTask,
-        hasManuscript: isReviseIntent && Boolean(baseVersion?.blocks.length)
+        hasManuscript: Boolean(baseVersion?.blocks.length)
       });
-      const cur: StudioWork = cur0;
-      persist(cur);
+      persist({ ...withBrief, ...applyDomainHint(withBrief, domainCtx) });
+      const cur = getStudioWork(workId) ?? withBrief;
 
       canvasSnapshotsRef.current.set(params.userTurnId, {
         versions: cur.versions,
@@ -272,22 +260,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       const intake = buildStudioJobIntake(composeTask, cur.intake);
       const authorPrompt = buildStudioAuthorPrompt(composeTask);
 
-      const isReviseIntentConfirmed = isReviseIntent;
-      const effectiveTaskSentence =
-        isReviseIntentConfirmed && baseVersion
-          ? buildStudioReviseTaskSentence(
-              composeTask,
-              manuscriptCopyAll(baseVersion.blocks, baseVersion.primaryTitleIndex ?? 0),
-              outgoingText
-            )
-          : composeTask;
-
       activeStreamTurnIdRef.current = params.userTurnId;
 
       const ac = new AbortController();
       registerWorkStream(workId, ac, params.userTurnId);
       patchWorkStreamUi(workId, {
-        agentRouteHint: isReviseIntent ? "正在准备改版…" : "正在准备写稿…",
+        agentRouteHint: "正在理解你的指令…",
         agentSteps: [],
         streamingBlocks: null,
         streamingBodyText: null,
@@ -454,18 +432,20 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
         ensureComposeRun(tool);
       };
 
-      const runOneStream = (streamMessage: string, streamTaskSentence: string) => {
+      const runOneStream = () => {
         const liveWork = getStudioWork(workId) ?? cur;
         const streamBase =
           liveWork.versions.find((v) => v.id === liveWork.activeVersionId) ??
           liveWork.versions.at(-1) ??
           baseVersion;
+        const streamBrief = composeBriefForWork(liveWork, outgoingText);
         return streamStudioAgent({
-          message: streamMessage,
+          message: outgoingText,
           agentTurns: params.prefixTurns,
           status: liveWork.status,
           versionCount: liveWork.versions.length,
-          taskSentence: streamTaskSentence,
+          taskSentence: streamBrief,
+          workBrief: liveWork.brief,
           intake,
           notebook: liveWork.binding.notebook,
           noteIds: liveWork.binding.noteIds,
@@ -478,6 +458,12 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           forceCompose: params.forceCompose,
           domain: domainCtx.domain,
           format: domainCtx.format,
+          explicitGoal: resolveStreamExplicitGoal(
+            liveWork.explicitGoal,
+            Boolean(params.selectionSnippet?.trim())
+          ),
+          pendingPatch: Boolean(liveWork.pendingPatch),
+          selectionSnippet: params.selectionSnippet?.trim() || "",
           authHeaders: getAuthHeaders(),
           signal: ac.signal,
           onStep: (step) => {
@@ -489,8 +475,26 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
             const hint = studioAgentRouteHint(route, "write");
             patchWorkStreamUi(workId, { agentRouteHint: hint });
             const live = getStudioWork(workId);
-            if (live && route.reason?.trim()) {
-              persist({ ...live, lastPlannerReason: route.reason.trim() });
+            if (live) {
+              const next: StudioWork = { ...live };
+              if (route.reason?.trim()) next.lastPlannerReason = route.reason.trim();
+              if (route.domain) {
+                next.domain = route.domain as StudioDomain;
+              }
+              if (route.format) {
+                next.format = route.format as StudioFormat;
+              }
+              if (route.assumptions?.length) {
+                next.plannerAssumptions = route.assumptions;
+              }
+              if (
+                route.reason !== live.lastPlannerReason ||
+                route.domain !== live.domain ||
+                route.format !== live.format ||
+                route.assumptions !== live.plannerAssumptions
+              ) {
+                persist(next);
+              }
             }
             if (route.tool === "compose" || route.tool === "revise") {
               beginComposeRun(route.tool === "revise" ? "revise" : "generate");
@@ -499,7 +503,6 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
           onReply: (text) => {
             const live = getStudioWork(workId);
             if (!live || !text.trim()) return;
-            if (shouldSuppressStudioCanvasReply(live, params.userText)) return;
             const lastAssistant = live.agentTurns?.filter((t: StudioAgentTurn) => t.role === "assistant").at(-1);
             if (lastAssistant?.content.trim() === text.trim()) return;
             const assistantTurn: StudioAgentTurn = {
@@ -558,29 +561,7 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
       };
 
       try {
-        let result = await runOneStream(outgoingText, effectiveTaskSentence);
-        const liveAfterStream = getStudioWork(workId);
-        if (
-          result.status === "reply" &&
-          liveAfterStream &&
-          !liveAfterStream.versions.length &&
-          !isStudioAskOnlyMessage(params.userText, false) &&
-          wouldAutoGenerate(liveAfterStream, params.userText, params.prefixTurns)
-        ) {
-          result = await runOneStream(outgoingText, composeTask);
-        }
-        if (result.status === "reply" && baseVersion) {
-          const liveForRetry = getStudioWork(workId);
-          if (liveForRetry && shouldSuppressStudioCanvasReply(liveForRetry, params.userText)) {
-            const retryMessage = wrapManuscriptEditOpinion(params.userText);
-            const retryTask = buildStudioReviseTaskSentence(
-              composeTask,
-              manuscriptCopyAll(baseVersion.blocks, baseVersion.primaryTitleIndex ?? 0),
-              retryMessage
-            );
-            result = await runOneStream(retryMessage, retryTask);
-          }
-        }
+        const result = await runOneStream();
 
         if (ac.signal.aborted || result.status === "aborted") {
           const live = getStudioWork(workId);
@@ -632,9 +613,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
 
         if (result.status === "reply") {
           const text = result.text.trim();
-          const suppressReply = shouldSuppressStudioCanvasReply(after, params.userText);
           const lastAssistant = after.agentTurns?.filter((t: StudioAgentTurn) => t.role === "assistant").at(-1);
-          if (!suppressReply && text && lastAssistant?.content !== text) {
+          if (text && lastAssistant?.content !== text) {
             persist({
               ...after,
               agentTurns: [
@@ -650,6 +630,8 @@ export default function StudioWorkEditor({ workId }: { workId: string }) {
               error: undefined,
               runPhase: undefined
             });
+          } else if (!text) {
+            persist({ ...after, error: undefined, runPhase: undefined });
           }
           if (runId && ackAppended) {
             persist(

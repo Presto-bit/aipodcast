@@ -1,7 +1,6 @@
 import { isOpsStrategyQuestion, opsStrategyFallbackReply, STUDIO_OPS_WITH_MANUSCRIPT_CHIPS } from "./studioOpsStrategy";
 import { STUDIO_OPS_FOLLOWUP_CHIPS } from "./studioBriefMerge";
-import { wouldAutoGenerate } from "./studioOrchestrator";
-import { composeTaskSentenceFromTurns, taskSentenceFromWork } from "./studioWorkTask";
+import { composeBriefForWork, composeTaskSentenceFromTurns, syncWorkBriefFromTurns, taskSentenceFromWork } from "./studioWorkTask";
 import { isDraftLikeStatus } from "./studioWorkMigrate";
 import type { StudioAgentTurn, StudioWork } from "./studioWorkTypes";
 
@@ -179,7 +178,6 @@ export function draftAskFallbackText(
     return opsStrategyFallbackReply(latestUserMessage, taskSentenceFromWork(work));
   }
   if (!isDraftLikeStatus(work.status)) return null;
-  if (wouldAutoGenerate(work, latestUserMessage, turnList)) return null;
   const trimmed = rawAnswer?.trim();
   if (trimmed && !trimmed.startsWith("{")) return trimmed;
   return null;
