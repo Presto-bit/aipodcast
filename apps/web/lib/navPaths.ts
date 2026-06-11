@@ -18,6 +18,26 @@ export const WORKBENCH_PODCAST_CLIP_PATH = "/podcast/clip";
 export const WORKBENCH_PODCAST_SHOWNOTES_PATH = "/podcast/shownotes";
 export const WORKBENCH_PODCAST_VOICE_PATH = "/podcast/voice";
 
+/** 播客剪辑工程详情页 */
+export function podcastClipProjectHref(projectId: string): string {
+  const id = String(projectId || "").trim();
+  return id ? `${WORKBENCH_PODCAST_CLIP_PATH}/${encodeURIComponent(id)}` : WORKBENCH_PODCAST_CLIP_PATH;
+}
+
+/** Shownotes 工程制作页 */
+export function podcastShownotesMakeHref(projectId: string): string {
+  const id = String(projectId || "").trim();
+  return id
+    ? `${WORKBENCH_PODCAST_SHOWNOTES_PATH}/make/${encodeURIComponent(id)}`
+    : `${WORKBENCH_PODCAST_SHOWNOTES_PATH}/make`;
+}
+
+/** 音色管理页（可选 tab / lib 等 query） */
+export function podcastVoiceHref(search?: string | URLSearchParams): string {
+  const raw = search instanceof URLSearchParams ? search.toString() : String(search || "").replace(/^\?/, "").trim();
+  return raw ? `${WORKBENCH_PODCAST_VOICE_PATH}?${raw}` : WORKBENCH_PODCAST_VOICE_PATH;
+}
+
 /** 工作台侧栏 Link prefetch：改为 hover 预取，见 WorkbenchLink / navPrefetch.ts */
 export const WORKBENCH_NAV_PREFETCH = false;
 

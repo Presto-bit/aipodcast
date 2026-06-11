@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
+import {
+  WORKBENCH_HOME_PATH,
+  WORKBENCH_PODCAST_SHOWNOTES_PATH,
+  podcastShownotesMakeHref
+} from "../../lib/navPaths";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth, isLoggedInAccountUser } from "../../lib/auth";
 import type { ClipProjectRow } from "../../lib/clipTypes";
@@ -69,7 +73,7 @@ export default function ShownotesMakeHubClient() {
           <h1 className="text-2xl font-semibold tracking-tight text-ink">继续 Shownotes</h1>
           <p className="mt-1 text-sm text-muted">选择已有音频任务；将打开独立 Shownotes 页。</p>
         </div>
-        <Link href="/shownotes" className="text-sm font-medium text-brand hover:underline">
+        <Link href={WORKBENCH_PODCAST_SHOWNOTES_PATH} className="text-sm font-medium text-brand hover:underline">
           返回 Shownotes 首页
         </Link>
       </div>
@@ -79,7 +83,7 @@ export default function ShownotesMakeHubClient() {
         {!loading && candidates.length === 0 ? (
           <p className="rounded-xl border border-line bg-fill/30 px-4 py-6 text-sm text-muted">
             暂无含音频的任务。请先在{" "}
-            <Link href="/shownotes" className="font-medium text-brand hover:underline">
+            <Link href={WORKBENCH_PODCAST_SHOWNOTES_PATH} className="font-medium text-brand hover:underline">
               Shownotes 首页
             </Link>{" "}
             上传音频。
@@ -89,7 +93,7 @@ export default function ShownotesMakeHubClient() {
           {candidates.map((p) => (
             <li key={p.id}>
               <Link
-                href={`/shownotes/make/${encodeURIComponent(p.id)}`}
+                href={podcastShownotesMakeHref(p.id)}
                 className="flex items-center justify-between rounded-xl border border-line/80 bg-fill/25 px-4 py-3 text-sm transition hover:border-brand/35 hover:bg-fill/45"
               >
                 <span className="min-w-0 truncate font-medium text-ink">{shownotesProjectDisplayTitle(p)}</span>

@@ -8,6 +8,7 @@ import { clipJobLabel } from "../../lib/clipJobLabels";
 import type { ClipProjectRow } from "../../lib/clipTypes";
 import { isShownotesOnlyClipProject } from "../../lib/shownotesClipProject";
 import { useI18n } from "../../lib/I18nContext";
+import { podcastClipProjectHref } from "../../lib/navPaths";
 import { PrestoBrandHeading } from "../brand/PrestoBrandHeading";
 import SmallConfirmModal from "../ui/SmallConfirmModal";
 
@@ -107,7 +108,7 @@ export default function ClipHub() {
       if (!res.ok || data.success === false || !data.project?.id) {
         throw new Error(data.detail || `创建失败 ${res.status}`);
       }
-      window.location.href = `/clip/${encodeURIComponent(data.project.id)}`;
+      window.location.href = podcastClipProjectHref(String(data.project.id));
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e));
     } finally {
@@ -303,7 +304,7 @@ export default function ClipHub() {
                       </div>
                     ) : (
                       <Link
-                        href={`/clip/${encodeURIComponent(p.id)}`}
+                        href={podcastClipProjectHref(p.id)}
                         className="block text-sm font-medium text-ink transition hover:opacity-90"
                       >
                         <span className="flex flex-wrap items-center gap-2">

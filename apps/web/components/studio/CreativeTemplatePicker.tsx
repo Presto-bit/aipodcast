@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { mergeCreativeTemplateSelectOptions } from "../../lib/creativeTemplates";
+import { podcastVoiceHref } from "../../lib/navPaths";
 
 type CreativeTemplatePickerProps = {
   /** `sys:<id>` / `usr:<id>`，与 mergeCreativeTemplateSelectOptions 一致 */
@@ -15,7 +16,7 @@ type CreativeTemplatePickerProps = {
 export default function CreativeTemplatePicker({
   value,
   onChange,
-  manageHref = "/voice?tab=persona"
+  manageHref = podcastVoiceHref("tab=persona")
 }: CreativeTemplatePickerProps) {
   const [epoch, setEpoch] = useState(0);
 

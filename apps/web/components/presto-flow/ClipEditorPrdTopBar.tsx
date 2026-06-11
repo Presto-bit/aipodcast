@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import BrandGlyph from "../brand/BrandGlyph";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
+import { WORKBENCH_HOME_PATH, WORKBENCH_PODCAST_CLIP_PATH } from "../../lib/navPaths";
 
 type Props = {
   title: ReactNode;
@@ -41,7 +41,7 @@ export default function ClipEditorPrdTopBar({ title, exportDisabled, exportLabel
           {exportLabel}
         </button>
         <Link
-          href="/clip"
+          href={WORKBENCH_PODCAST_CLIP_PATH}
           className="rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-ink shadow-soft hover:bg-fill"
         >
           项目空间

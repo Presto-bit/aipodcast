@@ -20,6 +20,7 @@ import { consumePostAuthActionForCurrentPath } from "../../lib/authPostAction";
 import { encodeClipFilenameForHttpHeader } from "../../lib/clipFilenameHeader";
 import type { ClipProjectRow, ClipSilenceSegment, ClipWord } from "../../lib/clipTypes";
 import { useI18n } from "../../lib/I18nContext";
+import { WORKBENCH_PODCAST_CLIP_PATH } from "../../lib/navPaths";
 import {
   adjustPlaybackMsForExcluded,
   approximateEditedTimelineMs,
@@ -2766,7 +2767,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
     return (
       <div className="flex h-[100dvh] max-h-[100dvh] flex-col items-center justify-center gap-4 bg-canvas px-4">
         <p className="text-sm text-danger-ink">{err || t("clip.editor.notFound")}</p>
-        <Link href="/clip" className="text-sm text-brand hover:underline">
+        <Link href={WORKBENCH_PODCAST_CLIP_PATH} className="text-sm text-brand hover:underline">
           {t("clip.backToList")}
         </Link>
       </div>
@@ -3022,7 +3023,7 @@ export default function PrestoFlowEditor({ projectId }: { projectId: string }) {
               />
             ) : (
               <PrestoFlowHeader
-                backHref="/clip"
+                backHref={WORKBENCH_PODCAST_CLIP_PATH}
                 backLabel={t("clip.backToList")}
                 title={project.title || projectId}
                 titleOverride={

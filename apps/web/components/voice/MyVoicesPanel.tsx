@@ -27,6 +27,7 @@ import { useWorkbenchOverlayDismiss } from "../../lib/useWorkbenchOverlayDismiss
 import { IconDotsHorizontal, IconPause, IconPlayFilled, IconStar, IconX } from "../icons";
 import { readFavoriteVoiceIds, toggleFavoriteVoiceId } from "../../lib/favoriteVoiceIdsStorage";
 import { voicePreviewSampleForCatalogLanguage } from "../../lib/voicePreviewSampleText";
+import { podcastVoiceHref } from "../../lib/navPaths";
 
 type LibraryTab = "explore" | "my" | "favorites";
 
@@ -281,7 +282,7 @@ export default function MyVoicesPanel() {
       const qs = new URLSearchParams();
       qs.set("tab", "my");
       if (tab !== "explore") qs.set("lib", tab);
-      router.replace(`/voice?${qs.toString()}`, { scroll: false });
+      router.replace(podcastVoiceHref(qs), { scroll: false });
     },
     [router]
   );

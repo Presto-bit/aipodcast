@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { WORKBENCH_HOME_PATH } from "../../lib/navPaths";
+import { WORKBENCH_HOME_PATH, WORKBENCH_PODCAST_SHOWNOTES_PATH } from "../../lib/navPaths";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import WorkspaceScrimModal from "../ui/WorkspaceScrimModal";
 import { FileText, Music2, RotateCw, Save, Sparkles } from "../icons";
@@ -419,7 +419,7 @@ export default function ShownotesStudio({
             <ShownotesBrandHeading />
             <p className="mt-1 text-sm text-muted">{displayName}</p>
           </div>
-          <Link href="/shownotes" className="text-sm font-medium text-brand hover:underline">
+          <Link href={WORKBENCH_PODCAST_SHOWNOTES_PATH} className="text-sm font-medium text-brand hover:underline">
             返回
           </Link>
         </div>

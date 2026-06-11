@@ -41,6 +41,7 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingS
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
 import { marketingSiteUrl } from "../../../lib/marketingSiteUrl";
+import { WORKBENCH_PODCAST_CLIP_PATH } from "../../../lib/navPaths";
 import { buildWorksTabHref, filterTtsWorks } from "../../../lib/workGalleryDisplay";
 
 type HotTopicAssistantItem = { label: string; text: string };
@@ -398,7 +399,7 @@ export default function CreatePage() {
               })}
               {!mode ? (
                 <>
-                  <Link href="/clip" className={createQuickLinkClass}>
+                  <Link href={WORKBENCH_PODCAST_CLIP_PATH} className={createQuickLinkClass}>
                     <span className="flex h-6 w-6 items-center justify-center rounded-md bg-fill text-muted">
                       <IconClip width={16} height={16} />
                     </span>
