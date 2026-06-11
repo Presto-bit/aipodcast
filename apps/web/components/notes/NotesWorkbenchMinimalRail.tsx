@@ -1,23 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { IconGrid, IconMic, IconNotes, IconPencil } from "../icons";
+import { IconGrid, IconMic, IconNotes } from "../icons";
 import BrandGlyph from "../brand/BrandGlyph";
 import { dispatchNotesShowNotebookHub } from "../../lib/notesLastNotebook";
-import { WORKBENCH_NAV_PREFETCH, WORKBENCH_PODCAST_STUDIO_PATH, WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
+import { WORKBENCH_NAV_PREFETCH, WORKBENCH_PODCAST_STUDIO_PATH } from "../../lib/navPaths";
 
 const RAIL_BTN =
   "flex h-10 w-10 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill hover:text-ink";
 
 type Props = {
-  homeLabel: string;
   notesLabel: string;
   worksLabel: string;
   toolsLabel: string;
 };
 
-/** 笔记本工作台：48px 图标轨（桌面）；与主侧栏心智对齐：话 / 料 / 作 / 播客 */
-export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, worksLabel, toolsLabel }: Props) {
+/** 笔记本工作台：48px 图标轨（桌面）；与主侧栏心智对齐：料 / 作 / 播客 */
+export default function NotesWorkbenchMinimalRail({ notesLabel, worksLabel, toolsLabel }: Props) {
   return (
     <aside
       id="fym-app-sidebar-root"
@@ -35,15 +34,6 @@ export default function NotesWorkbenchMinimalRail({ homeLabel, notesLabel, works
         <BrandGlyph size={32} />
       </Link>
       <nav className="flex flex-col items-center gap-0.5" aria-label="快捷入口">
-        <Link
-          href={WORKBENCH_STUDIO_PATH}
-          prefetch={WORKBENCH_NAV_PREFETCH}
-          className={RAIL_BTN}
-          title={homeLabel}
-          aria-label={homeLabel}
-        >
-          <IconPencil width={20} height={20} aria-hidden />
-        </Link>
         <button
           type="button"
           className={RAIL_BTN}

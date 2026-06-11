@@ -22,7 +22,6 @@ import {
   IconChevronLeft,
   IconGrid,
   IconHome,
-  IconPencil,
   IconMenu,
   IconMic,
   IconNotes,
@@ -74,7 +73,6 @@ import {
   pathNeedsWorkAudio,
   WORKBENCH_CHAT_PATH,
   WORKBENCH_HOME_PATH,
-  WORKBENCH_STUDIO_PATH,
   WORKBENCH_PODCAST_STUDIO_PATH,
   WORKBENCH_TTS_STUDIO_PATH
 } from "../lib/navPaths";
@@ -400,13 +398,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   const navCore = useMemo<NavItem[]>(
     () => [
-      {
-        href: WORKBENCH_STUDIO_PATH,
-        label: t("nav.studio"),
-        short: "创",
-        Icon: IconPencil,
-        activeMatch: (p) => pathMatchesRoot(p, WORKBENCH_STUDIO_PATH)
-      },
       {
         href: "/notes",
         label: t("nav.notes"),

@@ -4,9 +4,9 @@ import MarketingAuthNav from "../../components/marketing/MarketingAuthNav";
 import MarketingFeatureCard from "../../components/marketing/MarketingFeatureCard";
 import MarketingStaticImage from "../../components/marketing/MarketingStaticImage";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
-import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
+import { WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
 
-const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_STUDIO_PATH)}`;
+const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_NOTES_PATH)}`;
 
 export default function MarketingLandingPage() {
   return (
@@ -49,10 +49,10 @@ export default function MarketingLandingPage() {
                 开始生成播客
               </Link>
               <Link
-                href={WORKBENCH_STUDIO_PATH}
+                href={WORKBENCH_NOTES_PATH}
                 className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-fill"
               >
-                工作台首页
+                进入资料库
               </Link>
             </div>
           </div>

@@ -14,10 +14,10 @@ export const WORKBENCH_LINK_PREFETCH = false;
 
 /** 侧栏 idle 预取的高频工作台路由 */
 export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
+  "/notes",
   WORKBENCH_STUDIO_PATH,
   WORKBENCH_HOME_PATH,
   "/works",
-  "/notes",
   "/create",
   "/clip",
   "/shownotes",
@@ -37,9 +37,9 @@ export const WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY = [
 
 /** 登录后立即预取的高频入口（不等 idle） */
 export const WORKBENCH_LOGIN_PREFETCH_ROUTES = [
+  "/notes",
   WORKBENCH_STUDIO_PATH,
   WORKBENCH_HOME_PATH,
-  "/notes",
   "/create",
   "/works"
 ] as const;

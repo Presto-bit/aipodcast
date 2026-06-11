@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { WORKBENCH_STUDIO_PATH } from "../../lib/navPaths";
+import { WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
 
-const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_STUDIO_PATH)}`;
+const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_NOTES_PATH)}`;
 
 /** 营销页顶栏：仅鉴权相关按钮需 client 化，主体内容由 Server Component 渲染。 */
 export default function MarketingAuthNav() {
@@ -22,7 +22,7 @@ export default function MarketingAuthNav() {
       </Link>
       {loggedIn ? (
         <Link
-          href={WORKBENCH_STUDIO_PATH}
+          href={WORKBENCH_NOTES_PATH}
           className="inline-flex items-center rounded-lg bg-cta px-3.5 py-2 text-sm font-medium text-cta-foreground shadow-soft transition hover:bg-cta/90 sm:px-4"
         >
           进入工作台
@@ -30,7 +30,7 @@ export default function MarketingAuthNav() {
       ) : (
         <>
           <Link
-            href={`/login?returnTo=${encodeURIComponent(WORKBENCH_STUDIO_PATH)}`}
+            href={`/login?returnTo=${encodeURIComponent(WORKBENCH_NOTES_PATH)}`}
             prefetch={false}
             className="text-sm font-medium text-muted transition hover:text-ink"
           >

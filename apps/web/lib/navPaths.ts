@@ -2,14 +2,17 @@
  * 主导航路径匹配与鉴权白名单（与 AppShell 一致，供复用）。
  */
 
-/** 写作 Studio 创作主入口（writing-cursor-studio） */
+/** 写作 Studio 创作主入口（writing-cursor-studio；侧栏隐藏，深链仍可用） */
 export const WORKBENCH_STUDIO_PATH = "/studio";
+
+/** 资料 / 笔记本工作台（侧栏首推心智） */
+export const WORKBENCH_NOTES_PATH = "/notes";
 
 /** 经典对话 Composer（原 `/home` 重定向至此） */
 export const WORKBENCH_CHAT_PATH = "/chat";
 
 /** 登录后默认工作台路径 */
-export const WORKBENCH_DEFAULT_PATH = WORKBENCH_STUDIO_PATH;
+export const WORKBENCH_DEFAULT_PATH = WORKBENCH_NOTES_PATH;
 
 /** @deprecated 使用 WORKBENCH_CHAT_PATH；保留别名避免大范围替换 */
 export const WORKBENCH_HOME_PATH = WORKBENCH_CHAT_PATH;
