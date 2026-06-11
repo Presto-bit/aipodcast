@@ -1,25 +1,10 @@
-"use client";
+import { redirect } from "next/navigation";
+import { WORKBENCH_PODCAST_CLIP_PATH } from "../../../../lib/navPaths";
 
-import dynamic from "next/dynamic";
-import { useParams } from "next/navigation";
-import ClipAccessGate from "../../../../components/clip/ClipAccessGate";
+type PageProps = { params: Promise<{ id: string }> };
 
-const PrestoFlowEditor = dynamic(() => import("../../../../components/presto-flow/PrestoFlowEditor"), {
-  ssr: false,
-  loading: () => (
-    <div className="flex min-h-[50vh] items-center justify-center text-sm text-muted">加载剪辑工作台…</div>
-  )
-});
-
-export default function ClipProjectPage() {
-  const params = useParams();
-  const id = typeof params?.id === "string" ? params.id : "";
-  if (!id) {
-    return null;
-  }
-  return (
-    <ClipAccessGate>
-      <PrestoFlowEditor projectId={id} />
-    </ClipAccessGate>
-  );
+/** 旧路径兼容：重定向至播客子路由 */
+export default async function ClipProjectRedirectPage({ params }: PageProps) {
+  const { id } = await params;
+  redirect(`${WORKBENCH_PODCAST_CLIP_PATH}/${encodeURIComponent(id)}`);
 }

@@ -2,7 +2,13 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 import { routeHasWarmChunks } from "../navPrefetch";
-import { matchesProductStudio, normalizePathname } from "../navPaths";
+import {
+  matchesPodcastClip,
+  matchesPodcastShownotes,
+  matchesPodcastVoice,
+  matchesProductStudio,
+  normalizePathname
+} from "../navPaths";
 import { NOTEBOOKS_HUB_QUERY_KEY } from "./notebooksQueries";
 import { worksListQueryKey } from "./worksQueries";
 
@@ -40,15 +46,15 @@ export function routeHasWarmQueryCache(queryClient: QueryClient, hrefOrPath: str
     return routeHasWarmChunks("/works/trash");
   }
 
-  if (path === "/shownotes" || path.startsWith("/shownotes/")) {
+  if (matchesPodcastShownotes(path)) {
     return routeHasWarmChunks(path);
   }
 
-  if (path === "/clip" || path.startsWith("/clip/")) {
+  if (matchesPodcastClip(path)) {
     return routeHasWarmChunks(path);
   }
 
-  if (path === "/voice" || path.startsWith("/voice/")) {
+  if (matchesPodcastVoice(path)) {
     return routeHasWarmChunks(path);
   }
 

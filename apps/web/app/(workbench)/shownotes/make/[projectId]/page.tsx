@@ -1,8 +1,10 @@
-import ShownotesMakeClient from "../../../../../components/shownotes/ShownotesMakeClient";
+import { redirect } from "next/navigation";
+import { WORKBENCH_PODCAST_SHOWNOTES_PATH } from "../../../../../lib/navPaths";
 
 type PageProps = { params: Promise<{ projectId: string }> };
 
-export default async function ShownotesMakeProjectPage({ params }: PageProps) {
+/** 旧路径兼容：重定向至播客子路由 */
+export default async function ShownotesMakeProjectRedirectPage({ params }: PageProps) {
   const { projectId } = await params;
-  return <ShownotesMakeClient projectId={projectId} />;
+  redirect(`${WORKBENCH_PODCAST_SHOWNOTES_PATH}/make/${encodeURIComponent(projectId)}`);
 }

@@ -28,6 +28,7 @@ import { resolveJobScriptBodyText } from "../../lib/jobScriptText";
 import { copyWorkManuscriptToClipboard } from "../../lib/copyWorkManuscript";
 import { readLocalStorageScoped, writeLocalStorageScoped, writeSessionStorageScoped } from "../../lib/userScopedStorage";
 import { useAppNotice } from "../../lib/AppNoticeContext";
+import { WORKBENCH_TTS_STUDIO_PATH } from "../../lib/navPaths";
 import UserErrorBanner from "../ui/UserErrorBanner";
 import { useWorkAudioPlayer } from "../../lib/workAudioPlayer";
 import { workCoverImageSrc } from "../../lib/workCoverImage";
@@ -1027,7 +1028,7 @@ export default function PodcastWorksGallery({
               voice_id_2: String(payload.voice_id_2 || "").trim()
             })
           );
-          router.push("/tts");
+          router.push(WORKBENCH_TTS_STUDIO_PATH);
           return;
         }
 

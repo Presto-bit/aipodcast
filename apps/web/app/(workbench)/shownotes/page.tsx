@@ -1,5 +1,7 @@
-import ShownotesLandingClient from "../../../components/shownotes/ShownotesLandingClient";
+import { redirect } from "next/navigation";
+import { WORKBENCH_PODCAST_SHOWNOTES_PATH } from "../../../lib/navPaths";
 
-export default function ShownotesLandingPage() {
-  return <ShownotesLandingClient />;
+/** 旧路径兼容：重定向至播客子路由 */
+export default function ShownotesRedirectPage() {
+  redirect(WORKBENCH_PODCAST_SHOWNOTES_PATH);
 }

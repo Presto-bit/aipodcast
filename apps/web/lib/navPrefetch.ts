@@ -5,7 +5,17 @@ import {
   prefetchWorkbenchRouteData,
   type PrefetchWorkbenchRouteOptions
 } from "./prefetchWorkbenchRouteData";
-import { normalizePathname } from "./navPaths";
+import {
+  matchesPodcastClip,
+  matchesPodcastShownotes,
+  matchesPodcastTtsStudio,
+  matchesPodcastVoice,
+  normalizePathname,
+  WORKBENCH_PODCAST_CLIP_PATH,
+  WORKBENCH_PODCAST_SHOWNOTES_PATH,
+  WORKBENCH_PODCAST_VOICE_PATH,
+  WORKBENCH_TTS_STUDIO_PATH
+} from "./navPaths";
 
 export type { PrefetchWorkbenchRouteOptions };
 
@@ -17,18 +27,20 @@ export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
   "/notes",
   "/works",
   "/create",
-  "/clip",
-  "/shownotes",
-  "/voice",
+  WORKBENCH_PODCAST_CLIP_PATH,
+  WORKBENCH_PODCAST_SHOWNOTES_PATH,
+  WORKBENCH_PODCAST_VOICE_PATH,
+  WORKBENCH_TTS_STUDIO_PATH,
   "/subscription",
   "/works/trash"
 ] as const;
 
 /** 登录后 idle 分批预取的次级侧栏路由（不阻塞首屏）。 */
 export const WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY = [
-  "/clip",
-  "/shownotes",
-  "/voice",
+  WORKBENCH_PODCAST_CLIP_PATH,
+  WORKBENCH_PODCAST_SHOWNOTES_PATH,
+  WORKBENCH_PODCAST_VOICE_PATH,
+  WORKBENCH_TTS_STUDIO_PATH,
   "/subscription",
   "/works/trash"
 ] as const;
@@ -47,9 +59,9 @@ export function routeIsPrefetched(hrefOrPath: string): boolean {
 
 /** 重 chunk 是否已 warm（用于跳过 navPending 全屏骨架） */
 const ROUTE_WARM_CHUNK_IDS: Record<string, readonly string[]> = {
-  "/clip": ["clip-hub"],
-  "/voice": ["voice-clone", "voice-my", "voice-persona"],
-  "/shownotes": ["shownotes-landing"],
+  [WORKBENCH_PODCAST_CLIP_PATH]: ["clip-hub"],
+  [WORKBENCH_PODCAST_VOICE_PATH]: ["voice-clone", "voice-my", "voice-persona"],
+  [WORKBENCH_PODCAST_SHOWNOTES_PATH]: ["shownotes-landing"],
   "/works/trash": ["works-trash"],
   "/notes/trash": ["works-trash"]
 };
@@ -87,19 +99,19 @@ export function warmWorkbenchRouteChunks(href: string) {
   if (pathMatchesNotes(path) && path !== "/notes" && path !== "/notes/trash") {
     warmChunk("notes-page-main", () => import("../components/notes/NotesPageMain"));
   }
-  if (path === "/create" || pathMatchesRoot(path, "/podcast") || pathMatchesRoot(path, "/tts")) {
+  if (path === "/create" || pathMatchesRoot(path, "/podcast") || matchesPodcastTtsStudio(path)) {
     warmChunk("podcast-studio", () => import("../components/studio/PodcastStudio"));
     warmChunk("tts-studio", () => import("../components/studio/TtsStudio"));
   }
-  if (path === "/clip") {
+  if (matchesPodcastClip(path)) {
     warmChunk("clip-hub", () => import("../components/clip/ClipHub"));
   }
-  if (path === "/voice" || path.startsWith("/voice/")) {
+  if (matchesPodcastVoice(path)) {
     warmChunk("voice-clone", () => import("../components/voice/VoiceClonePanel"));
     warmChunk("voice-my", () => import("../components/voice/MyVoicesPanel"));
     warmChunk("voice-persona", () => import("../components/voice/UserTemplatesPanel"));
   }
-  if (path === "/shownotes" || path.startsWith("/shownotes/")) {
+  if (matchesPodcastShownotes(path)) {
     warmChunk("shownotes-landing", () => import("../components/shownotes/ShownotesLandingClient"));
   }
   if (path === "/works/trash" || path === "/notes/trash") {

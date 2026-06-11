@@ -65,13 +65,21 @@ import {
 import {
   isMarketingShellLessPath,
   matchesNotesWorkbench,
+  matchesPodcastClip,
+  matchesPodcastShownotes,
+  matchesPodcastStudioEntry,
+  matchesPodcastTtsStudio,
+  matchesPodcastVoice,
   matchesProductStudio,
   matchesWorkbenchTools,
   matchesWorksTrash,
   normalizePathname,
   pathMatchesRoot,
   pathNeedsWorkAudio,
+  WORKBENCH_PODCAST_CLIP_PATH,
+  WORKBENCH_PODCAST_SHOWNOTES_PATH,
   WORKBENCH_PODCAST_STUDIO_PATH,
+  WORKBENCH_PODCAST_VOICE_PATH,
   WORKBENCH_TTS_STUDIO_PATH
 } from "../lib/navPaths";
 import { reportFrontendGlobalError } from "../lib/frontendGlobalErrorClient";
@@ -167,12 +175,12 @@ function StudioToolsNavExpanded({
   }, [path]);
 
   const voiceManageActive =
-    pathMatchesRoot(path, "/voice") && (voiceTab === null || voiceTab === "clone");
+    matchesPodcastVoice(path) && (voiceTab === null || voiceTab === "clone");
   const onCreateRoute = matchesProductStudio(path);
   const createModeNorm = String(createModeQuery || readCreateModeQuery() || "").trim().toLowerCase();
   const podcastStudioActive =
-    (onCreateRoute && createModeNorm !== "tts") || pathMatchesRoot(path, "/podcast");
-  const ttsStudioActive = onCreateRoute && createModeNorm === "tts";
+    (onCreateRoute && createModeNorm !== "tts") || matchesPodcastStudioEntry(path);
+  const ttsStudioActive = (onCreateRoute && createModeNorm === "tts") || matchesPodcastTtsStudio(path);
 
   const parentTip = t("nav.podcastNav");
   const parentClass = navButtonClass(podcastStudioActive, collapsed);
@@ -181,11 +189,23 @@ function StudioToolsNavExpanded({
     {
       href: WORKBENCH_TTS_STUDIO_PATH,
       label: t("nav.toolTts"),
-      active: ttsStudioActive || pathMatchesRoot(path, "/tts")
+      active: ttsStudioActive
     },
-    { href: "/clip", label: t("create.quickLink.clip"), active: pathMatchesRoot(path, "/clip") },
-    { href: "/shownotes", label: t("create.quickLink.shownotes"), active: pathMatchesRoot(path, "/shownotes") },
-    { href: "/voice", label: t("create.quickLink.voiceClone"), active: voiceManageActive }
+    {
+      href: WORKBENCH_PODCAST_CLIP_PATH,
+      label: t("create.quickLink.clip"),
+      active: matchesPodcastClip(path)
+    },
+    {
+      href: WORKBENCH_PODCAST_SHOWNOTES_PATH,
+      label: t("create.quickLink.shownotes"),
+      active: matchesPodcastShownotes(path)
+    },
+    {
+      href: WORKBENCH_PODCAST_VOICE_PATH,
+      label: t("create.quickLink.voiceClone"),
+      active: voiceManageActive
+    }
   ];
 
   if (collapsed) {

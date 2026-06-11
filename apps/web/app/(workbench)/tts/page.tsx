@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
+import { WORKBENCH_TTS_STUDIO_PATH } from "../../../lib/navPaths";
 
-/** 深链兼容：统一进入创作页 code-split 入口 */
+/** 旧路径兼容：重定向至播客子路由 */
 export default function TtsRedirectPage() {
-  redirect("/create?mode=tts");
+  redirect(WORKBENCH_TTS_STUDIO_PATH);
 }

@@ -13,7 +13,10 @@ export const WORKBENCH_HOME_PATH = WORKBENCH_NOTES_PATH;
 
 /** 播客 / 语音合成工作室侧栏入口（独立 pathname，避免 /create 仅改 query 时软路由不刷新） */
 export const WORKBENCH_PODCAST_STUDIO_PATH = "/podcast";
-export const WORKBENCH_TTS_STUDIO_PATH = "/tts";
+export const WORKBENCH_TTS_STUDIO_PATH = "/podcast/tts";
+export const WORKBENCH_PODCAST_CLIP_PATH = "/podcast/clip";
+export const WORKBENCH_PODCAST_SHOWNOTES_PATH = "/podcast/shownotes";
+export const WORKBENCH_PODCAST_VOICE_PATH = "/podcast/voice";
 
 /** 工作台侧栏 Link prefetch：改为 hover 预取，见 WorkbenchLink / navPrefetch.ts */
 export const WORKBENCH_NAV_PREFETCH = false;
@@ -22,7 +25,9 @@ export const NOTES_TEMPLATES_PREFIX = "/notes/templates";
 export const NOTES_TRASH_PREFIX = "/notes/trash";
 export const WORKS_TRASH_PATH = "/works/trash";
 
-const PRODUCT_STUDIO_ROOTS = ["/create", "/podcast", "/tts"] as const;
+const PRODUCT_STUDIO_ROOTS = ["/create", "/podcast"] as const;
+
+const LEGACY_PODCAST_TOOL_ROOTS = ["/tts", "/clip", "/shownotes", "/voice"] as const;
 
 export function normalizePathname(p: string): string {
   if (p.length > 1 && p.endsWith("/")) return p.slice(0, -1);
@@ -78,13 +83,40 @@ export function matchesProductStudio(pathname: string): boolean {
   return PRODUCT_STUDIO_ROOTS.some((r) => pathMatchesRoot(pathname, r));
 }
 
+/** 播客侧栏父项「播客」：仅工作室入口，不含 TTS / 剪辑等子工具。 */
+export function matchesPodcastStudioEntry(pathname: string): boolean {
+  return normalizePathname(pathname) === WORKBENCH_PODCAST_STUDIO_PATH;
+}
+
+export function matchesPodcastTtsStudio(pathname: string): boolean {
+  const n = normalizePathname(pathname);
+  return pathMatchesRoot(n, WORKBENCH_TTS_STUDIO_PATH) || pathMatchesRoot(n, "/tts");
+}
+
+export function matchesPodcastClip(pathname: string): boolean {
+  const n = normalizePathname(pathname);
+  return pathMatchesRoot(n, WORKBENCH_PODCAST_CLIP_PATH) || pathMatchesRoot(n, "/clip");
+}
+
+export function matchesPodcastShownotes(pathname: string): boolean {
+  const n = normalizePathname(pathname);
+  return pathMatchesRoot(n, WORKBENCH_PODCAST_SHOWNOTES_PATH) || pathMatchesRoot(n, "/shownotes");
+}
+
+export function matchesPodcastVoice(pathname: string): boolean {
+  const n = normalizePathname(pathname);
+  return pathMatchesRoot(n, WORKBENCH_PODCAST_VOICE_PATH) || pathMatchesRoot(n, "/voice");
+}
+
 /** 创作工具折叠组：工作室 + 后期工具路由。 */
 export function matchesWorkbenchTools(pathname: string): boolean {
   const n = normalizePathname(pathname);
   if (matchesProductStudio(n)) return true;
-  if (pathMatchesRoot(n, "/clip")) return true;
-  if (pathMatchesRoot(n, "/shownotes")) return true;
-  if (pathMatchesRoot(n, "/voice")) return true;
+  if (LEGACY_PODCAST_TOOL_ROOTS.some((r) => pathMatchesRoot(n, r))) return true;
+  if (pathMatchesRoot(n, WORKBENCH_PODCAST_CLIP_PATH)) return true;
+  if (pathMatchesRoot(n, WORKBENCH_PODCAST_SHOWNOTES_PATH)) return true;
+  if (pathMatchesRoot(n, WORKBENCH_PODCAST_VOICE_PATH)) return true;
+  if (pathMatchesRoot(n, WORKBENCH_TTS_STUDIO_PATH)) return true;
   return false;
 }
 
@@ -120,9 +152,10 @@ export function pathNeedsWorkAudio(pathname: string): boolean {
   if (pathMatchesRoot(n, "/works")) return true;
   if (matchesWorksTrash(n)) return true;
   if (pathMatchesRoot(n, "/admin/works")) return true;
-  if (pathMatchesRoot(n, "/clip")) return true;
-  if (pathMatchesRoot(n, "/voice")) return true;
-  if (pathMatchesRoot(n, "/shownotes")) return true;
+  if (matchesPodcastClip(n)) return true;
+  if (matchesPodcastVoice(n)) return true;
+  if (matchesPodcastShownotes(n)) return true;
+  if (matchesPodcastTtsStudio(n)) return true;
   if (matchesNotesWorkbench(n)) return true;
   return false;
 }
