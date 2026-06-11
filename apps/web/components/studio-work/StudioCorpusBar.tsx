@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ComposerDropAnchor } from "../home/HomeComposerShell";
 import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
+import { getStudioWork, patchStudioWork } from "../../lib/studioWorkStorage";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 
 async function fetchNotebookNoteIds(
@@ -14,6 +15,13 @@ async function fetchNotebookNoteIds(
   const data = (await res.json().catch(() => ({}))) as { notes?: { noteId?: string }[] };
   if (!res.ok) return [];
   return (data.notes || []).map((n) => String(n.noteId || "").trim()).filter(Boolean);
+}
+
+function sameNoteIdSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sa = [...a].map((id) => id.trim()).filter(Boolean).sort();
+  const sb = [...b].map((id) => id.trim()).filter(Boolean).sort();
+  return sa.every((id, i) => id === sb[i]);
 }
 
 /** 输入框内右下角：资料绑定（选笔记本后自动载入笔记） */
@@ -36,8 +44,12 @@ export default function StudioCorpusBar({
 }) {
   const [busy, setBusy] = useState(false);
   const loadGenRef = useRef(0);
-  const workRef = useRef(work);
-  workRef.current = work;
+  const workIdRef = useRef(work.id);
+  const onPersistRef = useRef(onPersist);
+  const getAuthHeadersRef = useRef(getAuthHeaders);
+  workIdRef.current = work.id;
+  onPersistRef.current = onPersist;
+  getAuthHeadersRef.current = getAuthHeaders;
   const notebooksQuery = useNotebooksHubQuery(getAuthHeaders, isLoggedIn && ready);
 
   const notebook = work.binding.notebook.trim();
@@ -45,19 +57,37 @@ export default function StudioCorpusBar({
 
   useEffect(() => {
     if (!notebook || !isLoggedIn || !ready) return;
+    const workId = workIdRef.current;
+    const existing = getStudioWork(workId);
+    if (
+      existing &&
+      existing.binding.notebook.trim() === notebook &&
+      existing.binding.noteIds.length > 0
+    ) {
+      return;
+    }
+
     const gen = ++loadGenRef.current;
     setBusy(true);
     void (async () => {
       try {
-        const ids = await fetchNotebookNoteIds(notebook, getAuthHeaders());
+        const ids = await fetchNotebookNoteIds(notebook, getAuthHeadersRef.current());
         if (loadGenRef.current !== gen) return;
-        const cur = workRef.current;
-        onPersist({ ...cur, binding: { notebook, noteIds: ids } });
+        const latest = getStudioWork(workId);
+        if (
+          latest &&
+          latest.binding.notebook.trim() === notebook &&
+          sameNoteIdSet(latest.binding.noteIds, ids)
+        ) {
+          return;
+        }
+        const patched = patchStudioWork(workId, { binding: { notebook, noteIds: ids } });
+        if (patched) onPersistRef.current(patched);
       } finally {
         if (loadGenRef.current === gen) setBusy(false);
       }
     })();
-  }, [notebook, isLoggedIn, ready, getAuthHeaders, onPersist]);
+  }, [notebook, isLoggedIn, ready]);
 
   const bound =
     notebook && noteCount
@@ -87,7 +117,8 @@ export default function StudioCorpusBar({
             value={work.binding.notebook}
             onChange={(e) => {
               const nb = e.target.value;
-              onPersist({ ...work, binding: { notebook: nb, noteIds: [] } });
+              const next = patchStudioWork(work.id, { binding: { notebook: nb, noteIds: [] } });
+              if (next) onPersist(next);
             }}
           >
             <option value="">选择笔记本…</option>

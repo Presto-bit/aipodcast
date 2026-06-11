@@ -8,6 +8,15 @@ export function isStudioWorkDraft(work: StudioWork): boolean {
   return isDraftLikeStatus(work.status) && work.versions.length === 0;
 }
 
+/** 可复用的空白任务：无成稿、无对话、未绑资料 */
+export function isEmptyStudioWork(work: StudioWork): boolean {
+  if (!isStudioWorkDraft(work)) return false;
+  const hasTurns = (work.agentTurns ?? []).some((t) => t.content.trim());
+  const hasBinding =
+    Boolean(work.binding.notebook.trim()) || (work.binding.noteIds?.length ?? 0) > 0;
+  return !hasTurns && !hasBinding;
+}
+
 /** 从对话用户消息拼任务句（不再维护会话 Brief 字段） */
 export function taskSentenceFromWork(work: StudioWork): string {
   const users = (work.agentTurns ?? [])

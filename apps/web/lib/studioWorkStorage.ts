@@ -10,19 +10,13 @@ import { readStudioWorksBlob, writeStudioWorksBlob } from "./studioWorkCloud";
 import { STUDIO_WORK_SCHEMA_VERSION } from "./studioWorkMigrate";
 import { STUDIO_DEFAULT_EDITOR_MODE } from "./studioEditorMode";
 import type { StudioWork, WorkStatus } from "./studioWorkTypes";
-import { isStudioWorkDraft } from "./studioWorkTask";
+import { isEmptyStudioWork } from "./studioWorkTask";
 
-function inheritFromComposerPrefs(): Pick<StudioWork, "featureCore" | "binding"> {
+function inheritFeatureCoreFromComposerPrefs(): FeatureCore {
   const store = loadHomeComposerStore();
   const session = activeHomeComposerSession(store);
   const prefs = session?.prefs;
-  return {
-    featureCore: prefs?.featureCore ? { ...prefs.featureCore } : { ...EMPTY_FEATURE_CORE },
-    binding: {
-      notebook: prefs?.notebook?.trim() || "",
-      noteIds: Array.isArray(prefs?.noteIds) ? [...prefs.noteIds] : []
-    }
-  };
+  return prefs?.featureCore ? { ...prefs.featureCore } : { ...EMPTY_FEATURE_CORE };
 }
 
 function loadAll(): StudioWork[] {
@@ -40,11 +34,11 @@ export function listStudioWorks(): StudioWork[] {
 }
 
 export function findDraftStudioWork(): StudioWork | null {
-  return listStudioWorks().find(isStudioWorkDraft) ?? null;
+  return listStudioWorks().find(isEmptyStudioWork) ?? null;
 }
 
 export function getComposerPrefsFeatureCore(): FeatureCore {
-  return inheritFromComposerPrefs().featureCore;
+  return inheritFeatureCoreFromComposerPrefs();
 }
 
 export function getStudioComposerPrefs(): HomeComposerPrefs {
@@ -77,7 +71,6 @@ export function createStudioWork(params?: {
 }): StudioWork {
   const id = crypto.randomUUID();
   const brief = (params?.brief || "").trim();
-  const inherited = inheritFromComposerPrefs();
   const work: StudioWork = {
     id,
     channel: "xhs",
@@ -89,8 +82,8 @@ export function createStudioWork(params?: {
     domain: "general",
     format: "general",
     plannerAssumptions: [],
-    binding: inherited.binding,
-    featureCore: params?.featureCore ?? inherited.featureCore,
+    binding: { notebook: "", noteIds: [] },
+    featureCore: params?.featureCore ?? inheritFeatureCoreFromComposerPrefs(),
     allowModelFallback: true,
     intake: {},
     versions: [],
