@@ -265,5 +265,5 @@ export function isStreamFetchAbortError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   if (err.name === "AbortError") return true;
   const msg = err.message.trim().toLowerCase();
-  return msg === "network error" || msg.includes("failed to fetch") || msg.includes("aborted");
+  return msg.includes("aborted") || msg.includes("user aborted");
 }

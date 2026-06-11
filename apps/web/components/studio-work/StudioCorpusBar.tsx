@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ComposerDropAnchor } from "../home/HomeComposerShell";
 import { useNotebooksHubQuery } from "../../lib/queries/notebooksQueries";
 import { getStudioWork, patchStudioWork } from "../../lib/studioWorkStorage";
+import { STUDIO_CORPUS_MAX_NOTE_IDS } from "../../lib/studioAskPhase";
 import type { StudioWork } from "../../lib/studioWorkTypes";
 
 async function fetchNotebookNoteIds(
@@ -73,15 +74,16 @@ export default function StudioCorpusBar({
       try {
         const ids = await fetchNotebookNoteIds(notebook, getAuthHeadersRef.current());
         if (loadGenRef.current !== gen) return;
+        const capped = ids.slice(0, STUDIO_CORPUS_MAX_NOTE_IDS);
         const latest = getStudioWork(workId);
         if (
           latest &&
           latest.binding.notebook.trim() === notebook &&
-          sameNoteIdSet(latest.binding.noteIds, ids)
+          sameNoteIdSet(latest.binding.noteIds, capped)
         ) {
           return;
         }
-        const patched = patchStudioWork(workId, { binding: { notebook, noteIds: ids } });
+        const patched = patchStudioWork(workId, { binding: { notebook, noteIds: capped } });
         if (patched) onPersistRef.current(patched);
       } finally {
         if (loadGenRef.current === gen) setBusy(false);

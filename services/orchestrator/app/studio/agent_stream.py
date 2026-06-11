@@ -22,7 +22,11 @@ from ..composer_expert.manuscript_stream import (
     partial_social_to_manuscript_blocks,
 )
 from ..social_llm_utils import extract_partial_social_json_fields
-from .studio_constants import STUDIO_MANUSCRIPT_EXCERPT_CHARS, STUDIO_USER_REPLY_MAX_CHARS
+from .studio_constants import (
+    STUDIO_CORPUS_MAX_NOTE_IDS,
+    STUDIO_MANUSCRIPT_EXCERPT_CHARS,
+    STUDIO_USER_REPLY_MAX_CHARS,
+)
 from .studio_reply import generate_studio_reply
 from .agent_route import (
     build_compose_task_sentence,
@@ -44,6 +48,24 @@ STUDIO_NEEDS_REWRITE = "NEEDS_REWRITE"
 
 def _compose_soft_failure_code(task_sentence: str) -> str:
     return compose_soft_failure_code(task_sentence)
+
+
+def _cap_stream_note_ids(payload: dict[str, Any]) -> tuple[dict[str, Any], int, int]:
+    """限制 RAG 资料篇数，返回 (payload, 原始篇数, 实际篇数)。"""
+    raw = payload.get("noteIds") or payload.get("selected_note_ids") or []
+    if not isinstance(raw, list):
+        return payload, 0, 0
+    nids = [str(x).strip() for x in raw if str(x).strip()]
+    if not nids:
+        return payload, 0, 0
+    capped = nids[:STUDIO_CORPUS_MAX_NOTE_IDS]
+    if capped == nids:
+        return payload, len(nids), len(capped)
+    return (
+        {**payload, "noteIds": capped, "selected_note_ids": capped},
+        len(nids),
+        len(capped),
+    )
 
 
 def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Iterator[str]:
@@ -86,6 +108,8 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
                 "requestId": rid,
             }
         )
+
+    yield _sse({"type": "phase", "message": "正在理解你的指令…", "requestId": rid})
 
     loop_result = run_agent_tool_loop(
         message=message,
@@ -225,6 +249,8 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         stream_payload["selected_note_ids"] = stream_payload["noteIds"]
         stream_payload["notes_notebook"] = stream_payload.get("notebook") or ""
 
+    stream_payload, corpus_total, corpus_used = _cap_stream_note_ids(stream_payload)
+
     yield _sse({"type": "phase", "message": "开始写稿…", "requestId": rid, "tool": tool})
     yield _sse(
         {
@@ -237,25 +263,70 @@ def iter_studio_agent_stream(*, payload: dict[str, Any], user_ref: str) -> Itera
         }
     )
 
-    try:
-        prep_phases: list[str] = []
-
-        def prep_progress(msg: str) -> None:
-            text = str(msg or "").strip()
-            if text:
-                prep_phases.append(text)
-
-        material, options, notebook, note_count, used_rag = _prepare_material(
-            payload=stream_payload,
-            user_ref=user_ref,
-            task_sentence=task_sentence,
-            intake=intake,
-            on_progress=prep_progress,
+    if corpus_used > 0 and corpus_total > corpus_used:
+        yield _sse(
+            {
+                "type": "phase",
+                "message": f"资料共 {corpus_total} 篇，先检索其中 {corpus_used} 篇…",
+                "requestId": rid,
+                "tool": tool,
+            }
         )
-        for msg in prep_phases:
-            yield _sse({"type": "phase", "message": msg, "requestId": rid, "tool": tool})
-    except Exception as exc:
-        yield _sse({"type": "error", "message": str(exc)[:500], "requestId": rid})
+    elif corpus_used > 0:
+        yield _sse(
+            {
+                "type": "phase",
+                "message": f"正在检索资料（{corpus_used} 篇）…",
+                "requestId": rid,
+                "tool": tool,
+            }
+        )
+
+    prep_q: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+    def prep_worker() -> None:
+        try:
+
+            def on_progress(msg: str) -> None:
+                text = str(msg or "").strip()
+                if text:
+                    prep_q.put(("phase", text))
+
+            result = _prepare_material(
+                payload=stream_payload,
+                user_ref=user_ref,
+                task_sentence=task_sentence,
+                intake=intake,
+                on_progress=on_progress,
+            )
+            prep_q.put(("done", result))
+        except Exception as exc:
+            prep_q.put(("error", str(exc)[:500]))
+
+    threading.Thread(target=prep_worker, daemon=True).start()
+
+    material: str | None = None
+    options: dict[str, Any] | None = None
+    notebook = ""
+    note_count = 0
+    used_rag = False
+    prep_deadline = 300.0 if corpus_used > 0 else 120.0
+
+    for kind, item in iter_compose_queue_events(prep_q, deadline_seconds=prep_deadline):
+        if kind == "phase":
+            yield _sse({"type": "phase", "message": str(item), "requestId": rid, "tool": tool})
+        elif kind == "error":
+            yield _sse({"type": "error", "message": str(item), "requestId": rid})
+            return
+        elif kind == "done":
+            material, options, notebook, note_count, used_rag = item
+            break
+    else:
+        yield _sse({"type": "error", "message": "资料检索超时", "requestId": rid})
+        return
+
+    if material is None or options is None:
+        yield _sse({"type": "error", "message": "资料准备失败", "requestId": rid})
         return
 
     event_q: queue.Queue[tuple[str, Any]] = queue.Queue()

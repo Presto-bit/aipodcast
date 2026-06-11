@@ -1,6 +1,7 @@
 const RETRIEVAL_PHASE_RE = /检索|整理勾选资料/;
 
 /** 资料绑定指纹：同 work 内 noteIds 未变则视为同一批资料 */
+export const STUDIO_CORPUS_MAX_NOTE_IDS = 48;
 export function studioCorpusBindingKey(notebook: string, noteIds: string[]): string {
   const nb = notebook.trim();
   const ids = [...noteIds].map((id) => id.trim()).filter(Boolean).sort();
