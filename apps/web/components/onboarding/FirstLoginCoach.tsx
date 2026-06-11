@@ -110,13 +110,13 @@ export default function FirstLoginCoach() {
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
           三步上手：① 在<strong className="text-ink">资料</strong>新建笔记本并添加资料 → ② 侧栏
-          <strong className="text-ink">创作</strong>描述需求，画布流式出稿 → ③ 在
+          <strong className="text-ink">创作工具</strong>生成播客或语音 → ③ 在
           <strong className="text-ink">作品</strong>
-          查看播客成片与导出。长任务无需一直停在当前页。
+          查看成片与导出。长任务无需一直停在当前页。
         </p>
         <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-ink">
           <li>资料：整理素材，供创作引用</li>
-          <li>创作：输入需求，稿件在画布流式生成</li>
+          <li>创作工具：播客、语音合成与后期精修</li>
           <li>作品：收听、下载与发布</li>
         </ol>
         <div className="mt-5 flex flex-wrap gap-2">
@@ -128,7 +128,7 @@ export default function FirstLoginCoach() {
             去知识库
           </Link>
           <Link
-            href="/studio"
+            href="/create"
             className="inline-flex flex-1 min-w-[7rem] items-center justify-center rounded-lg border border-line bg-fill px-3 py-2 text-sm font-medium text-ink hover:bg-fill/80"
             onClick={() => dismiss(true)}
           >

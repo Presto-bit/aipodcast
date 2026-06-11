@@ -3,10 +3,7 @@ import "server-only";
 import crypto from "crypto";
 import { cookies } from "next/headers";
 import { authHeadersFromCookieStore } from "./authSession.server";
-import { orchestratorGetJsonPart, ORCHESTRATOR_TIMEOUT_HOME_OVERVIEW_PART_MS } from "./bff";
-import { parseHomeOverviewPack } from "./homeOverviewPackParse";
-import { HOME_OVERVIEW_WORKS_LIMIT } from "./homeOverviewLimits";
-import type { HomeOverviewPayload } from "./queries/homeOverviewQueries";
+import { orchestratorGetJsonPart } from "./bff";
 import type { NotebooksHubPayload } from "./queries/notebooksQueries";
 import type { WorksApiPayload } from "./queries/worksQueries";
 
@@ -68,29 +65,4 @@ export async function fetchNotebooksHubServer(headers: Record<string, string>): 
     notebookSharing: data.notebookSharing && typeof data.notebookSharing === "object" ? data.notebookSharing : {},
     notebookCovers: data.notebookCovers && typeof data.notebookCovers === "object" ? data.notebookCovers : {}
   };
-}
-
-export async function fetchHomeOverviewServer(headers: Record<string, string>): Promise<HomeOverviewPayload | null> {
-  if (!headers.authorization) return null;
-  const rid = crypto.randomUUID();
-  const partOpts = { timeoutMs: ORCHESTRATOR_TIMEOUT_HOME_OVERVIEW_PART_MS, retryGetOnce: false };
-  const worksPath = `/api/v1/works?limit=${HOME_OVERVIEW_WORKS_LIMIT}&offset=0`;
-  const [jobsLimit1, jobsActive, works, worksMetrics, notesMetrics] = await Promise.all([
-    orchestratorGetJsonPart("/api/v1/jobs?limit=1", headers, rid, partOpts),
-    orchestratorGetJsonPart("/api/v1/jobs?limit=80&offset=0&status=queued,running&slim=1", headers, rid, partOpts),
-    orchestratorGetJsonPart(worksPath, headers, rid, partOpts),
-    orchestratorGetJsonPart("/api/v1/works/metrics", headers, rid, partOpts),
-    orchestratorGetJsonPart("/api/v1/notes/metrics", headers, rid, partOpts)
-  ]);
-  if (!works.ok && !jobsLimit1.ok) return null;
-  return parseHomeOverviewPack(
-    {
-      jobsLimit1,
-      jobsActive,
-      works,
-      worksMetrics,
-      notesMetrics
-    },
-    works.status
-  );
 }

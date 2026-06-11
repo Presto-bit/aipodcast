@@ -71,8 +71,6 @@ import {
   normalizePathname,
   pathMatchesRoot,
   pathNeedsWorkAudio,
-  WORKBENCH_CHAT_PATH,
-  WORKBENCH_HOME_PATH,
   WORKBENCH_PODCAST_STUDIO_PATH,
   WORKBENCH_TTS_STUDIO_PATH
 } from "../lib/navPaths";
@@ -625,9 +623,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   function linkActive(item: NavItem): boolean {
     if (item.activeMatch) return item.activeMatch(path);
-    return (
-      path === item.href || (item.href !== WORKBENCH_HOME_PATH && path.startsWith(item.href + "/"))
-    );
+    return path === item.href || path.startsWith(item.href + "/");
   }
 
   /**
@@ -641,26 +637,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const label = sidebarCollapsed && item.short ? item.short : item.label;
     const Ic = item.Icon;
     const tip = item.linkTitle ?? item.label;
-    if (item.href === WORKBENCH_HOME_PATH) {
-      return (
-        <a
-          key={item.href}
-          href={WORKBENCH_HOME_PATH}
-          className={navButtonClass(active, sidebarCollapsed)}
-          title={tip}
-          onPointerDown={() => {
-            dispatchWorkbenchDismissOverlays();
-            prefetchWorkbenchRoute(router, WORKBENCH_HOME_PATH, routePrefetchOpts);
-            beginWorkbenchNav(WORKBENCH_HOME_PATH);
-          }}
-        >
-          <NavIconBox active={active}>
-            <Ic />
-          </NavIconBox>
-          {!sidebarCollapsed ? <span className="min-w-0 flex-1 truncate text-left leading-snug">{label}</span> : null}
-        </a>
-      );
-    }
     return (
       <SidebarNavLink
         key={item.href}
@@ -874,7 +850,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <WorkbenchRouteFallback />
           </div>
         ) : null}
-        {normalizePathname(path) === WORKBENCH_HOME_PATH || showNavPendingOverlay ? null : (
+        {showNavPendingOverlay ? null : (
           <footer className="relative z-[405] mt-auto border-t border-line bg-fill/90 px-4 py-6" role="contentinfo">
             <div className="mx-auto flex max-w-6xl flex-col items-center gap-4">
               <div className="text-center">

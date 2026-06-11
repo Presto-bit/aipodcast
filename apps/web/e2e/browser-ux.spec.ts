@@ -35,7 +35,7 @@ test.describe("侧栏余额入口与任务进度（全栈 + 编排器认证）",
     const loginBody = (await loginRes.json()) as { success?: boolean };
     expect(loginBody.success).toBe(true);
 
-    await page.goto("/chat");
+    await page.goto("/notes");
     await expect(page.locator('aside nav a[href="/subscription"]').first()).toBeVisible({ timeout: 20_000 });
 
     await page.goto(`/jobs/${jobId}`);

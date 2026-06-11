@@ -1,11 +1,23 @@
-import HomePageClient from "../home/HomePageClient";
-import {
-  fetchHomeOverviewServer,
-  getServerWorkbenchAuthHeaders
-} from "../../../lib/workbenchServerPrefetch.server";
+import { redirect } from "next/navigation";
+import { WORKBENCH_DEFAULT_PATH } from "../../../lib/navPaths";
 
-export default async function ChatPage() {
-  const headers = await getServerWorkbenchAuthHeaders();
-  const initialOverview = await fetchHomeOverviewServer(headers);
-  return <HomePageClient initialOverview={initialOverview} />;
+type Props = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+/** 旧路径：/chat → 资料工作台 */
+export default function ChatRedirectPage({ searchParams }: Props) {
+  const qs = new URLSearchParams();
+  if (searchParams) {
+    for (const [key, value] of Object.entries(searchParams)) {
+      if (value == null) continue;
+      if (Array.isArray(value)) {
+        for (const v of value) qs.append(key, v);
+      } else {
+        qs.set(key, value);
+      }
+    }
+  }
+  const q = qs.toString();
+  redirect(q ? `${WORKBENCH_DEFAULT_PATH}?${q}` : WORKBENCH_DEFAULT_PATH);
 }

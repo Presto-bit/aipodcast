@@ -5,7 +5,7 @@ import {
   prefetchWorkbenchRouteData,
   type PrefetchWorkbenchRouteOptions
 } from "./prefetchWorkbenchRouteData";
-import { normalizePathname, WORKBENCH_HOME_PATH, WORKBENCH_STUDIO_PATH } from "./navPaths";
+import { normalizePathname } from "./navPaths";
 
 export type { PrefetchWorkbenchRouteOptions };
 
@@ -15,8 +15,6 @@ export const WORKBENCH_LINK_PREFETCH = false;
 /** 侧栏 idle 预取的高频工作台路由 */
 export const WORKBENCH_SIDEBAR_IDLE_ROUTES = [
   "/notes",
-  WORKBENCH_STUDIO_PATH,
-  WORKBENCH_HOME_PATH,
   "/works",
   "/create",
   "/clip",
@@ -36,13 +34,7 @@ export const WORKBENCH_LOGIN_PREFETCH_ROUTES_SECONDARY = [
 ] as const;
 
 /** 登录后立即预取的高频入口（不等 idle） */
-export const WORKBENCH_LOGIN_PREFETCH_ROUTES = [
-  "/notes",
-  WORKBENCH_STUDIO_PATH,
-  WORKBENCH_HOME_PATH,
-  "/create",
-  "/works"
-] as const;
+export const WORKBENCH_LOGIN_PREFETCH_ROUTES = ["/notes", "/create", "/works"] as const;
 
 const prefetchedRoutes = new Set<string>();
 const warmedChunkIds = new Set<string>();
@@ -55,7 +47,6 @@ export function routeIsPrefetched(hrefOrPath: string): boolean {
 
 /** 重 chunk 是否已 warm（用于跳过 navPending 全屏骨架） */
 const ROUTE_WARM_CHUNK_IDS: Record<string, readonly string[]> = {
-  "/studio": ["studio-works-list"],
   "/clip": ["clip-hub"],
   "/voice": ["voice-clone", "voice-my", "voice-persona"],
   "/shownotes": ["shownotes-landing"],
@@ -79,21 +70,15 @@ function warmChunk(id: string, loader: () => Promise<unknown>) {
   });
 }
 
-/** 按目标路由预热常见 dynamic import chunk（home / works 共用 gallery 等）。 */
+/** 按目标路由预热常见 dynamic import chunk。 */
 export function warmWorkbenchRouteChunks(href: string) {
   const path = normalizePathname(String(href || "").split("?")[0] || href);
   if (!path) return;
 
-  if (path === WORKBENCH_STUDIO_PATH) {
-    warmChunk("studio-work-editor", () => import("../components/studio-work/StudioWorkEditor"));
-  }
-  if (pathMatchesRoot(path, WORKBENCH_STUDIO_PATH) && path !== WORKBENCH_STUDIO_PATH) {
-    warmChunk("studio-work-editor", () => import("../components/studio-work/StudioWorkEditor"));
-  }
-  if (path === "/works" || path === WORKBENCH_HOME_PATH || path === "/create") {
+  if (path === "/works" || path === "/create") {
     warmChunk("podcast-works-gallery", () => import("../components/podcast/PodcastWorksGallery"));
   }
-  if (path === WORKBENCH_HOME_PATH || pathMatchesNotes(path)) {
+  if (pathMatchesNotes(path)) {
     warmChunk("notes-works-panel", () => import("../components/works/NotesWorkbenchWorksPanel"));
   }
   if (path === "/notes") {

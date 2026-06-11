@@ -41,8 +41,6 @@ import { messageSuggestsBillingTopUpOrSubscription } from "../../../lib/billingS
 import { BillingShortfallLinks } from "../../../components/subscription/BillingShortfallLinks";
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
 import { marketingSiteUrl } from "../../../lib/marketingSiteUrl";
-import { consumeComposerHandoff, type ComposerHandoff } from "../../../lib/composerHandoff";
-import { WORKBENCH_HOME_PATH } from "../../../lib/navPaths";
 import { buildWorksTabHref, filterTtsWorks } from "../../../lib/workGalleryDisplay";
 
 type HotTopicAssistantItem = { label: string; text: string };
@@ -70,7 +68,6 @@ export default function CreatePage() {
   const { t } = useI18n();
   const searchParams = useSearchParams();
   const urlMode = parseUrlMode(searchParams?.get("mode"));
-  const isHandoffEntry = searchParams?.get("handoff") === "1";
   const { user, getAuthHeaders } = useAuth();
   const isLoggedIn = useMemo(() => isLoggedInAccountUser(user), [user]);
   const pageAbortSignal = usePageAbortSignal();
@@ -81,20 +78,9 @@ export default function CreatePage() {
   const [draftText, setDraftText] = useState("");
   const [libraryPreview, setLibraryPreview] = useState("");
   const [mode, setMode] = useState<CreateMode | null>(urlMode);
-  const [handoffCtx, setHandoffCtx] = useState<ComposerHandoff | null>(null);
-
   useLayoutEffect(() => {
     setMode(urlMode);
   }, [urlMode]);
-
-  useEffect(() => {
-    if (!isHandoffEntry) return;
-    const pkg = consumeComposerHandoff();
-    if (!pkg) return;
-    setHandoffCtx(pkg);
-    const script = String(pkg.scriptText || "").trim();
-    if (script) setDraftText(script);
-  }, [isHandoffEntry]);
   /**
    * 访客首屏先渲染轻量工具条壳，再在浏览器空闲时挂载真实 Studio，兼顾「看得见工具条」与进页轻量。
    */
@@ -338,14 +324,6 @@ export default function CreatePage() {
         ].join(" ")}
       >
       <header className="mb-6 sm:mb-10">
-        {handoffCtx ? (
-          <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2 text-sm">
-            <span className="font-medium text-brand">{t("create.handoff.banner")}</span>
-            <Link href={handoffCtx.returnTo || WORKBENCH_HOME_PATH} className="text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90">
-              {t("create.handoff.back")}
-            </Link>
-          </div>
-        ) : null}
         {createPageEyebrow ? (
           <p className="text-xs font-semibold uppercase tracking-wider text-muted">{createPageEyebrow}</p>
         ) : null}

@@ -126,18 +126,3 @@ def test_format_image_suggestion_item_from_dict() -> None:
         format_image_suggestion_item("{'position': '头图', 'description': '漫画风格'}")
         == "头图：漫画风格"
     )
-
-
-def test_pack_to_xhs_content_pads_single_body_to_three() -> None:
-    from app.composer_expert.generate import _pack_to_xhs_content
-
-    pack = {
-        "titles": ["痛点标题", "好奇标题", "数字标题3选1"],
-        "body": "正文只有一份。\n\n第二段内容。",
-        "tags": ["职场", "好物"],
-    }
-    content = _pack_to_xhs_content(pack)
-    assert len(content["bodies"]) == 3
-    assert content["_rawBodiesCount"] == 1
-    assert content["bodies"][0]
-    assert _pack_to_xhs_content({"titles": ["a", "b", "c"], "body": ""})["bodies"] == []

@@ -2,20 +2,14 @@
  * 主导航路径匹配与鉴权白名单（与 AppShell 一致，供复用）。
  */
 
-/** 写作 Studio 创作主入口（writing-cursor-studio；侧栏隐藏，深链仍可用） */
-export const WORKBENCH_STUDIO_PATH = "/studio";
-
 /** 资料 / 笔记本工作台（侧栏首推心智） */
 export const WORKBENCH_NOTES_PATH = "/notes";
-
-/** 经典对话 Composer（原 `/home` 重定向至此） */
-export const WORKBENCH_CHAT_PATH = "/chat";
 
 /** 登录后默认工作台路径 */
 export const WORKBENCH_DEFAULT_PATH = WORKBENCH_NOTES_PATH;
 
-/** @deprecated 使用 WORKBENCH_CHAT_PATH；保留别名避免大范围替换 */
-export const WORKBENCH_HOME_PATH = WORKBENCH_CHAT_PATH;
+/** @deprecated 历史 /home、/chat 已下线；请用 WORKBENCH_DEFAULT_PATH */
+export const WORKBENCH_HOME_PATH = WORKBENCH_NOTES_PATH;
 
 /** 播客 / 语音合成工作室侧栏入口（独立 pathname，避免 /create 仅改 query 时软路由不刷新） */
 export const WORKBENCH_PODCAST_STUDIO_PATH = "/podcast";
@@ -72,13 +66,7 @@ export function isAuthPublicPath(pathname: string): boolean {
   if (n === "/forgot-password" || n === "/reset-password" || n === "/verify-email") return true;
   if (n === "/help") return true;
   if (n.startsWith("/legal/")) return true;
-  if (
-    n === "/" ||
-    n === WORKBENCH_CHAT_PATH ||
-    n === WORKBENCH_STUDIO_PATH ||
-    n === "/me" ||
-    n === "/settings"
-  ) {
+  if (n === "/" || n === "/me" || n === "/settings") {
     return true;
   }
   /** 套餐/余额页：允许未登录浏览价目与说明；充值等仍依赖登录态由页面内控制 */
@@ -112,12 +100,11 @@ export function matchesNotesWorkbench(pathname: string): boolean {
   );
 }
 
-/** 侧栏一级入口（对话 / 资料 / 作品）：进入子页时保持 232px 宽轨。 */
+/** 侧栏一级入口：进入子页时保持 232px 宽轨。 */
 export function shouldKeepSidebarExpanded(pathname: string): boolean {
   const n = normalizePathname(pathname);
   if (pathMatchesRoot(n, "/notes") && n !== "/notes") return true;
   if (pathMatchesRoot(n, "/works") && n !== "/works") return true;
-  if (pathMatchesRoot(n, WORKBENCH_STUDIO_PATH) && n !== WORKBENCH_STUDIO_PATH) return true;
   return false;
 }
 
@@ -129,7 +116,6 @@ export function matchesAdminConsole(pathname: string): boolean {
 /** 需要全局作品试听 Player 的路由（其余页不挂载 WorkAudioShell）。 */
 export function pathNeedsWorkAudio(pathname: string): boolean {
   const n = normalizePathname(pathname);
-  if (n === WORKBENCH_HOME_PATH) return true;
   if (matchesProductStudio(n)) return true;
   if (pathMatchesRoot(n, "/works")) return true;
   if (matchesWorksTrash(n)) return true;
