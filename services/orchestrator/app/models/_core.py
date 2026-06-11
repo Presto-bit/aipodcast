@@ -5310,6 +5310,7 @@ ALLOWED_USER_PREF_KEYS: frozenset[str] = frozenset(
         "fym_all_works_display_titles_v1",
         "fym_all_works_hidden_v1",
         "fym_all_works_display_titles_v1",
+        "onboarding_starter_created_v1",
         "minimax_aipodcast_enabled_preset_voices",
         "minimax_aipodcast_speaker_default_voice_keys",
         "minimax_aipodcast_speaker_cloned_voice_ids",

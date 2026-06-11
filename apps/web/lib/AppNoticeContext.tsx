@@ -31,7 +31,7 @@ export function AppNoticeProvider({ children }: { children: React.ReactNode }) {
     (kind: "error" | "info", message: string) => {
       if (timerRef.current) clearTimeout(timerRef.current);
       setNotice({ kind, message });
-      const ms = kind === "error" ? 10_000 : 5000;
+      const ms = kind === "error" ? 10_000 : 8_000;
       timerRef.current = setTimeout(() => {
         setNotice(null);
         timerRef.current = null;

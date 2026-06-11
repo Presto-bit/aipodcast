@@ -3,6 +3,7 @@ import BrandGlyph from "../../components/brand/BrandGlyph";
 import MarketingAuthNav from "../../components/marketing/MarketingAuthNav";
 import MarketingFeatureCard from "../../components/marketing/MarketingFeatureCard";
 import MarketingStaticImage from "../../components/marketing/MarketingStaticImage";
+import NewUserExperienceBadge from "../../components/marketing/NewUserExperienceBadge";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
 
@@ -39,20 +40,23 @@ export default function MarketingLandingPage() {
               </span>
             </h1>
             <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base md:mt-5 md:max-w-3xl lg:mx-0 lg:max-w-3xl">
-              以电子书、网页、文档等资料为根基，一键生成文章、播客、Shownotes 等可分发内容；回答带来源引用，减轻幻觉顾虑。
+              把你的电子书、网页、文档变成能发的播客与文章；回答带来源引用，减轻 AI 幻觉顾虑。
             </p>
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
+              <NewUserExperienceBadge />
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               <Link
-                href="/create"
+                href={REGISTER_HREF}
                 className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-5 py-2.5 text-sm font-semibold text-cta-foreground shadow-soft transition hover:bg-cta/90"
               >
-                开始生成播客
+                免费试用 · 上传第一份资料
               </Link>
               <Link
-                href={WORKBENCH_NOTES_PATH}
+                href="/create"
                 className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-fill"
               >
-                进入资料库
+                直接生成播客
               </Link>
             </div>
           </div>

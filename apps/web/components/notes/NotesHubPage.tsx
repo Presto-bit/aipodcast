@@ -12,6 +12,7 @@ import EmptyState from "../ui/EmptyState";
 import UserErrorBanner from "../ui/UserErrorBanner";
 import { SkeletonBlock, SkeletonLine } from "../ui/Skeleton";
 import { HubMineNotebookCards, HubPopularNotebookGrid } from "./NotesHubCards";
+import NotesOnboardingStarter from "./NotesOnboardingStarter";
 import type { NotebookCoverMeta, NotebookMeta, NotebookSharingRow, PopularNotebookItem } from "./notesNotebookTypes";
 import { stableNotebookVisualFromName, type NotebookCardVisual } from "../../lib/notebookCardThemes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
@@ -736,6 +737,7 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
                 </button>
               ) : null}
             </div>
+            <NotesOnboardingStarter className="mt-4" />
             {!notebooksReady ? (
               <div className="mt-4 space-y-3" aria-busy aria-label="加载笔记本列表">
                 <SkeletonLine className="h-4 w-full max-w-md" />

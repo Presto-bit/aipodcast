@@ -834,7 +834,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
     if (!ensureLoggedInForAction("上传资料", "podcast.upload")) return;
     const targetNb = (await ensureDefaultStudioNotebook())?.trim() || "";
     if (!targetNb) {
-      applyTaskFromEvent("请先在「知识库」侧栏新建笔记本，或稍后重试上传");
+      applyTaskFromEvent("请先在「资料」侧栏新建笔记本，或稍后重试上传");
       return;
     }
     setUploadBusy(true);

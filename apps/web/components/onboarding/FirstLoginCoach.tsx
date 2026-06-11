@@ -33,7 +33,7 @@ function writeDone(accountKey: string) {
 }
 
 /**
- * 首次登录（按账号维度）可选短引导：知识库 → 创作 → 作品；与首页「欢迎回来」互补。
+ * 首次登录（按账号维度）可选短引导：资料 → 创作 → 作品。
  */
 export default function FirstLoginCoach() {
   const pathname = usePathname() || "";
@@ -109,10 +109,10 @@ export default function FirstLoginCoach() {
           欢迎使用 Presto
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          三步上手：① 在<strong className="text-ink">资料</strong>新建笔记本并添加资料 → ② 侧栏
+          三步上手：① 在<strong className="text-ink">资料</strong>添加资料（可一键创建示例笔记本）→ ② 侧栏
           <strong className="text-ink">创作工具</strong>生成播客或语音 → ③ 在
           <strong className="text-ink">作品</strong>
-          查看成片与导出。长任务无需一直停在当前页。
+          查看成片与导出。长任务完成后会站内提醒，无需一直等待。
         </p>
         <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-ink">
           <li>资料：整理素材，供创作引用</li>
@@ -125,7 +125,7 @@ export default function FirstLoginCoach() {
             className="inline-flex flex-1 min-w-[7rem] items-center justify-center rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-foreground hover:opacity-95"
             onClick={() => dismiss(true)}
           >
-            去知识库
+            去资料
           </Link>
           <Link
             href="/create"

@@ -2264,6 +2264,20 @@ def create_notebook_api(body: NotebookCreateRequest, request: Request):
     return {"success": True, "name": msg}
 
 
+@router.post("/notebooks/onboarding-starter")
+def create_onboarding_starter_notebook_api(request: Request):
+    """新用户示例笔记本：两条可勾选说明资料，降低冷启动门槛。"""
+    user_ref = _current_user_ref_or_401(request)
+    from ..onboarding_starter import create_onboarding_starter_notebook
+
+    out = create_onboarding_starter_notebook(user_ref)
+    if not out.get("ok"):
+        reason = str(out.get("reason") or "")
+        status = 409 if reason == "has_notes" else 400
+        raise HTTPException(status_code=status, detail=str(out.get("error") or "创建失败"))
+    return {"success": True, **{k: v for k, v in out.items() if k != "ok"}}
+
+
 @router.get("/notebooks/cover-public")
 def get_notebook_cover_public_api(
     request: Request,

@@ -6,6 +6,7 @@ import DeployVersionSync from "../components/DeployVersionSync";
 import SiteVisitorBeacon from "../components/SiteVisitorBeacon";
 import AppShell from "../components/AppShell";
 import FirstLoginCoach from "../components/onboarding/FirstLoginCoach";
+import JobCompletionNotifier from "../components/onboarding/JobCompletionNotifier";
 import { AuthProvider } from "../lib/auth";
 import type { InitialAuthSession } from "../lib/authSession";
 import { I18nProvider } from "../lib/I18nContext";
@@ -91,6 +92,7 @@ export default function Providers({
             <AppNoticeProvider>
               <AppShell>{children}</AppShell>
               <FirstLoginCoach />
+              <JobCompletionNotifier />
             </AppNoticeProvider>
           </AuthProvider>
         </I18nProvider>

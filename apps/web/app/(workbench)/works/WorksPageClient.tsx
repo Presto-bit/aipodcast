@@ -377,7 +377,7 @@ export default function WorksPageClient({ initialWorks = null }: { initialWorks?
       {worksView === "script" && !loading && emptyScript ? (
         <EmptyState
           title="暂无文稿成品"
-          description="在知识库生成文章或自媒体发布稿后，会集中显示在本 Tab。"
+          description="在资料库生成文章或自媒体发布稿后，会集中显示在本 Tab。"
           action={
             <button type="button" className="text-sm text-brand underline" onClick={() => refreshWorks()}>
               {t("common.refresh")}

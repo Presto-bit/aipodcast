@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
+import NewUserExperienceBadge from "../../../components/marketing/NewUserExperienceBadge";
 import { WORKBENCH_DEFAULT_PATH } from "../../../lib/navPaths";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 
@@ -140,6 +141,9 @@ export default function RegisterView() {
     <main className="mx-auto min-h-0 w-full max-w-md px-4 pb-16 pt-8">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">注册</h1>
       <p className="mt-2 text-sm text-muted">使用邮箱与验证码创建账号</p>
+      <div className="mt-3">
+        <NewUserExperienceBadge className="w-full justify-center sm:w-auto" />
+      </div>
 
       <form className="mt-6 space-y-3" onSubmit={(e) => void submitRegister(e)}>
         <input
