@@ -54,7 +54,6 @@ import StudioEphemeralHint from "./StudioEphemeralHint";
 import StudioAgentComposer from "./StudioAgentComposer";
 import StudioTimelinePanel from "./StudioTimelinePanel";
 import StudioCorpusBar from "./StudioCorpusBar";
-import StudioExplicitGoalChips from "./StudioExplicitGoalChips";
 import StudioSceneChips from "./StudioSceneChips";
 import StudioReviseTierChips from "./StudioReviseTierChips";
 import {
@@ -63,8 +62,7 @@ import {
   type StudioSceneChip
 } from "../../lib/studioSceneChips";
 import {
-  normalizeStudioExplicitGoal,
-  type StudioExplicitGoal
+  normalizeStudioExplicitGoal
 } from "../../lib/studioExplicitGoal";
 import {
   normalizeStudioReviseTier,
@@ -169,6 +167,7 @@ export default function StudioAgentDock({
   const router = useRouter();
   const [input, setInput] = useState("");
   const [scenePlaceholder, setScenePlaceholder] = useState("");
+  const [composerFocused, setComposerFocused] = useState(false);
   const [reviseTier, setReviseTier] = useState<StudioReviseTier>("rephrase");
   const [agentBusy, setAgentBusy] = useState(false);
   const agentBusyRef = useRef(false);
@@ -692,6 +691,9 @@ export default function StudioAgentDock({
     scenePlaceholder.trim() ||
     agentPlaceholder(work, Boolean(pendingPatch), Boolean(work.error), jobRunning);
 
+  const showNewAgentSceneChips =
+    centerEmptyComposer && !input.trim() && !composerFocused;
+
   const composerFooter = (
     <>
       {selectedSnippet.trim() ? (
@@ -720,10 +722,12 @@ export default function StudioAgentDock({
           </button>
         </div>
       ) : null}
-      <StudioSceneChips
-        disabled={agentBusy || jobRunning}
-        onSelect={handleSceneChip}
-      />
+      {showNewAgentSceneChips ? (
+        <StudioSceneChips
+          disabled={agentBusy || jobRunning}
+          onSelect={handleSceneChip}
+        />
+      ) : null}
       {showReviseTier ? (
         <StudioReviseTierChips
           tier={reviseTier}
@@ -731,14 +735,11 @@ export default function StudioAgentDock({
           onChange={setReviseTier}
         />
       ) : null}
-      <StudioExplicitGoalChips
-        goal={normalizeStudioExplicitGoal(work.explicitGoal)}
-        disabled={agentBusy || jobRunning}
-        onChange={(goal: StudioExplicitGoal) => onPersist({ ...work, explicitGoal: goal })}
-      />
       <StudioAgentComposer
         value={input}
         onChange={setInput}
+        onFocus={() => setComposerFocused(true)}
+        onBlur={() => setComposerFocused(false)}
         onSend={() => void handleSend()}
         busy={agentBusy || (jobRunning && Boolean(input.trim()))}
         disabled={!canChat}
@@ -826,7 +827,7 @@ export default function StudioAgentDock({
           {loginNotice}
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center pb-8">
             <div className="w-full">
-              <StudioEmptyState work={work} onTryPrompt={(p) => void handleSend(p)} />
+              <StudioEmptyState />
               {composerFooter}
             </div>
           </div>

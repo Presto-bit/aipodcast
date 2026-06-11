@@ -1,17 +1,21 @@
 "use client";
 
-import { STUDIO_SCENE_CHIPS, type StudioSceneChip } from "../../lib/studioSceneChips";
+import { STUDIO_NEW_AGENT_SCENE_CHIPS, type StudioSceneChip } from "../../lib/studioSceneChips";
 
 export default function StudioSceneChips({
   onSelect,
-  disabled = false
+  disabled = false,
+  chips = STUDIO_NEW_AGENT_SCENE_CHIPS
 }: {
   onSelect: (chip: StudioSceneChip) => void;
   disabled?: boolean;
+  chips?: StudioSceneChip[];
 }) {
+  if (!chips.length) return null;
+
   return (
-    <div className="mb-2 flex w-full flex-wrap gap-1.5" role="list" aria-label="写作场景">
-      {STUDIO_SCENE_CHIPS.map((chip) => (
+    <div className="mb-2 flex w-full flex-wrap justify-center gap-1.5" role="list" aria-label="写作场景">
+      {chips.map((chip) => (
         <button
           key={chip.id}
           type="button"

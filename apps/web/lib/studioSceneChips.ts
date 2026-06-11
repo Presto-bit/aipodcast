@@ -3,13 +3,7 @@ import type { StudioExplicitGoal } from "./studioExplicitGoal";
 import { normalizeStudioComposeBrief } from "./studioComposeBrief";
 import type { StudioWork } from "./studioWorkTypes";
 
-export type StudioSceneChipId =
-  | "science_article"
-  | "social_seed"
-  | "business_email"
-  | "script_voice"
-  | "ops_ask"
-  | "revise_current";
+export type StudioSceneChipId = "science_article" | "social_seed";
 
 export type StudioSceneChip = {
   id: StudioSceneChipId;
@@ -21,7 +15,8 @@ export type StudioSceneChip = {
   placeholder?: string;
 };
 
-export const STUDIO_SCENE_CHIPS: StudioSceneChip[] = [
+/** New Agent 空会话：仅科普 / 种草 */
+export const STUDIO_NEW_AGENT_SCENE_CHIPS: StudioSceneChip[] = [
   {
     id: "science_article",
     label: "科普长文",
@@ -37,34 +32,6 @@ export const STUDIO_SCENE_CHIPS: StudioSceneChip[] = [
     domain: "social",
     format: "short_post",
     placeholder: "补充产品或主题"
-  },
-  {
-    id: "business_email",
-    label: "商务邮件",
-    brief: "写一封正式商务邮件，简洁专业",
-    domain: "business",
-    format: "email",
-    placeholder: "说明收件场景与目的"
-  },
-  {
-    id: "script_voice",
-    label: "口播脚本",
-    brief: "写一段约 3 分钟口播脚本，口语化、节奏清晰",
-    domain: "script",
-    format: "script_beats",
-    placeholder: "补充口播主题"
-  },
-  {
-    id: "ops_ask",
-    label: "运营建议",
-    explicitGoal: "ask",
-    placeholder: "问发布后怎么推、涨粉策略等"
-  },
-  {
-    id: "revise_current",
-    label: "改当前稿",
-    explicitGoal: "revise",
-    placeholder: "描述想改哪里：标题、语气、段落…"
   }
 ];
 

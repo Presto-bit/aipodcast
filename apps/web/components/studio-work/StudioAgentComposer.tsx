@@ -15,7 +15,9 @@ export default function StudioAgentComposer({
   footerRight,
   menuOpen = false,
   generating = false,
-  onCancel
+  onCancel,
+  onFocus,
+  onBlur
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -27,6 +29,8 @@ export default function StudioAgentComposer({
   menuOpen?: boolean;
   generating?: boolean;
   onCancel?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
 }) {
   const hasText = Boolean(value.trim());
   const canSend = hasText && !busy && !disabled;
@@ -42,6 +46,8 @@ export default function StudioAgentComposer({
         <textarea
           value={value}
           onChange={(e) => onChange(e.target.value)}
+          onFocus={onFocus}
+          onBlur={onBlur}
           disabled={disabled}
           placeholder={placeholder}
           rows={1}
