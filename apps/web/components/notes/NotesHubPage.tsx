@@ -16,9 +16,14 @@ import NotesOnboardingStarter from "./NotesOnboardingStarter";
 import type { NotebookCoverMeta, NotebookMeta, NotebookSharingRow, PopularNotebookItem } from "./notesNotebookTypes";
 import { stableNotebookVisualFromName, type NotebookCardVisual } from "../../lib/notebookCardThemes";
 import { isLoggedInAccountUser, useAuth } from "../../lib/auth";
+import {
+  consumePostAuthWelcomeIntent,
+  welcomeMessageForIntent
+} from "../../lib/authPostAuthLanding";
+import { buildRegisterHref } from "../../lib/authReturnToContext";
 import { apiErrorMessage } from "../../lib/apiError";
 import { useI18n } from "../../lib/I18nContext";
-import { WORKS_TRASH_PATH } from "../../lib/navPaths";
+import { WORKS_TRASH_PATH, WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
 import { isAbortError, usePageAbortSignal, usePageFetch } from "../../lib/usePageAbortSignal";
 import {
   fetchNotebooksHub,
@@ -126,6 +131,7 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
   const [notebookSharingByName, setNotebookSharingByName] = useState<Record<string, NotebookSharingRow>>({});
   const [notebookCoversByName, setNotebookCoversByName] = useState<Record<string, NotebookCoverMeta>>({});
   const [hubDiscoverTab, setHubDiscoverTab] = useState<NotesHubDiscoverTab>("mine");
+  const [postAuthWelcome, setPostAuthWelcome] = useState("");
   const [metaQueryEnabled, setMetaQueryEnabled] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -180,6 +186,21 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
     if (!ready) return;
     if (!isLoggedIn) setHubDiscoverTab("popular");
   }, [ready, isLoggedIn]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const intent = consumePostAuthWelcomeIntent();
+    if (intent !== "notes") return;
+    setPostAuthWelcome(welcomeMessageForIntent(intent));
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!postAuthWelcome) return;
+    const t = window.setTimeout(() => setPostAuthWelcome(""), 8000);
+    return () => window.clearTimeout(t);
+  }, [postAuthWelcome]);
+
+  const guestRegisterHref = buildRegisterHref(WORKBENCH_NOTES_PATH);
 
   useEffect(() => {
     if (!ready || typeof window === "undefined" || shareLinkRedirectedRef.current) return;
@@ -663,6 +684,28 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
     >
       {error ? (
         <UserErrorBanner className="mb-4" message={error} onDismiss={() => setError("")} />
+      ) : null}
+
+      {postAuthWelcome ? (
+        <div
+          className="mb-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3 text-sm text-ink"
+          role="status"
+          aria-live="polite"
+        >
+          {postAuthWelcome}
+        </div>
+      ) : null}
+
+      {!isLoggedIn ? (
+        <div className="mb-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3 sm:px-5">
+          <p className="text-sm font-semibold text-ink">先浏览，再注册上传</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">
+            可先查看下方热门资料；注册后可创建笔记本、上传文档并向资料提问。
+          </p>
+          <Link href={guestRegisterHref} className="mt-2.5 inline-flex text-sm font-medium text-brand hover:underline">
+            注册并上传资料
+          </Link>
+        </div>
       ) : null}
 
       <div className="mb-4 flex flex-wrap items-end justify-between gap-2">

@@ -4,8 +4,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
-import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
-import { WORKBENCH_DEFAULT_PATH } from "../../../lib/navPaths";
+import AuthReturnToContextBanner from "../../../components/auth/AuthReturnToContextBanner";
+import { buildRegisterHref } from "../../../lib/authReturnToContext";
+import { resolveAndRememberPostAuthDestination } from "../../../lib/authPostAuthLanding";
 
 export default function LoginView() {
   const router = useRouter();
@@ -17,15 +18,12 @@ export default function LoginView() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState("");
 
-  const registerHref = returnTo
-    ? `/register?returnTo=${encodeURIComponent(returnTo)}`
-    : "/register";
+  const registerHref = buildRegisterHref(returnTo);
 
   useEffect(() => {
     if (!ready || !authRequired) return;
     if (!isLoggedInAccountUser(user)) return;
-    const target = consumePostAuthReturnTo(returnTo);
-    router.replace(target || WORKBENCH_DEFAULT_PATH);
+    router.replace(resolveAndRememberPostAuthDestination(returnTo));
   }, [ready, authRequired, user, router, returnTo]);
 
   async function submitLogin(e: React.FormEvent<HTMLFormElement>) {
@@ -34,9 +32,7 @@ export default function LoginView() {
     setAuthError("");
     try {
       await login(authPhone.trim(), authPassword);
-      const target = consumePostAuthReturnTo(returnTo);
-      if (target) router.replace(target);
-      else router.replace(WORKBENCH_DEFAULT_PATH);
+      router.replace(resolveAndRememberPostAuthDestination(returnTo));
     } catch (err) {
       setAuthError(String(err instanceof Error ? err.message : err));
     } finally {
@@ -75,6 +71,7 @@ export default function LoginView() {
     <main className="mx-auto min-h-0 w-full max-w-md px-4 pb-16 pt-8">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">登录</h1>
       <p className="mt-2 text-sm text-muted">使用手机号、邮箱或用户名登录</p>
+      <AuthReturnToContextBanner returnTo={returnTo} variant="login" />
 
       <form className="mt-6 space-y-3" onSubmit={(e) => void submitLogin(e)}>
         <input

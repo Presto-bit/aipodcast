@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
-import { consumePostAuthReturnTo } from "../../../lib/authReturnTo";
+import AuthReturnToContextBanner from "../../../components/auth/AuthReturnToContextBanner";
+import { buildLoginHref } from "../../../lib/authReturnToContext";
+import { resolveAndRememberPostAuthDestination } from "../../../lib/authPostAuthLanding";
 import NewUserExperienceBadge from "../../../components/marketing/NewUserExperienceBadge";
-import { WORKBENCH_DEFAULT_PATH } from "../../../lib/navPaths";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 
 export default function RegisterView() {
@@ -26,13 +27,12 @@ export default function RegisterView() {
   const [authError, setAuthError] = useState("");
   const [regA11ySuccess, setRegA11ySuccess] = useState("");
 
-  const loginHref = returnTo ? `/login?returnTo=${encodeURIComponent(returnTo)}` : "/login";
+  const loginHref = buildLoginHref(returnTo);
 
   useEffect(() => {
     if (!ready || !authRequired) return;
     if (!isLoggedInAccountUser(user)) return;
-    const target = consumePostAuthReturnTo(returnTo);
-    router.replace(target || WORKBENCH_DEFAULT_PATH);
+    router.replace(resolveAndRememberPostAuthDestination(returnTo));
   }, [ready, authRequired, user, router, returnTo]);
 
   useEffect(() => {
@@ -95,9 +95,7 @@ export default function RegisterView() {
         code: regOtp
       });
       await registerComplete({ registration_ticket, password: authPassword });
-      const target = consumePostAuthReturnTo(returnTo);
-      if (target) router.replace(target);
-      else router.replace(WORKBENCH_DEFAULT_PATH);
+      router.replace(resolveAndRememberPostAuthDestination(returnTo));
       setRegCodeSent(false);
       setRegOtp("");
       setRegDispatchHint("");
@@ -144,6 +142,7 @@ export default function RegisterView() {
       <div className="mt-3">
         <NewUserExperienceBadge className="w-full justify-center sm:w-auto" />
       </div>
+      <AuthReturnToContextBanner returnTo={returnTo} variant="register" />
 
       <form className="mt-6 space-y-3" onSubmit={(e) => void submitRegister(e)}>
         <input

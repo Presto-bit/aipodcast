@@ -42,6 +42,11 @@ import { BillingShortfallLinks } from "../../../components/subscription/BillingS
 import { CreatePodcastStudioIdleShell, CreateTtsStudioIdleShell } from "../../../components/studio/CreateStudioIdleShell";
 import { marketingSiteUrl } from "../../../lib/marketingSiteUrl";
 import { WORKBENCH_PODCAST_CLIP_PATH } from "../../../lib/navPaths";
+import { buildRegisterHref } from "../../../lib/authReturnToContext";
+import {
+  consumePostAuthWelcomeIntent,
+  welcomeMessageForIntent
+} from "../../../lib/authPostAuthLanding";
 import { buildWorksTabHref, filterTtsWorks } from "../../../lib/workGalleryDisplay";
 
 type HotTopicAssistantItem = { label: string; text: string };
@@ -105,6 +110,7 @@ export default function CreatePage() {
   const [serverPodcastTemplates, setServerPodcastTemplates] = useState<WorkItem[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [templatesErr, setTemplatesErr] = useState("");
+  const [postAuthWelcome, setPostAuthWelcome] = useState("");
 
   useLayoutEffect(() => {
     if (isLoggedIn) return;
@@ -280,6 +286,21 @@ export default function CreatePage() {
   useEffect(() => {
     document.title = `${pageTitle} · Presto`;
   }, [pageTitle]);
+
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    const intent = consumePostAuthWelcomeIntent();
+    if (!intent) return;
+    setPostAuthWelcome(welcomeMessageForIntent(intent));
+  }, [isLoggedIn]);
+
+  useEffect(() => {
+    if (!postAuthWelcome) return;
+    const t = window.setTimeout(() => setPostAuthWelcome(""), 8000);
+    return () => window.clearTimeout(t);
+  }, [postAuthWelcome]);
+
+  const guestRegisterHref = buildRegisterHref(createReturnPath(urlMode ?? mode));
 
   const createWorksGalleryTab: CreateWorksTab =
     !showTemplatesTab
@@ -574,10 +595,41 @@ export default function CreatePage() {
       </div>
     </div>
 
+      {postAuthWelcome ? (
+        <div
+          className="mb-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3 text-sm text-ink"
+          role="status"
+          aria-live="polite"
+        >
+          {postAuthWelcome}
+        </div>
+      ) : null}
+
+      {!isLoggedIn && showTemplatesTab ? (
+        <div className="mb-4 rounded-xl border border-brand/30 bg-brand/5 px-4 py-3 sm:px-5">
+          <p className="text-sm font-semibold text-ink">先试后注册</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted">
+            切换至「模板」可直接试听成品效果；满意后注册即可保存作品、复用参数并领取体验额度。
+          </p>
+          <Link
+            href={guestRegisterHref}
+            className="mt-2.5 inline-flex text-sm font-medium text-brand hover:underline"
+          >
+            注册并继续创作
+          </Link>
+        </div>
+      ) : null}
+
       <section className="mt-8">
         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <h2 className="text-lg font-semibold text-ink">{isTtsPage ? t("create.tts.recentTitle") : "最近成品"}</h2>
+            <h2 className="text-lg font-semibold text-ink">
+              {!isLoggedIn && createWorksGalleryTab === "templates"
+                ? "播客模板（可先试听）"
+                : isTtsPage
+                  ? t("create.tts.recentTitle")
+                  : "最近成品"}
+            </h2>
             {showTemplatesTab ? (
             <div
               role="tablist"
@@ -670,10 +722,10 @@ export default function CreatePage() {
               <div className="flex flex-wrap justify-center gap-x-4 gap-y-2">
                 {!isLoggedIn ? (
                   <Link
-                    href={`/login?returnTo=${encodeURIComponent(createReturnTo)}`}
+                    href={guestRegisterHref}
                     className="font-medium text-brand underline decoration-brand/40 underline-offset-2 hover:opacity-90"
                   >
-                    登录后保存与查看成片
+                    注册后保存、复用模板并生成自己的播客
                   </Link>
                 ) : (
                   <>

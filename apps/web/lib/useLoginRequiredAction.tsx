@@ -21,7 +21,7 @@ export function useLoginRequiredAction(loggedIn: boolean) {
       rememberPostAuthReturnTo(currentPath);
       const key = String(actionKey || "").trim();
       if (key) rememberPostAuthAction(window.location.pathname, key);
-      router.push(`/login?returnTo=${encodeURIComponent(currentPath)}`);
+      router.push(`/register?returnTo=${encodeURIComponent(currentPath)}`);
     },
     [currentPath, router]
   );
