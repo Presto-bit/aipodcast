@@ -3907,6 +3907,94 @@ def site_traffic_uv_stats(
     }
 
 
+def site_traffic_uv_detail(
+    *,
+    scope: str,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int = 500,
+) -> dict[str, Any]:
+    """管理端 UV 下钻：按 device_visitor_id 去重，用户取首次访问时的 user_id。"""
+    tz = ZoneInfo(_SITE_TRAFFIC_TZ)
+    today_sh = datetime.now(tz).date()
+    scope_norm = (scope or "").strip().lower()
+    if scope_norm == "today":
+        range_start = today_sh
+        range_end = today_sh
+    elif scope_norm == "range":
+        if not date_from or not date_to:
+            raise ValueError("区间下钻需同时提供 date_from 与 date_to")
+        range_start = date_from
+        range_end = min(date_to, today_sh)
+    else:
+        raise ValueError("scope 应为 today 或 range")
+    if range_start > range_end:
+        range_start = range_end
+
+    lim = max(1, min(2000, int(limit)))
+    device_expr = _SITE_TRAFFIC_DEVICE_SQL
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                f"""
+                WITH first_visits AS (
+                  SELECT DISTINCT ON ({device_expr})
+                    {device_expr} AS device_id,
+                    user_id,
+                    created_at AS first_seen_at
+                  FROM site_page_views
+                  WHERE {_SITE_TRAFFIC_DEVICE_FILTER}
+                    AND ((created_at AT TIME ZONE %s)::date) >= %s
+                    AND ((created_at AT TIME ZONE %s)::date) <= %s
+                  ORDER BY {device_expr}, created_at ASC
+                )
+                SELECT
+                  fv.device_id,
+                  fv.user_id::text AS user_id,
+                  COALESCE(
+                    NULLIF(TRIM(u.display_name), ''),
+                    NULLIF(TRIM(u.phone), ''),
+                    NULLIF(TRIM(u.email), '')
+                  ) AS user_name,
+                  fv.first_seen_at
+                FROM first_visits fv
+                LEFT JOIN users u ON u.id = fv.user_id
+                ORDER BY fv.first_seen_at ASC
+                LIMIT %s
+                """,
+                (_SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end, lim),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                f"""
+                SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
+                FROM site_page_views
+                WHERE {_SITE_TRAFFIC_DEVICE_FILTER}
+                  AND ((created_at AT TIME ZONE %s)::date) >= %s
+                  AND ((created_at AT TIME ZONE %s)::date) <= %s
+                """,
+                (_SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end),
+            )
+            total_row = dict(cur.fetchone() or {})
+
+    for row in rows:
+        ts = row.get("first_seen_at")
+        if ts is not None and hasattr(ts, "isoformat"):
+            row["first_seen_at"] = ts.isoformat()
+
+    total_uv = _safe_int(total_row.get("uv"))
+    return {
+        "scope": scope_norm,
+        "timezone": _SITE_TRAFFIC_TZ,
+        "date_from": range_start.isoformat(),
+        "date_to": range_end.isoformat(),
+        "total_uv": total_uv,
+        "returned": len(rows),
+        "truncated": len(rows) < total_uv,
+        "rows": rows,
+    }
+
+
 def admin_revenue_expense_board(
     *,
     date_from: date,

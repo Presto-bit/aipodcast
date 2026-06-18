@@ -43,6 +43,13 @@ type SiteUvStats = {
   range?: SiteUvRange;
   by_day?: SiteUvDayRow[];
 };
+type SiteUvDrillScope = "today" | "range";
+type SiteUvDetailRow = {
+  device_id?: string;
+  user_id?: string | null;
+  user_name?: string | null;
+  first_seen_at?: string | null;
+};
 type UserRow = {
   user_key?: string;
   user_id?: string;
@@ -154,9 +161,49 @@ function money(n?: number): string { return `¥${Number(n || 0).toFixed(2)}`; }
 function moneyCents(cents?: number): string { return `¥${(Number(cents || 0) / 100).toFixed(2)}`; }
 function pct(n?: number): string { return `${(Number(n || 0) * 100).toFixed(1)}%`; }
 function num(n?: number): string { return Number(n || 0).toLocaleString("zh-CN"); }
+function formatDateTime(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("zh-CN", { hour12: false });
+}
 
-function MetricCard({ title, value, hint }: { title: string; value: string; hint?: string }) {
-  return <div className="rounded-xl border border-line bg-surface/60 px-4 py-3"><p className="text-xs text-muted">{title}</p><p className="mt-1 text-lg font-semibold text-ink">{value}</p>{hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}</div>;
+function MetricCard({
+  title,
+  value,
+  hint,
+  onClick,
+  active
+}: {
+  title: string;
+  value: string;
+  hint?: string;
+  onClick?: () => void;
+  active?: boolean;
+}) {
+  const cls = [
+    "rounded-xl border px-4 py-3 text-left",
+    active ? "border-brand bg-brand/10" : "border-line bg-surface/60",
+    onClick ? "cursor-pointer transition-colors hover:border-brand/50 hover:bg-surface" : ""
+  ].join(" ");
+  const body = (
+    <>
+      <p className="text-xs text-muted">
+        {title}
+        {onClick ? <span className="text-brand/80"> · 点击查看明细</span> : null}
+      </p>
+      <p className="mt-1 text-lg font-semibold text-ink">{value}</p>
+      {hint ? <p className="mt-1 text-xs text-muted">{hint}</p> : null}
+    </>
+  );
+  if (onClick) {
+    return (
+      <button type="button" className={cls} onClick={onClick}>
+        {body}
+      </button>
+    );
+  }
+  return <div className={cls}>{body}</div>;
 }
 
 export default function AdminUsagePage(): JSX.Element {
@@ -181,6 +228,11 @@ export default function AdminUsagePage(): JSX.Element {
   const [dayRows, setDayRows] = useState<DayRow[]>([]);
   const [topUsers, setTopUsers] = useState<TopUserRow[]>([]);
   const [siteUv, setSiteUv] = useState<SiteUvStats>({});
+  const [uvDrillScope, setUvDrillScope] = useState<SiteUvDrillScope | null>(null);
+  const [uvDetailRows, setUvDetailRows] = useState<SiteUvDetailRow[]>([]);
+  const [uvDetailMeta, setUvDetailMeta] = useState<{ total_uv?: number; truncated?: boolean; date_from?: string; date_to?: string }>({});
+  const [uvDetailLoading, setUvDetailLoading] = useState(false);
+  const [uvDetailErr, setUvDetailErr] = useState("");
 
   const [userRows, setUserRows] = useState<UserRow[]>([]);
   const [worksOverview, setWorksOverview] = useState<WorksOverview>({});
@@ -358,6 +410,80 @@ export default function AdminUsagePage(): JSX.Element {
     else if (tab === "works") void worksQuery.refetch();
     else void alertsQuery.refetch();
   }, [alertsQuery, ledgerQueryHook, ordersQuery, overviewQuery, tab, usersQuery, worksQuery]);
+
+  const loadUvDetail = useCallback(
+    async (scope: SiteUvDrillScope, signal?: AbortSignal) => {
+      setUvDetailLoading(true);
+      setUvDetailErr("");
+      try {
+        const q = new URLSearchParams({ scope, limit: "500" });
+        if (scope === "range") {
+          q.set("date_from", dateFrom);
+          q.set("date_to", dateTo);
+        }
+        const res = await fetch(`/api/admin/usage/site-uv/detail?${q.toString()}`, {
+          headers: getAuthHeaders(),
+          cache: "no-store",
+          signal
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
+          error?: string;
+          rows?: SiteUvDetailRow[];
+          total_uv?: number;
+          truncated?: boolean;
+          date_from?: string;
+          date_to?: string;
+        };
+        if (!res.ok || data.success === false) {
+          throw new Error(String(data.error || `加载失败 ${res.status}`));
+        }
+        setUvDetailRows(Array.isArray(data.rows) ? data.rows : []);
+        setUvDetailMeta({
+          total_uv: data.total_uv,
+          truncated: data.truncated,
+          date_from: data.date_from,
+          date_to: data.date_to
+        });
+      } catch (e) {
+        if (isAbortError(e)) return;
+        setUvDetailRows([]);
+        setUvDetailMeta({});
+        setUvDetailErr(String(e instanceof Error ? e.message : e));
+      } finally {
+        setUvDetailLoading(false);
+      }
+    },
+    [dateFrom, dateTo, getAuthHeaders]
+  );
+
+  const handleUvDetailClick = useCallback(
+    (scope: SiteUvDrillScope) => {
+      if (uvDrillScope === scope) {
+        setUvDrillScope(null);
+        setUvDetailRows([]);
+        setUvDetailMeta({});
+        setUvDetailErr("");
+        return;
+      }
+      setUvDrillScope(scope);
+    },
+    [uvDrillScope]
+  );
+
+  useEffect(() => {
+    if (!uvDrillScope) return;
+    const ac = new AbortController();
+    void loadUvDetail(uvDrillScope, ac.signal);
+    return () => ac.abort();
+  }, [loadUvDetail, uvDrillScope]);
+
+  useEffect(() => {
+    setUvDrillScope(null);
+    setUvDetailRows([]);
+    setUvDetailMeta({});
+    setUvDetailErr("");
+  }, [tab]);
 
   useEffect(() => { setTab(initialTab); }, [initialTab]);
 
@@ -799,9 +925,24 @@ export default function AdminUsagePage(): JSX.Element {
       {tab === "overview" ? (
         <>
           <div className="mt-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-            <MetricCard title="今日 UV（实时）" value={num(siteUv.today?.uv)} hint={siteUv.today?.day ? `${siteUv.today.day} · 仅设备 ID` : siteUv.note || "仅设备 ID"} />
-            <MetricCard title="昨日 UV" value={num(siteUv.yesterday?.uv)} hint={siteUv.yesterday?.day ? `${siteUv.yesterday.day} · 完整日` : "设备 ID 去重"} />
-            <MetricCard title="区间 UV" value={num(siteUv.range?.uv)} hint={siteUv.range?.date_from && siteUv.range?.date_to ? `${siteUv.range.date_from} ~ ${siteUv.range.date_to}${siteUv.range.includes_today ? " · 含今日" : ""}` : siteUv.note || ""} />
+            <MetricCard
+              title="今日 UV（实时）"
+              value={num(siteUv.today?.uv)}
+              hint={siteUv.today?.day ? `${siteUv.today.day} · 仅设备 ID` : siteUv.note || "仅设备 ID"}
+              onClick={() => handleUvDetailClick("today")}
+              active={uvDrillScope === "today"}
+            />
+            <MetricCard
+              title="区间 UV"
+              value={num(siteUv.range?.uv)}
+              hint={
+                siteUv.range?.date_from && siteUv.range?.date_to
+                  ? `${siteUv.range.date_from} ~ ${siteUv.range.date_to}${siteUv.range.includes_today ? " · 含今日" : ""}`
+                  : siteUv.note || ""
+              }
+              onClick={() => handleUvDetailClick("range")}
+              active={uvDrillScope === "range"}
+            />
             <MetricCard title="总调用事件" value={num(overview.total_events)} />
             <MetricCard title="成功率" value={pct(overview.success_rate)} hint={`成功 ${num(overview.succeeded_events)} / 失败 ${num(overview.failed_events)}`} />
             <MetricCard title="活跃用户" value={num(overview.active_users)} hint={`登录用户 ${num(overview.login_users)} / 登录次数 ${num(overview.login_count)}`} />
@@ -817,6 +958,64 @@ export default function AdminUsagePage(): JSX.Element {
             />
             <MetricCard title="在线会话" value={num(overview.active_sessions)} hint={`在线用户 ${num(overview.session_users)}`} />
           </div>
+          {uvDrillScope ? (
+            <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface/60">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-3 py-2">
+                <p className="text-sm text-muted">
+                  UV 明细 · {uvDrillScope === "today" ? "今日" : "区间"}
+                  {uvDetailMeta.date_from && uvDetailMeta.date_to
+                    ? `（${uvDetailMeta.date_from}${uvDetailMeta.date_from !== uvDetailMeta.date_to ? ` ~ ${uvDetailMeta.date_to}` : ""}）`
+                    : ""}
+                  {uvDetailMeta.total_uv != null ? ` · 共 ${num(uvDetailMeta.total_uv)} 台设备` : ""}
+                  {uvDetailMeta.truncated ? " · 仅展示前 500 条" : ""}
+                </p>
+                <button
+                  type="button"
+                  className="rounded-lg border border-line px-2 py-1 text-xs text-muted hover:bg-fill hover:text-ink"
+                  onClick={() => handleUvDetailClick(uvDrillScope)}
+                >
+                  关闭
+                </button>
+              </div>
+              {uvDetailErr ? <p className="px-3 py-4 text-sm text-danger-ink">{uvDetailErr}</p> : null}
+              {uvDetailLoading && uvDetailRows.length === 0 ? (
+                <p className="px-3 py-6 text-center text-sm text-muted">加载中…</p>
+              ) : (
+                <table className="min-w-[880px] w-full text-left text-sm text-ink">
+                  <thead className="border-b border-line text-xs text-muted">
+                    <tr>
+                      <th className="px-3 py-2">设备 ID</th>
+                      <th className="px-3 py-2">用户 ID</th>
+                      <th className="px-3 py-2">用户名称</th>
+                      <th className="px-3 py-2">最早访问时间</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {uvDetailRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-6 text-center text-muted">
+                          暂无数据
+                        </td>
+                      </tr>
+                    ) : (
+                      uvDetailRows.map((r, i) => (
+                        <tr key={`${r.device_id || "device"}_${i}`} className="border-t border-line/80">
+                          <td className="max-w-[240px] truncate px-3 py-2 font-mono text-xs" title={r.device_id}>
+                            {r.device_id || "—"}
+                          </td>
+                          <td className="max-w-[200px] truncate px-3 py-2 font-mono text-xs" title={r.user_id || undefined}>
+                            {r.user_id || "—"}
+                          </td>
+                          <td className="px-3 py-2">{r.user_name || "—"}</td>
+                          <td className="whitespace-nowrap px-3 py-2 text-xs text-muted">{formatDateTime(r.first_seen_at)}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          ) : null}
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
             <div className="overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">功能使用</div><table className="min-w-[560px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">功能</th><th className="px-3 py-2">调用</th><th className="px-3 py-2">成功</th><th className="px-3 py-2">用户数</th><th className="px-3 py-2">成本</th></tr></thead><tbody>{jobRows.length === 0 ? <tr><td colSpan={5} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : jobRows.map((r, i) => <tr key={`${r.job_type || "unknown"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2 font-mono text-xs">{r.job_type || "unknown"}</td><td className="px-3 py-2">{num(r.events)}</td><td className="px-3 py-2">{num(r.succeeded)}</td><td className="px-3 py-2">{num(r.users)}</td><td className="px-3 py-2">{money(r.cost_total_cny)}</td></tr>)}</tbody></table></div>
             <div className="overflow-x-auto rounded-xl border border-line bg-surface/60"><div className="border-b border-line px-3 py-2 text-sm text-muted">输入来源分布</div><table className="min-w-[420px] w-full text-left text-sm text-ink"><thead className="border-b border-line text-xs text-muted"><tr><th className="px-3 py-2">输入类型</th><th className="px-3 py-2">次数</th></tr></thead><tbody>{inputRows.length === 0 ? <tr><td colSpan={2} className="px-3 py-6 text-center text-muted">暂无数据</td></tr> : inputRows.map((r, i) => <tr key={`${r.input_type || "other"}_${i}`} className="border-t border-line/80"><td className="px-3 py-2">{r.input_type || "other"}</td><td className="px-3 py-2">{num(r.events)}</td></tr>)}</tbody></table></div>

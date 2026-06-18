@@ -211,6 +211,44 @@ def admin_usage_dashboard_api(
     }
 
 
+@router.get("/usage/site-uv/detail")
+def admin_site_uv_detail_api(
+    request: Request,
+    scope: str = Query(..., description="today | range"),
+    date_from: str | None = Query(default=None, description="YYYY-MM-DD，scope=range 时必填"),
+    date_to: str | None = Query(default=None, description="YYYY-MM-DD，scope=range 时必填"),
+    limit: int = Query(default=500, ge=1, le=2000),
+):
+    _require_admin_phone(request)
+    scope_norm = (scope or "").strip().lower()
+    if scope_norm not in ("today", "range"):
+        raise HTTPException(status_code=400, detail="scope 应为 today 或 range")
+    df: date | None = None
+    dt: date | None = None
+    if scope_norm == "range":
+        df_raw = (date_from or "").strip()
+        dt_raw = (date_to or "").strip()
+        if not df_raw or not dt_raw:
+            raise HTTPException(status_code=400, detail="区间下钻需同时提供 date_from 与 date_to")
+        try:
+            df = _parse_ymd(df_raw)
+            dt = _parse_ymd(dt_raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD") from None
+    try:
+        payload = models.site_traffic_uv_detail(
+            scope=scope_norm,
+            date_from=df,
+            date_to=dt,
+            limit=limit,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200]) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)[:200]) from e
+    return {"success": True, **payload}
+
+
 def _parse_usage_window(
     days: int | None,
     date_from: str | None,
