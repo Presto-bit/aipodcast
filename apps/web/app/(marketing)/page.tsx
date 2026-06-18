@@ -4,7 +4,6 @@ import MarketingAuthNav from "../../components/marketing/MarketingAuthNav";
 import MarketingFeatureCard from "../../components/marketing/MarketingFeatureCard";
 import MarketingHeroCtas from "../../components/marketing/MarketingHeroCtas";
 import MarketingStaticImage from "../../components/marketing/MarketingStaticImage";
-import NewUserExperienceBadge from "../../components/marketing/NewUserExperienceBadge";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
 
@@ -43,9 +42,6 @@ export default function MarketingLandingPage() {
             <p className="mx-auto mt-4 max-w-2xl text-pretty text-sm leading-relaxed text-muted sm:text-base md:mt-5 md:max-w-3xl lg:mx-0 lg:max-w-3xl">
               把你的电子书、网页、文档变成能发的播客与文章；回答带来源引用，减轻 AI 幻觉顾虑。
             </p>
-            <div className="mt-5 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
-              <NewUserExperienceBadge />
-            </div>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               <MarketingHeroCtas registerHref={REGISTER_HREF} />
             </div>
