@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import type { PointerEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -21,6 +21,7 @@ import {
   welcomeMessageForIntent
 } from "../../lib/authPostAuthLanding";
 import { buildRegisterHref } from "../../lib/authReturnToContext";
+import { buildSharedNotebookWorkbenchHref } from "../../lib/sharedNotebookNav";
 import { apiErrorMessage } from "../../lib/apiError";
 import { useI18n } from "../../lib/I18nContext";
 import { WORKS_TRASH_PATH, WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
@@ -100,20 +101,9 @@ function buildNotebookShareUrl(notebookName: string, ownerUserId: string, access
   return u.toString();
 }
 
-function buildSharedNotebookWorkbenchHref(
-  notebook: string,
-  ownerUserId: string,
-  access: "read_only" | "edit"
-): string {
-  const q = new URLSearchParams({
-    sharedFromOwnerUserId: ownerUserId,
-    shareAccess: access
-  });
-  return `/notes/${encodeURIComponent(notebook)}?${q.toString()}`;
-}
-
 export default function NotesHubPage({ initialHub = null }: { initialHub?: NotebooksHubPayload | null }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useI18n();
   const { user, getAuthHeaders, ready } = useAuth();
   const isLoggedIn = isLoggedInAccountUser(user);
@@ -165,6 +155,10 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
   const [notebookCoverModalErr, setNotebookCoverModalErr] = useState("");
   const notebookCoverFileRef = useRef<HTMLInputElement | null>(null);
   const shareLinkRedirectedRef = useRef(false);
+  const openNotebookFromQueryRef = useRef<string | null>(null);
+
+  const discoverFromQuery = String(searchParams?.get("discover") || "").trim().toLowerCase();
+  const openNotebookFromQuery = String(searchParams?.get("openNotebook") || "").trim();
 
   const notebooksMetaQuery = useNotebooksMetaQuery(getAuthHeaders, metaQueryEnabled && hubDiscoverTab === "mine");
 
@@ -185,7 +179,13 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
   useEffect(() => {
     if (!ready) return;
     if (!isLoggedIn) setHubDiscoverTab("popular");
-  }, [ready, isLoggedIn]);
+    else if (discoverFromQuery === "popular") setHubDiscoverTab("popular");
+  }, [ready, isLoggedIn, discoverFromQuery]);
+
+  useEffect(() => {
+    if (!openNotebookFromQuery) return;
+    openNotebookFromQueryRef.current = openNotebookFromQuery;
+  }, [openNotebookFromQuery]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -413,6 +413,18 @@ export default function NotesHubPage({ initialHub = null }: { initialHub?: Noteb
     setError("");
     router.push(buildSharedNotebookWorkbenchHref(item.notebook, item.ownerUserId, access));
   }
+
+  useEffect(() => {
+    const pending = openNotebookFromQueryRef.current;
+    if (!pending || hubDiscoverTab !== "popular" || popularLoading) return;
+    const item = popularItems.find((row) => row.notebook === pending);
+    if (!item) return;
+    openNotebookFromQueryRef.current = null;
+    const access: "read_only" | "edit" = item.publicAccess === "edit" ? "edit" : "read_only";
+    setNotebookCardMenu(null);
+    setError("");
+    router.push(buildSharedNotebookWorkbenchHref(item.notebook, item.ownerUserId, access));
+  }, [hubDiscoverTab, popularItems, popularLoading, router]);
 
   async function createNotebook() {
     const name = newNotebookName.trim();
