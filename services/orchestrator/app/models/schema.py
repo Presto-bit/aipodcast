@@ -736,6 +736,10 @@ def ensure_site_traffic_schema() -> None:
                 "ADD COLUMN IF NOT EXISTS device_visitor_id TEXT"
             )
             cur.execute(
+                "ALTER TABLE site_page_views "
+                "ADD COLUMN IF NOT EXISTS uv_zone TEXT NOT NULL DEFAULT 'other'"
+            )
+            cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_site_page_views_created ON site_page_views(created_at DESC)"
             )
             cur.execute(
@@ -750,6 +754,18 @@ def ensure_site_traffic_schema() -> None:
                 "CREATE INDEX IF NOT EXISTS idx_site_page_views_dedupe_sh_day "
                 "ON site_page_views ("
                 "(NULLIF(TRIM(device_visitor_id), '')), "
+                "(((created_at AT TIME ZONE 'Asia/Shanghai')::date))"
+                ")"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_site_page_views_zone_sh_day "
+                "ON site_page_views (uv_zone, (((created_at AT TIME ZONE 'Asia/Shanghai')::date)))"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_site_page_views_dedupe_zone_sh_day "
+                "ON site_page_views ("
+                "(NULLIF(TRIM(device_visitor_id), '')), "
+                "uv_zone, "
                 "(((created_at AT TIME ZONE 'Asia/Shanghai')::date))"
                 ")"
             )

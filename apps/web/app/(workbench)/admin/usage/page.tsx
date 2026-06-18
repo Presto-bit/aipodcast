@@ -42,7 +42,20 @@ type SiteUvStats = {
   yesterday?: SiteUvDayMetric;
   range?: SiteUvRange;
   by_day?: SiteUvDayRow[];
+  by_zone?: {
+    today?: { marketing?: number; workbench?: number };
+    range?: { marketing?: number; workbench?: number };
+  };
 };
+type FunnelStepRow = {
+  step?: string;
+  metric?: string;
+  label?: string;
+  total?: number;
+  succeeded?: number;
+  failed?: number;
+};
+type FunnelStats = { steps?: FunnelStepRow[] };
 type SiteUvDrillScope = "today" | "range";
 type SiteUvDetailRow = {
   device_id?: string;
@@ -228,6 +241,7 @@ export default function AdminUsagePage(): JSX.Element {
   const [dayRows, setDayRows] = useState<DayRow[]>([]);
   const [topUsers, setTopUsers] = useState<TopUserRow[]>([]);
   const [siteUv, setSiteUv] = useState<SiteUvStats>({});
+  const [funnelStats, setFunnelStats] = useState<FunnelStats>({});
   const [uvDrillScope, setUvDrillScope] = useState<SiteUvDrillScope | null>(null);
   const [uvDetailRows, setUvDetailRows] = useState<SiteUvDetailRow[]>([]);
   const [uvDetailMeta, setUvDetailMeta] = useState<{ total_uv?: number; truncated?: boolean; date_from?: string; date_to?: string }>({});
@@ -287,6 +301,7 @@ export default function AdminUsagePage(): JSX.Element {
       by_day?: DayRow[];
       top_users?: TopUserRow[];
       site_uv?: SiteUvStats;
+      funnel?: FunnelStats;
       source?: string;
     };
     setOverview(data.overview || {});
@@ -295,6 +310,7 @@ export default function AdminUsagePage(): JSX.Element {
     setDayRows(Array.isArray(data.by_day) ? data.by_day : []);
     setTopUsers(Array.isArray(data.top_users) ? data.top_users : []);
     setSiteUv(data.site_uv && typeof data.site_uv === "object" ? data.site_uv : {});
+    setFunnelStats(data.funnel && typeof data.funnel === "object" ? data.funnel : {});
     setUsageSource(typeof data.source === "string" && data.source ? data.source : "usage_events");
     setErr("");
   }, [overviewQuery.data, tab]);
@@ -943,6 +959,16 @@ export default function AdminUsagePage(): JSX.Element {
               onClick={() => handleUvDetailClick("range")}
               active={uvDrillScope === "range"}
             />
+            <MetricCard
+              title="营销页 UV（今日）"
+              value={num(siteUv.by_zone?.today?.marketing)}
+              hint={`工作台今日 ${num(siteUv.by_zone?.today?.workbench)} · 不含 /admin`}
+            />
+            <MetricCard
+              title="营销页 UV（区间）"
+              value={num(siteUv.by_zone?.range?.marketing)}
+              hint={`工作台区间 ${num(siteUv.by_zone?.range?.workbench)}`}
+            />
             <MetricCard title="总调用事件" value={num(overview.total_events)} />
             <MetricCard title="成功率" value={pct(overview.success_rate)} hint={`成功 ${num(overview.succeeded_events)} / 失败 ${num(overview.failed_events)}`} />
             <MetricCard title="活跃用户" value={num(overview.active_users)} hint={`登录用户 ${num(overview.login_users)} / 登录次数 ${num(overview.login_count)}`} />
@@ -1014,6 +1040,31 @@ export default function AdminUsagePage(): JSX.Element {
                   </tbody>
                 </table>
               )}
+            </div>
+          ) : null}
+          {Array.isArray(funnelStats.steps) && funnelStats.steps.length > 0 ? (
+            <div className="mt-4 overflow-x-auto rounded-xl border border-line bg-surface/60">
+              <div className="border-b border-line px-3 py-2 text-sm text-muted">注册转化漏斗（与上方日期区间一致）</div>
+              <table className="min-w-[640px] w-full text-left text-sm text-ink">
+                <thead className="border-b border-line text-xs text-muted">
+                  <tr>
+                    <th className="px-3 py-2">步骤</th>
+                    <th className="px-3 py-2">合计</th>
+                    <th className="px-3 py-2">成功</th>
+                    <th className="px-3 py-2">失败</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {funnelStats.steps.map((r, i) => (
+                    <tr key={`${r.step || r.metric || "funnel"}_${i}`} className="border-t border-line/80">
+                      <td className="px-3 py-2">{r.label || r.step || "—"}</td>
+                      <td className="px-3 py-2">{num(r.total)}</td>
+                      <td className="px-3 py-2">{num(r.succeeded)}</td>
+                      <td className="px-3 py-2">{num(r.failed)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           ) : null}
           <div className="mt-6 grid gap-6 lg:grid-cols-2">

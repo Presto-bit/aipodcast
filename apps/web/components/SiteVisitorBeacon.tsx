@@ -1,12 +1,14 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { getDeviceId } from "../lib/deviceId";
+import { classifyUvZone } from "../lib/uvZone";
 
 const VISITOR_COOKIE = "_fym_vid";
 const VISITOR_STORAGE = "fym_visitor_id_v1";
 /** v2：仅 device_visitor_id 计 UV 后需重新上报（v1 可能已误标今日已发送） */
-const UV_SENT_DAY_KEY = "fym_uv_sent_sh_day_v2";
+const UV_SENT_DAY_KEY = "fym_uv_sent_sh_day_v3";
 const SITE_TRAFFIC_TZ = "Asia/Shanghai";
 
 function readCookie(name: string): string {
@@ -52,33 +54,43 @@ function shanghaiCalendarDay(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: SITE_TRAFFIC_TZ }).format(new Date());
 }
 
-function alreadySentUvToday(): boolean {
+function uvSentStorageKey(zone: string): string {
+  return `${UV_SENT_DAY_KEY}:${zone}`;
+}
+
+function alreadySentUvToday(zone: string): boolean {
   try {
-    return sessionStorage.getItem(UV_SENT_DAY_KEY) === shanghaiCalendarDay();
+    return sessionStorage.getItem(uvSentStorageKey(zone)) === shanghaiCalendarDay();
   } catch {
     return false;
   }
 }
 
-function markUvSentToday(): void {
+function markUvSentToday(zone: string): void {
   try {
-    sessionStorage.setItem(UV_SENT_DAY_KEY, shanghaiCalendarDay());
+    sessionStorage.setItem(uvSentStorageKey(zone), shanghaiCalendarDay());
   } catch {
     // ignore
   }
 }
 
-/** 站点 UV 埋点：仅设备 ID；每设备每 Shanghai 日历日最多上报一次。 */
+/** 站点 UV 埋点：按 zone 分区；/admin 不上报；每设备每 zone 每 Shanghai 日最多一次。 */
 export default function SiteVisitorBeacon(): null {
+  const pathname = usePathname() || "/";
+
   useEffect(() => {
-    if (alreadySentUvToday()) return;
+    const zone = classifyUvZone(pathname);
+    if (!zone) return;
+    if (alreadySentUvToday(zone)) return;
 
     const run = () => {
       void (async () => {
         const { deviceId } = await getDeviceId();
         const payload = {
           visitor_id: ensureVisitorId(),
-          device_visitor_id: deviceId
+          device_visitor_id: deviceId,
+          path: pathname,
+          uv_zone: zone
         };
         try {
           const res = await fetch("/api/analytics/visitor", {
@@ -88,7 +100,7 @@ export default function SiteVisitorBeacon(): null {
             body: JSON.stringify(payload),
             keepalive: true
           });
-          if (res.ok) markUvSentToday();
+          if (res.ok) markUvSentToday(zone);
         } catch {
           // 埋点失败不影响主流程；未标记已发送，下次进页可重试
         }
@@ -99,7 +111,7 @@ export default function SiteVisitorBeacon(): null {
     } else {
       setTimeout(run, 300);
     }
-  }, []);
+  }, [pathname]);
 
   return null;
 }

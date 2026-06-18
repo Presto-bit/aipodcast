@@ -3755,6 +3755,11 @@ def admin_usage_dashboard(
     except Exception:
         logger.exception("site_traffic_uv_stats failed")
         out["site_uv"] = {}
+    try:
+        out["funnel"] = admin_funnel_stats(start_dt=start_dt, end_dt=end_dt)
+    except Exception:
+        logger.exception("admin_funnel_stats failed")
+        out["funnel"] = {}
     return out
 
 
@@ -3768,12 +3773,20 @@ def record_site_visitor(
     visitor_id: str,
     device_visitor_id: str | None = None,
     user_id: str | None = None,
+    path: str = "/",
+    uv_zone: str = "other",
 ) -> None:
-    """写入站点 UV：仅 device_visitor_id；同一设备在上海日历日仅一条。"""
+    """写入站点 UV：仅 device_visitor_id；同一设备+zone 在上海日历日仅一条。"""
     device_vid = (device_visitor_id or "").strip()
     if len(device_vid) < 8:
         return
+    zone = (uv_zone or "other").strip().lower() or "other"
+    if zone not in ("marketing", "workbench", "other"):
+        zone = "other"
     cookie_vid = (visitor_id or "").strip() or device_vid
+    page_path = (path or "/").strip() or "/"
+    if len(page_path) > 512:
+        page_path = page_path[:512]
     uid: str | None = None
     if user_id:
         try:
@@ -3784,17 +3797,28 @@ def record_site_visitor(
         with get_cursor(conn) as cur:
             cur.execute(
                 f"""
-                INSERT INTO site_page_views (visitor_id, device_visitor_id, user_id, path)
-                SELECT %s, %s, %s::uuid, '/'
+                INSERT INTO site_page_views (visitor_id, device_visitor_id, user_id, path, uv_zone)
+                SELECT %s, %s, %s::uuid, %s, %s
                 WHERE NOT EXISTS (
                     SELECT 1
                     FROM site_page_views
                     WHERE {_SITE_TRAFFIC_DEVICE_SQL} = %s
+                      AND uv_zone = %s
                       AND ((created_at AT TIME ZONE %s)::date)
                           = ((NOW() AT TIME ZONE %s)::date)
                 )
                 """,
-                (cookie_vid, device_vid, uid, device_vid, _SITE_TRAFFIC_TZ, _SITE_TRAFFIC_TZ),
+                (
+                    cookie_vid,
+                    device_vid,
+                    uid,
+                    page_path,
+                    zone,
+                    device_vid,
+                    zone,
+                    _SITE_TRAFFIC_TZ,
+                    _SITE_TRAFFIC_TZ,
+                ),
             )
             conn.commit()
 
@@ -3828,41 +3852,43 @@ def site_traffic_uv_stats(
 
     device_expr = _SITE_TRAFFIC_DEVICE_SQL
     device_filter = _SITE_TRAFFIC_DEVICE_FILTER
-    with get_conn() as conn:
-        with get_cursor(conn) as cur:
+
+    def _count_uv(cur, *, day: date | None = None, range_start: date | None = None, range_end: date | None = None, zone: str | None = None) -> int:
+        zone_filter = ""
+        zone_args: tuple[Any, ...] = ()
+        if zone:
+            zone_filter = " AND uv_zone = %s"
+            zone_args = (zone,)
+        if day is not None:
             cur.execute(
                 f"""
                 SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
                 FROM site_page_views
                 WHERE {device_filter}
+                  {zone_filter}
                   AND ((created_at AT TIME ZONE %s)::date) = %s
                 """,
-                (_SITE_TRAFFIC_TZ, today_sh),
+                zone_args + (_SITE_TRAFFIC_TZ, day),
             )
-            trow = dict(cur.fetchone() or {})
-
+        else:
             cur.execute(
                 f"""
                 SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
                 FROM site_page_views
                 WHERE {device_filter}
-                  AND ((created_at AT TIME ZONE %s)::date) = %s
-                """,
-                (_SITE_TRAFFIC_TZ, yesterday_sh),
-            )
-            yrow = dict(cur.fetchone() or {})
-
-            cur.execute(
-                f"""
-                SELECT COUNT(DISTINCT ({device_expr}))::bigint AS uv
-                FROM site_page_views
-                WHERE {device_filter}
+                  {zone_filter}
                   AND ((created_at AT TIME ZONE %s)::date) >= %s
                   AND ((created_at AT TIME ZONE %s)::date) <= %s
                 """,
-                (_SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end),
+                zone_args + (_SITE_TRAFFIC_TZ, range_start, _SITE_TRAFFIC_TZ, range_end),
             )
-            rrow = dict(cur.fetchone() or {})
+        return _safe_int(dict(cur.fetchone() or {}).get("uv"))
+
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            today_uv = _count_uv(cur, day=today_sh)
+            yesterday_uv = _count_uv(cur, day=yesterday_sh)
+            range_uv = _count_uv(cur, range_start=range_start, range_end=range_end)
 
             cur.execute(
                 f"""
@@ -3883,25 +3909,40 @@ def site_traffic_uv_stats(
                 item["day"] = _day_str(item.get("day"))
                 by_day.append(item)
 
+            today_marketing_uv = _count_uv(cur, day=today_sh, zone="marketing")
+            today_workbench_uv = _count_uv(cur, day=today_sh, zone="workbench")
+            range_marketing_uv = _count_uv(cur, range_start=range_start, range_end=range_end, zone="marketing")
+            range_workbench_uv = _count_uv(cur, range_start=range_start, range_end=range_end, zone="workbench")
+
     return {
         "timezone": _SITE_TRAFFIC_TZ,
         "dedupe": "device_visitor_id",
-        "note": "仅统计 device_visitor_id（不含 Cookie）；当日随访问累计",
+        "note": "仅统计 device_visitor_id（不含 Cookie）；不含 /admin；当日随访问累计",
         "today": {
             "day": today_sh.isoformat(),
-            "uv": _safe_int(trow.get("uv")),
+            "uv": today_uv,
             "partial": True,
         },
         "yesterday": {
             "day": yesterday_sh.isoformat(),
-            "uv": _safe_int(yrow.get("uv")),
+            "uv": yesterday_uv,
             "partial": False,
         },
         "range": {
             "date_from": range_start.isoformat(),
             "date_to": range_end.isoformat(),
-            "uv": _safe_int(rrow.get("uv")),
+            "uv": range_uv,
             "includes_today": range_end >= today_sh,
+        },
+        "by_zone": {
+            "today": {
+                "marketing": today_marketing_uv,
+                "workbench": today_workbench_uv,
+            },
+            "range": {
+                "marketing": range_marketing_uv,
+                "workbench": range_workbench_uv,
+            },
         },
         "by_day": by_day,
     }
@@ -3992,6 +4033,84 @@ def site_traffic_uv_detail(
         "returned": len(rows),
         "truncated": len(rows) < total_uv,
         "rows": rows,
+    }
+
+
+def record_funnel_event(
+    *,
+    step: str,
+    status: str = "succeeded",
+    device_visitor_id: str | None = None,
+    user_id: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> None:
+    """转化漏斗事件：写入 usage_events，metric = funnel_{step}（注册完成为 auth_register）。"""
+    step_norm = (step or "").strip().lower()
+    if not step_norm:
+        return
+    metric = step_norm if step_norm.startswith("funnel_") else f"funnel_{step_norm}"
+    if step_norm in ("register_complete", "auth_register"):
+        metric = "auth_register"
+        step_norm = "register_complete"
+    st = (status or "succeeded").strip().lower() or "succeeded"
+    payload = dict(meta or {})
+    dv = (device_visitor_id or "").strip()
+    if dv:
+        payload["device_visitor_id"] = dv
+    payload["funnel_step"] = step_norm
+    record_usage_event(
+        job_id=None,
+        phone=None,
+        job_type="funnel",
+        metric=metric,
+        status=st,
+        quantity=1,
+        meta=payload,
+        user_id=user_id,
+    )
+
+
+def admin_funnel_stats(*, start_dt: datetime, end_dt: datetime) -> dict[str, Any]:
+    """管理端转化漏斗：按 usage_events.metric 聚合。"""
+    steps_def: tuple[tuple[str, str, str], ...] = (
+        ("marketing_cta_listen", "funnel_marketing_cta_listen", "营销页·试听 CTA"),
+        ("marketing_cta_register", "funnel_marketing_cta_register", "营销页·注册 CTA"),
+        ("register_page_view", "funnel_register_page_view", "进入注册页"),
+        ("register_send_code", "funnel_register_send_code", "发送验证码"),
+        ("guest_generate_click", "funnel_guest_generate_click", "访客点「开始生成」"),
+        ("guest_generate_register_confirm", "funnel_guest_generate_register_confirm", "生成前确认注册"),
+        ("register_complete", "auth_register", "注册成功"),
+    )
+    rows: list[dict[str, Any]] = []
+    with get_conn() as conn:
+        with get_cursor(conn) as cur:
+            for step, metric, label in steps_def:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::bigint AS total,
+                           COUNT(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+                           COUNT(*) FILTER (WHERE status = 'failed')::bigint AS failed
+                    FROM usage_events
+                    WHERE metric = %s
+                      AND created_at >= %s
+                      AND created_at <= %s
+                    """,
+                    (metric, start_dt, end_dt),
+                )
+                item = dict(cur.fetchone() or {})
+                rows.append(
+                    {
+                        "step": step,
+                        "metric": metric,
+                        "label": label,
+                        "total": _safe_int(item.get("total")),
+                        "succeeded": _safe_int(item.get("succeeded")),
+                        "failed": _safe_int(item.get("failed")),
+                    }
+                )
+    return {
+        "window": {"start_at": start_dt.isoformat(), "end_at": end_dt.isoformat()},
+        "steps": rows,
     }
 
 

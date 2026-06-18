@@ -14,3 +14,8 @@ export function newUserExperienceTagline(): string {
   const textK = textChars >= 1000 ? `${Math.round(textChars / 1000)}k` : String(textChars);
   return `注册即送 ${voiceMinutes} 分钟语音、${asrMinutes} 分钟转写与 ${textK} 字文稿体验额度`;
 }
+
+/** 注册页：30 秒能做什么 */
+export function registerQuickStartLine(): string {
+  return "约 30 秒：选模板试听 → 注册 → 上传资料生成自己的播客";
+}

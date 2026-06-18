@@ -2,13 +2,13 @@ import Link from "next/link";
 import BrandGlyph from "../../components/brand/BrandGlyph";
 import MarketingAuthNav from "../../components/marketing/MarketingAuthNav";
 import MarketingFeatureCard from "../../components/marketing/MarketingFeatureCard";
+import MarketingHeroCtas from "../../components/marketing/MarketingHeroCtas";
 import MarketingStaticImage from "../../components/marketing/MarketingStaticImage";
 import NewUserExperienceBadge from "../../components/marketing/NewUserExperienceBadge";
 import { SiteBeianBar } from "../../components/SiteBeianBar";
 import { WORKBENCH_NOTES_PATH } from "../../lib/navPaths";
 
 const REGISTER_HREF = `/register?returnTo=${encodeURIComponent(WORKBENCH_NOTES_PATH)}`;
-const GUEST_TRY_PODCAST_HREF = "/create?mode=podcast";
 
 export default function MarketingLandingPage() {
   return (
@@ -47,18 +47,7 @@ export default function MarketingLandingPage() {
               <NewUserExperienceBadge />
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
-              <Link
-                href={REGISTER_HREF}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-cta px-5 py-2.5 text-sm font-semibold text-cta-foreground shadow-soft transition hover:bg-cta/90"
-              >
-                注册并上传资料
-              </Link>
-              <Link
-                href={GUEST_TRY_PODCAST_HREF}
-                className="inline-flex min-h-[44px] items-center justify-center rounded-lg border border-line bg-surface px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-fill"
-              >
-                直接生成播客
-              </Link>
+              <MarketingHeroCtas registerHref={REGISTER_HREF} />
             </div>
           </div>
           <div className="mx-auto w-3/4 lg:mx-0 lg:w-full">

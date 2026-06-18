@@ -625,7 +625,7 @@ const TtsStudio = forwardRef<TtsStudioHandle, TtsStudioProps>(function TtsStudio
         return;
       }
     }
-    if (!ensureLoggedInForAction("开始合成", "tts.generate")) return;
+    if (!ensureLoggedInForAction("开始合成", "tts.generate", { prompt: true })) return;
 
     cancelledRef.current = false;
     if (logSuccessHideTimerRef.current) {

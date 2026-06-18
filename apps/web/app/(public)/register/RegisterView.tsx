@@ -7,7 +7,9 @@ import { isLoggedInAccountUser, useAuth } from "../../../lib/auth";
 import AuthReturnToContextBanner from "../../../components/auth/AuthReturnToContextBanner";
 import { buildLoginHref } from "../../../lib/authReturnToContext";
 import { resolveAndRememberPostAuthDestination } from "../../../lib/authPostAuthLanding";
+import { trackFunnelEvent } from "../../../lib/funnelAnalytics";
 import NewUserExperienceBadge from "../../../components/marketing/NewUserExperienceBadge";
+import { newUserExperienceTagline, registerQuickStartLine } from "../../../lib/newUserExperience";
 import { isRegisterEmailFormatOk } from "../../../lib/registerEmail";
 
 export default function RegisterView() {
@@ -28,6 +30,10 @@ export default function RegisterView() {
   const [regA11ySuccess, setRegA11ySuccess] = useState("");
 
   const loginHref = buildLoginHref(returnTo);
+
+  useEffect(() => {
+    void trackFunnelEvent("register_page_view");
+  }, []);
 
   useEffect(() => {
     if (!ready || !authRequired) return;
@@ -66,8 +72,10 @@ export default function RegisterView() {
           ? "验证码已生成。当前为日志模式，未发送真实邮件，请到服务器日志查看。"
           : "验证码已发送，请查收邮箱。"
       );
+      void trackFunnelEvent("register_send_code", { status: "succeeded" });
     } catch (err) {
       setAuthError(String(err instanceof Error ? err.message : err));
+      void trackFunnelEvent("register_send_code", { status: "failed" });
     } finally {
       setRegSendCodeBusy(false);
     }
@@ -138,7 +146,11 @@ export default function RegisterView() {
   return (
     <main className="mx-auto min-h-0 w-full max-w-md px-4 pb-16 pt-8">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">注册</h1>
-      <p className="mt-2 text-sm text-muted">使用邮箱与验证码创建账号</p>
+      <div className="mt-3 rounded-xl border border-brand/25 bg-brand/5 px-4 py-3">
+        <p className="text-sm font-medium text-ink">{newUserExperienceTagline()}</p>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted">{registerQuickStartLine()}</p>
+      </div>
+      <p className="mt-3 text-sm text-muted">使用邮箱与验证码创建账号</p>
       <div className="mt-3">
         <NewUserExperienceBadge className="w-full justify-center sm:w-auto" />
       </div>

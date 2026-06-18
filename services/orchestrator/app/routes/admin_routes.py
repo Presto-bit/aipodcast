@@ -207,6 +207,7 @@ def admin_usage_dashboard_api(
         "by_day": dashboard.get("by_day") or [],
         "top_users": dashboard.get("top_users") or [],
         "site_uv": dashboard.get("site_uv") or {},
+        "funnel": dashboard.get("funnel") or {},
         "source": dashboard.get("source") or "usage_events",
     }
 

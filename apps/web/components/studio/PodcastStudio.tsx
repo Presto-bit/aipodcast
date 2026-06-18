@@ -903,7 +903,7 @@ const PodcastStudio = forwardRef<PodcastStudioHandle, PodcastStudioProps>(functi
       applyTaskFromEvent("请先输入内容，或上传文件并勾选资料后再开始生成");
       return;
     }
-    if (!ensureLoggedInForAction("开始生成", "podcast.generate")) return;
+    if (!ensureLoggedInForAction("开始生成", "podcast.generate", { prompt: true })) return;
     cancelledRef.current = false;
     if (logSuccessHideTimerRef.current) {
       clearTimeout(logSuccessHideTimerRef.current);
