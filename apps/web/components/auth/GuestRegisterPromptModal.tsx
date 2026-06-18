@@ -1,7 +1,7 @@
 "use client";
 
-import SmallConfirmModal from "./ui/SmallConfirmModal";
-import { newUserExperienceTagline, registerQuickStartLine } from "../lib/newUserExperience";
+import SmallConfirmModal from "../ui/SmallConfirmModal";
+import { newUserExperienceTagline, registerQuickStartLine } from "../../lib/newUserExperience";
 
 type Props = {
   open: boolean;
