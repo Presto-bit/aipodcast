@@ -132,6 +132,8 @@ def estimate_billed_script_chars_upper_bound(job_type: str, payload: dict[str, A
 
 def preview_wallet_cents_for_text_enqueue(phone: str | None, job_type: str, payload: dict[str, Any]) -> int:
     """不修改数据库：仅「单独计文稿」任务入队前，超出体验包字数的预估钱包扣费（分）。"""
+    if not script_text_billed_separately_for_job_type(job_type):
+        return 0
     from .models._core import billing_user_id_from_ref
 
     uid = billing_user_id_from_ref((phone or "").strip())
@@ -145,17 +147,15 @@ def preview_wallet_cents_for_text_enqueue_user_id(user_id: str | None, job_type:
         return 0
     if not media_wallet_billing_enabled():
         return 0
-    from .models._core import _normalize_user_uuid
+    from .billing_preauth import preview_script_preauth_wallet_cents
+    from .models._core import _normalize_user_uuid, experience_text_chars_for_user_id
 
     uid = _normalize_user_uuid((user_id or "").strip())
     if not uid:
         return 0
     est = estimate_billed_script_chars_upper_bound(job_type, payload if isinstance(payload, dict) else {})
-    from . import models
-
-    ex = int(models.experience_text_chars_for_user_id(uid) or 0)
-    rest = max(0, int(est) - ex)
-    return wallet_cents_for_generated_text_chars(rest)
+    ex = int(experience_text_chars_for_user_id(uid) or 0)
+    return int(preview_script_preauth_wallet_cents(ex, est))
 
 
 def estimate_spoken_minutes_podcast_enqueue(payload: dict[str, Any]) -> float:
@@ -244,16 +244,15 @@ def preview_wallet_cents_for_media_job_user_id(user_id: str, tier: str | None, e
     _ = tier
     if not media_wallet_billing_enabled():
         return 0
-    from .models._core import _normalize_user_uuid
+    from .billing_preauth import preview_voice_preauth_wallet_cents
+    from .models._core import _normalize_user_uuid, experience_voice_minutes_for_user_id
 
     uid = _normalize_user_uuid((user_id or "").strip())
     if not uid or est_minutes <= 1e-9:
         return 0
-    from . import models
-
-    ex_m = float(models.experience_voice_minutes_for_user_id(uid) or 0)
-    wallet_min = max(0.0, float(est_minutes) - ex_m)
-    return int(wallet_cents_for_overage_minutes(wallet_min))
+    ex_m = float(experience_voice_minutes_for_user_id(uid) or 0.0)
+    _hold, preauth = preview_voice_preauth_wallet_cents(ex_m, float(est_minutes))
+    return int(preauth)
 
 
 def split_estimated_minutes_to_wallet(

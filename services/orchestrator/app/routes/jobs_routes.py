@@ -505,8 +505,12 @@ def _media_job_wallet_preview_dict(billing_user_ref: str | None, job_type: str, 
         body_m = str(payload.get("text") or "").strip() or "你好，欢迎使用 AI Native Studio。"
         est_m = float(estimate_spoken_minutes_tts(payload, body_m))
     need_cents = int(preview_wallet_cents_for_media_job_user_id(uid, None, est_m))
+    from .billing_preauth import voice_hold_minutes
+
+    hold_m = float(voice_hold_minutes(est_m))
     bal_m = int(wallet_balance_cents_for_user_id(uid))
     out["estimated_spoken_minutes"] = round(est_m, 2)
+    out["hold_spoken_minutes"] = round(hold_m, 2)
     out["wallet_charge_cents"] = need_cents
     out["wallet_balance_cents"] = bal_m
     if need_cents > 0 and bal_m < need_cents:

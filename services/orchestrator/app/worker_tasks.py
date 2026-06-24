@@ -36,11 +36,14 @@ from .models import (
     experience_restore_voice_minutes_for_user_id,
     finalize_job_terminal_unless_cancelled,
     get_job,
-    media_billing_try_assert_cover_estimated_minutes_for_user_id,
-    media_billing_try_debit_actual_minutes_for_user_id,
+    media_billing_voice_preauth_for_user_id,
+    media_billing_voice_preauth_release_for_user_id,
+    media_billing_voice_settle_for_user_id,
     payg_restore_minutes_from_log,
+    script_text_billing_preauth_for_user_id,
+    script_text_billing_preauth_release_for_user_id,
     script_text_billing_refund_for_user_id,
-    script_text_billing_try_debit_for_user_id,
+    script_text_billing_settle_for_user_id,
     try_mark_job_running,
     update_job_status,
     wallet_credit_cents_for_user_id,
@@ -65,28 +68,33 @@ def _wallet_ledger_tts_model_for_voice_billing(payload: dict[str, Any] | None) -
 
 
 def _refund_media_wallet_job(user_id: str | None, meta: dict[str, Any]) -> None:
-    """语音任务失败或取消后退回本次从钱包扣的分、按次分钟包（若有）及体验包语音分钟。"""
+    """语音任务失败或取消：退回结算扣款；若仅预授权未结算则释放预扣。"""
     uid = billing_user_id_from_created_by(user_id) or billing_user_id_from_ref(str(user_id or "").strip())
     if not uid or not isinstance(meta, dict):
         return
     wc = int(meta.get("wallet_cents") or 0)
+    preauth = int(meta.get("preauth_wallet_cents") or 0)
     pr = meta.get("payg_restores")
     ev = float(meta.get("experience_voice_minutes_consumed") or 0)
-    if wc <= 0 and not (isinstance(pr, list) and pr) and ev <= 1e-12:
+    if wc <= 0 and preauth <= 0 and not (isinstance(pr, list) and pr) and ev <= 1e-12:
         return
     if wc > 0:
         wallet_credit_cents_for_user_id(uid, wc)
+    elif preauth > 0:
+        media_billing_voice_preauth_release_for_user_id(uid, meta)
     if isinstance(pr, list) and pr:
         payg_restore_minutes_from_log(uid, pr)
     if ev > 1e-12:
         experience_restore_voice_minutes_for_user_id(uid, ev)
 
 
-def _debit_script_text_billing_or_raise(job_id: str, created_by: str | None, script_body: str) -> dict[str, Any]:
-    """
-    模型成稿落库后：体验包字数 + 钱包结算文本费。
-    返回 billing meta（供取消时 script_text_billing_refund）；未开媒体钱包时返回空 dict。
-    """
+def _settle_script_text_billing_or_raise(
+    job_id: str,
+    created_by: str | None,
+    script_body: str,
+    preauth_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """成稿后按实际字数结算（相对预授权多退少补）。"""
     from .media_wallet import media_wallet_billing_enabled
 
     if not media_wallet_billing_enabled():
@@ -95,20 +103,22 @@ def _debit_script_text_billing_or_raise(job_id: str, created_by: str | None, scr
     if not uid:
         return {}
     chars = len((script_body or "").strip())
-    ok, meta = script_text_billing_try_debit_for_user_id(uid, chars)
+    ok, meta = script_text_billing_settle_for_user_id(uid, preauth_meta, chars, ref_id=job_id)
     if not ok:
         raise RuntimeError(str((meta or {}).get("message") or "script text billing failed"))
     wc = int((meta or {}).get("wallet_cents") or 0)
     ex = int((meta or {}).get("experience_text_chars_consumed") or 0)
-    if wc > 0 or ex > 0:
+    released = int((meta or {}).get("preauth_released_cents") or 0)
+    if wc > 0 or ex > 0 or released > 0:
         append_job_event(
             job_id,
             "log",
-            "已结算脚本文本费用（体验包字数与/或钱包）",
+            "已结算脚本文本费用（体验包字数与/或钱包，预授权多退少补）",
             {
                 "script_chars": chars,
                 "wallet_cents": wc,
                 "experience_text_chars_consumed": ex,
+                "preauth_released_cents": released,
                 "tts_model": "(非TTS·脚本文本)",
             },
         )
@@ -466,6 +476,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
     from .tts_pipeline import run_extended_tts
     from .work_result_title import assign_work_result_title_with_optional_llm
 
+    text_preauth_meta: dict[str, Any] = {}
     try:
         if job_type in ("voice_clone", "clone_voice"):
             audio_b64 = str(payload.get("audio_b64") or "").strip()
@@ -539,7 +550,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             return result
 
         if job_type in ("text_to_speech", "tts"):
-            from .media_wallet import MEDIA_USAGE_PERIOD_DAYS, estimate_spoken_minutes_tts
+            from .media_wallet import estimate_spoken_minutes_tts
 
             _mini, _ = default_podcast_voice_ids()
             voice_id = str(payload.get("voice_id") or "").strip() or _mini
@@ -554,6 +565,7 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 or want_polish
             )
             phone_m = billing_user_id_from_created_by(created_by)
+            voice_preauth_meta: dict[str, Any] = {}
             media_bill_meta: dict[str, Any] = {}
             est_m_voice = 0.0
             try:
@@ -561,14 +573,13 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     est_m_voice = float(
                         estimate_spoken_minutes_tts(payload if isinstance(payload, dict) else {}, source_text)
                     )
-                    ok_a, ass_meta = media_billing_try_assert_cover_estimated_minutes_for_user_id(
+                    ok_a, voice_preauth_meta = media_billing_voice_preauth_for_user_id(
                         phone_m,
-                        _subscription_tier_for_job(created_by),
                         est_m_voice,
-                        period_days=MEDIA_USAGE_PERIOD_DAYS,
+                        ref_id=job_id,
                     )
                     if not ok_a:
-                        raise RuntimeError(str((ass_meta or {}).get("message") or "media billing insufficient"))
+                        raise RuntimeError(str((voice_preauth_meta or {}).get("message") or "media billing insufficient"))
 
                 append_job_event(job_id, "progress", "正在调用模型进行语音合成", {"progress": 60})
                 if use_extended:
@@ -721,11 +732,11 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                             "未能解析成片时长，语音费用暂按预估分钟结算",
                             {"estimated_minutes_fallback": round(_fb_est, 4)},
                         )
-                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_actual_minutes_for_user_id(
+                    ok_m, _wcm, media_bill_meta = media_billing_voice_settle_for_user_id(
                         phone_m,
-                        _subscription_tier_for_job(created_by),
+                        voice_preauth_meta,
                         bill_m,
-                        period_days=MEDIA_USAGE_PERIOD_DAYS,
+                        ref_id=job_id,
                     )
                     if not ok_m:
                         raise RuntimeError(str(media_bill_meta.get("message") or "media billing settle failed"))
@@ -762,12 +773,15 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                 return result
             except Exception:
                 if phone_m:
-                    _refund_media_wallet_job(phone_m, media_bill_meta)
+                    _refund_media_wallet_job(phone_m, {**voice_preauth_meta, **media_bill_meta})
                     append_job_event(
                         job_id,
                         "log",
-                        "语音合成未成功，已退回本次套餐外扣费",
-                        {"wallet_cents": int(media_bill_meta.get("wallet_cents") or 0)},
+                        "语音合成未成功，已释放预授权或退回扣费",
+                        {
+                            "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
+                            "preauth_wallet_cents": int(voice_preauth_meta.get("preauth_wallet_cents") or 0),
+                        },
                     )
                 raise
 
@@ -965,6 +979,31 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
                     )
                 script_opts["script_target_chars"] = adj
 
+        if job_type == "script_draft":
+            from .media_wallet import estimate_billed_script_chars_upper_bound
+
+            cap_payload = {**(payload if isinstance(payload, dict) else {}), **script_opts}
+            char_cap = int(estimate_billed_script_chars_upper_bound(job_type, cap_payload))
+            uid_script = billing_user_id_from_created_by(created_by)
+            if uid_script and char_cap > 0:
+                ok_txt, text_preauth_meta = script_text_billing_preauth_for_user_id(
+                    uid_script,
+                    char_cap,
+                    ref_id=job_id,
+                )
+                if not ok_txt:
+                    raise RuntimeError(str((text_preauth_meta or {}).get("message") or "script text preauth failed"))
+                if int(text_preauth_meta.get("preauth_wallet_cents") or 0) > 0:
+                    append_job_event(
+                        job_id,
+                        "log",
+                        "已锁定脚本文本预授权（按字数上界）",
+                        {
+                            "char_cap": char_cap,
+                            "preauth_wallet_cents": int(text_preauth_meta.get("preauth_wallet_cents") or 0),
+                        },
+                    )
+
         stop_scr, thr_scr = _start_progress_heartbeat(
             job_id,
             "正在调用模型生成脚本（长稿可能较久）…",
@@ -1064,12 +1103,19 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
             job_type=job_type,
             api_key=api_key,
         )
-        text_bill_meta_script = _debit_script_text_billing_or_raise(job_id, created_by, script)
+        text_bill_meta_script: dict[str, Any] = {}
+        if job_type == "script_draft":
+            text_bill_meta_script = _settle_script_text_billing_or_raise(
+                job_id, created_by, script, text_preauth_meta
+            )
         if not finalize_job_terminal_unless_cancelled(job_id, "succeeded", progress=100, result=result):
             uid_can = billing_user_id_from_created_by(created_by)
             if text_bill_meta_script and uid_can:
                 script_text_billing_refund_for_user_id(uid_can, text_bill_meta_script)
                 append_job_event(job_id, "log", "任务已取消，已退回脚本文本扣费（体验包与/或钱包）", text_bill_meta_script)
+            elif text_preauth_meta and uid_can:
+                script_text_billing_preauth_release_for_user_id(uid_can, text_preauth_meta, ref_id=job_id)
+                append_job_event(job_id, "log", "任务已取消，已释放脚本文本预授权", text_preauth_meta)
             append_job_event(job_id, "log", "未写入成功终态（任务已取消）", {})
             return {"status": "cancelled"}
         append_job_event(job_id, "complete", "任务完成", {"progress": 100})
@@ -1077,6 +1123,10 @@ def run_ai_job(job_id: str) -> dict[str, Any]:
     except Exception as exc:
         # Ensure job reaches a terminal state even when legacy bridge/model calls fail.
         msg = str(exc) or "ai_job_failed"
+        if str(job_type or "").strip().lower() == "script_draft":
+            uid_rel = billing_user_id_from_created_by(created_by)
+            if uid_rel and isinstance(text_preauth_meta, dict) and text_preauth_meta:
+                script_text_billing_preauth_release_for_user_id(uid_rel, text_preauth_meta, ref_id=job_id)
         if finalize_job_terminal_unless_cancelled(job_id, "failed", progress=100, error_message=msg[:500]):
             append_job_event(job_id, "error", "任务失败", {"progress": 100, "error": msg[:500]})
         else:
@@ -1302,21 +1352,21 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 payload.get("force_tts_text_polish_main", False)
             )
 
-            from .media_wallet import MEDIA_USAGE_PERIOD_DAYS, estimate_spoken_minutes_tts
+            from .media_wallet import estimate_spoken_minutes_tts
 
             phone_pm = billing_user_id_from_created_by(created_by)
+            voice_preauth_meta_pod: dict[str, Any] = {}
             media_bill_meta: dict[str, Any] = {}
             est_m_voice_pod = 0.0
             if phone_pm:
                 est_m_voice_pod = float(estimate_spoken_minutes_tts(tts_pl, script))
-                ok_a, ass_meta = media_billing_try_assert_cover_estimated_minutes_for_user_id(
+                ok_a, voice_preauth_meta_pod = media_billing_voice_preauth_for_user_id(
                     phone_pm,
-                    _subscription_tier_for_job(created_by),
                     est_m_voice_pod,
-                    period_days=MEDIA_USAGE_PERIOD_DAYS,
+                    ref_id=job_id,
                 )
                 if not ok_a:
-                    raise RuntimeError(str((ass_meta or {}).get("message") or "media billing insufficient"))
+                    raise RuntimeError(str((voice_preauth_meta_pod or {}).get("message") or "media billing insufficient"))
 
             try:
 
@@ -1477,11 +1527,11 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                             "未能解析成片时长，语音费用暂按预估分钟结算",
                             {"estimated_minutes_fallback": round(_fb_est, 4)},
                         )
-                    ok_m, _wcm, media_bill_meta = media_billing_try_debit_actual_minutes_for_user_id(
+                    ok_m, _wcm, media_bill_meta = media_billing_voice_settle_for_user_id(
                         phone_pm,
-                        _subscription_tier_for_job(created_by),
+                        voice_preauth_meta_pod,
                         bill_m,
-                        period_days=MEDIA_USAGE_PERIOD_DAYS,
+                        ref_id=job_id,
                     )
                     if not ok_m:
                         raise RuntimeError(str(media_bill_meta.get("message") or "media billing settle failed"))
@@ -1490,7 +1540,7 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                         append_job_event(
                             job_id,
                             "log",
-                            "已按实际语音时长结算体验包与/或钱包",
+                            "已按实际语音时长结算体验包与/或钱包（预授权多退少补）",
                             {
                                 "actual_minutes": round(bill_m, 4),
                                 "audio_duration_sec": round(actual_sec, 2) if actual_sec > 0 else None,
@@ -1508,12 +1558,15 @@ def run_media_job(job_id: str) -> dict[str, Any]:
                 return result
             except Exception:
                 if phone_pm:
-                    _refund_media_wallet_job(phone_pm, media_bill_meta)
+                    _refund_media_wallet_job(phone_pm, {**voice_preauth_meta_pod, **media_bill_meta})
                     append_job_event(
                         job_id,
                         "log",
-                        "播客语音合成未成功，已退回本次套餐外扣费",
-                        {"wallet_cents": int(media_bill_meta.get("wallet_cents") or 0)},
+                        "播客语音合成未成功，已释放预授权或退回扣费",
+                        {
+                            "wallet_cents": int(media_bill_meta.get("wallet_cents") or 0),
+                            "preauth_wallet_cents": int(voice_preauth_meta_pod.get("preauth_wallet_cents") or 0),
+                        },
                     )
                 raise
 
@@ -1819,6 +1872,12 @@ def run_clip_transcription_job(
                 "segment_keys": [str(s.get("key") or "").strip() for s in segments],
                 "asr_calls": asr_calls,
             }
+            ok_asr, meta_asr = asr_billing_try_debit_for_user_id(owner or "", billed_sec)
+            if not ok_asr:
+                bill_msg = str((meta_asr or {}).get("message") or "转写扣费失败，请充值后重试")
+                logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
+                update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=bill_msg[:500])
+                return {"status": "failed", "error": "billing_failed", "asr_billing": meta_asr}
             update_clip_transcribe_succeeded(
                 project_id=pid,
                 user_uuid=owner,
@@ -1826,10 +1885,7 @@ def run_clip_transcription_job(
                 normalized=merged,
                 segment_transcripts=cache,
             )
-            ok_asr, meta_asr = asr_billing_try_debit_for_user_id(owner or "", billed_sec)
-            if not ok_asr:
-                logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
-            elif int(meta_asr.get("wallet_cents") or 0) > 0:
+            if int(meta_asr.get("wallet_cents") or 0) > 0:
                 logger.info("clip_asr_settle_ok project_id=%s billed_seconds=%s cents=%s", pid, billed_sec, meta_asr.get("wallet_cents"))
             return {
                 "status": "succeeded",
@@ -1905,6 +1961,12 @@ def run_clip_transcription_job(
         normalized = annotate_words_with_main_segment_fields(
             normalized, audio_object_key=audio_key
         )
+        ok_asr, meta_asr = asr_billing_try_debit_for_user_id(owner or "", billed_sec)
+        if not ok_asr:
+            bill_msg = str((meta_asr or {}).get("message") or "转写扣费失败，请充值后重试")
+            logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
+            update_clip_transcribe_failed(project_id=pid, user_uuid=owner, message=bill_msg[:500])
+            return {"status": "failed", "error": "billing_failed", "asr_billing": meta_asr}
         update_clip_transcribe_succeeded(
             project_id=pid,
             user_uuid=owner,
@@ -1912,10 +1974,7 @@ def run_clip_transcription_job(
             normalized=normalized,
             segment_transcripts=None,
         )
-        ok_asr, meta_asr = asr_billing_try_debit_for_user_id(owner or "", billed_sec)
-        if not ok_asr:
-            logger.error("clip_asr_settle_failed project_id=%s meta=%s", pid, meta_asr)
-        elif int(meta_asr.get("wallet_cents") or 0) > 0:
+        if int(meta_asr.get("wallet_cents") or 0) > 0:
             logger.info("clip_asr_settle_ok project_id=%s billed_seconds=%s cents=%s", pid, billed_sec, meta_asr.get("wallet_cents"))
         return {
             "status": "succeeded",

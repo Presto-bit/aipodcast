@@ -6995,6 +6995,439 @@ def media_billing_try_debit_actual_minutes_for_user_id(
     )
 
 
+def media_billing_voice_preauth_for_user_id(
+    user_id: str,
+    estimated_minutes: float,
+    *,
+    ref_id: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """
+    语音预授权：按 hold 上界从钱包预扣（不消耗体验包）。
+    返回 meta：estimated_minutes, hold_minutes, preauth_wallet_cents。
+    """
+    from ..billing_preauth import preview_voice_preauth_wallet_cents
+    from ..media_wallet import media_wallet_billing_enabled
+
+    base: dict[str, Any] = {
+        "estimated_minutes": float(estimated_minutes),
+        "hold_minutes": 0.0,
+        "preauth_wallet_cents": 0,
+        "wallet_cents": 0,
+        "experience_voice_minutes_consumed": 0.0,
+    }
+    if not media_wallet_billing_enabled():
+        return True, dict(base)
+    uid = _normalize_user_uuid(user_id)
+    if not uid or float(estimated_minutes) <= 1e-9:
+        return True, dict(base)
+    try:
+        ex_voice = float(experience_voice_minutes_for_user_id(uid) or 0.0)
+    except Exception:
+        ex_voice = 0.0
+    hold, preauth = preview_voice_preauth_wallet_cents(ex_voice, float(estimated_minutes))
+    meta = {**base, "hold_minutes": float(hold), "preauth_wallet_cents": int(preauth)}
+    if preauth <= 0:
+        return True, meta
+    ok, bal_after = wallet_try_debit_cents_for_user_id(uid, preauth)
+    if not ok:
+        bal = int(bal_after) if bal_after >= 0 else int(wallet_balance_cents_for_user_id(uid))
+        return False, {
+            **meta,
+            "reason": "insufficient_wallet",
+            "wallet_balance_cents": bal,
+            "message": (
+                f"预估成片约 {float(estimated_minutes):.1f} 分钟，"
+                f"需暂时锁定约 ¥{preauth / 100:.2f}（按最长 {hold:.1f} 分钟计），"
+                f"当前钱包余额 ¥{bal / 100:.2f} 不足，请先充值后再试。"
+            ),
+        }
+    _append_preauth_ledger_if_ref(uid, preauth, ref_id, "media_voice_preauth")
+    return True, meta
+
+
+def media_billing_voice_settle_for_user_id(
+    user_id: str,
+    preauth_meta: dict[str, Any],
+    actual_minutes: float,
+    *,
+    ref_id: str | None = None,
+) -> tuple[bool, int, dict[str, Any]]:
+    """
+    语音结算：消耗体验包 + 按实际分钟扣钱包，并相对预扣多退少补。
+    """
+    from ..billing_preauth import round_voice_billed_minutes, wallet_cents_for_voice_wallet_minutes
+    from ..media_wallet import media_wallet_billing_enabled
+
+    base_meta: dict[str, Any] = {
+        "payg_restores": [],
+        "wallet_cents": 0,
+        "preauth_wallet_cents": int((preauth_meta or {}).get("preauth_wallet_cents") or 0),
+        "hold_minutes": float((preauth_meta or {}).get("hold_minutes") or 0),
+        "estimated_minutes": float((preauth_meta or {}).get("estimated_minutes") or 0),
+        "experience_voice_minutes_consumed": 0.0,
+        "preauth_released_cents": 0,
+    }
+    if not media_wallet_billing_enabled():
+        return True, 0, dict(base_meta)
+    uid = _normalize_user_uuid(user_id)
+    bill_min = round_voice_billed_minutes(float(actual_minutes))
+    if not uid or bill_min <= 1e-9:
+        return media_billing_voice_preauth_release_for_user_id(uid or "", preauth_meta), 0, dict(base_meta)
+    preauth = int(base_meta["preauth_wallet_cents"])
+    ensure_user_experience_balance_schema()
+    ensure_user_wallet_schema()
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute("SELECT id FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                if not cur.fetchone():
+                    return False, 0, {**base_meta, "reason": "no_user", "message": "未找到账户，无法结算语音用量"}
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
+                cur.execute(
+                    """
+                    SELECT voice_minutes_remaining
+                    FROM user_experience_balance
+                    WHERE user_id = %s::uuid
+                    FOR UPDATE
+                    """,
+                    (uid,),
+                )
+                row_ex = cur.fetchone()
+                ex_voice = float(row_ex.get("voice_minutes_remaining") or 0) if row_ex else 0.0
+                take_ex = min(bill_min, max(0.0, ex_voice))
+                wallet_min = max(0.0, bill_min - take_ex)
+                wallet_actual = int(wallet_cents_for_voice_wallet_minutes(wallet_min))
+                new_ex = max(0.0, ex_voice - take_ex)
+                if row_ex:
+                    cur.execute(
+                        """
+                        UPDATE user_experience_balance
+                        SET voice_minutes_remaining = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        """,
+                        (Decimal(str(round(new_ex, 6))), phone_ledger or None, uid),
+                    )
+                delta = wallet_actual - preauth
+                meta = {
+                    **base_meta,
+                    "actual_minutes": float(bill_min),
+                    "experience_voice_minutes_consumed": float(take_ex),
+                    "wallet_cents": wallet_actual,
+                }
+                if delta > 0:
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents - %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid AND balance_cents >= %s
+                        RETURNING balance_cents
+                        """,
+                        (delta, phone_ledger or None, uid, delta),
+                    )
+                    rw = cur.fetchone()
+                    if not rw:
+                        conn.rollback()
+                        return False, 0, {
+                            **meta,
+                            "reason": "insufficient_wallet",
+                            "message": (
+                                f"实际成片 {bill_min:.1f} 分钟超出预授权，"
+                                f"还需补扣约 ¥{delta / 100:.2f}，余额不足，请先充值。"
+                            ),
+                        }
+                    bal_after = int(rw.get("balance_cents") or 0)
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=phone_ledger,
+                        delta_cents=-delta,
+                        balance_after_cents=bal_after,
+                        entry_type="media_voice_settle_extra",
+                        ref_id=ref_id,
+                        meta={"billed_minutes": float(bill_min), "wallet_actual_cents": wallet_actual},
+                    )
+                    meta["balance_cents_after"] = bal_after
+                elif delta < 0:
+                    release = -delta
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents + %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        RETURNING balance_cents
+                        """,
+                        (release, phone_ledger or None, uid),
+                    )
+                    rw = cur.fetchone()
+                    bal_after = int(rw.get("balance_cents") or 0) if rw else 0
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=phone_ledger,
+                        delta_cents=release,
+                        balance_after_cents=bal_after,
+                        entry_type="media_voice_preauth_release",
+                        ref_id=ref_id,
+                        meta={"billed_minutes": float(bill_min), "wallet_actual_cents": wallet_actual},
+                    )
+                    meta["preauth_released_cents"] = release
+                    meta["balance_cents_after"] = bal_after
+                elif wallet_actual > 0:
+                    cur.execute(
+                        "SELECT balance_cents FROM user_wallet_balance WHERE user_id = %s::uuid LIMIT 1",
+                        (uid,),
+                    )
+                    rw = cur.fetchone() or {}
+                    meta["balance_cents_after"] = int(rw.get("balance_cents") or 0)
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=phone_ledger,
+                        delta_cents=0,
+                        balance_after_cents=int(meta["balance_cents_after"]),
+                        entry_type="media_voice_settle",
+                        ref_id=ref_id,
+                        meta={"billed_minutes": float(bill_min), "wallet_actual_cents": wallet_actual},
+                    )
+                conn.commit()
+                return True, wallet_actual, meta
+    except Exception as exc:
+        logger.exception("media_billing_voice_settle_for_user_id failed")
+        return False, 0, {**base_meta, "reason": "error", "message": str(exc)[:300]}
+
+
+def media_billing_voice_preauth_release_for_user_id(
+    user_id: str,
+    preauth_meta: dict[str, Any],
+    *,
+    ref_id: str | None = None,
+) -> bool:
+    """任务失败/取消：退回语音预授权钱包预扣（不触碰体验包）。"""
+    if not isinstance(preauth_meta, dict):
+        return True
+    preauth = int(preauth_meta.get("preauth_wallet_cents") or 0)
+    if preauth <= 0:
+        return True
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return False
+    if wallet_credit_cents_for_user_id(uid, preauth):
+        _append_preauth_ledger_if_ref(uid, -preauth, ref_id, "media_voice_preauth_release")
+        return True
+    return False
+
+
+def script_text_billing_preauth_for_user_id(
+    user_id: str,
+    char_cap: int,
+    *,
+    ref_id: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """文稿预授权：按字数上界从钱包预扣（不消耗体验包字数）。"""
+    from ..billing_preauth import preview_script_preauth_wallet_cents
+    from ..media_wallet import media_wallet_billing_enabled
+
+    base: dict[str, Any] = {
+        "char_cap": int(char_cap),
+        "preauth_wallet_cents": 0,
+        "wallet_cents": 0,
+        "experience_text_chars_consumed": 0,
+    }
+    if not media_wallet_billing_enabled():
+        return True, dict(base)
+    uid = _normalize_user_uuid(user_id)
+    cap = max(0, int(char_cap))
+    if not uid or cap <= 0:
+        return True, dict(base)
+    try:
+        ex_txt = int(experience_text_chars_for_user_id(uid) or 0)
+    except Exception:
+        ex_txt = 0
+    preauth = preview_script_preauth_wallet_cents(ex_txt, cap)
+    meta = {**base, "preauth_wallet_cents": int(preauth)}
+    if preauth <= 0:
+        return True, meta
+    ok, bal_after = wallet_try_debit_cents_for_user_id(uid, preauth)
+    if not ok:
+        bal = int(bal_after) if bal_after >= 0 else int(wallet_balance_cents_for_user_id(uid))
+        return False, {
+            **meta,
+            "reason": "insufficient_wallet",
+            "wallet_balance_cents": bal,
+            "message": (
+                f"文稿目标约 {cap} 字，需暂时锁定约 ¥{preauth / 100:.2f}，"
+                f"当前钱包余额 ¥{bal / 100:.2f} 不足，请先充值后再试。"
+            ),
+        }
+    _append_preauth_ledger_if_ref(uid, preauth, ref_id, "script_text_preauth")
+    return True, meta
+
+
+def script_text_billing_settle_for_user_id(
+    user_id: str,
+    preauth_meta: dict[str, Any],
+    char_count: int,
+    *,
+    ref_id: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """文稿结算：消耗体验包字数 + 按实际字数扣钱包，相对预扣多退少补。"""
+    from ..media_wallet import media_wallet_billing_enabled, wallet_cents_for_generated_text_chars
+
+    base: dict[str, Any] = {
+        "wallet_cents": 0,
+        "preauth_wallet_cents": int((preauth_meta or {}).get("preauth_wallet_cents") or 0),
+        "char_cap": int((preauth_meta or {}).get("char_cap") or 0),
+        "experience_text_chars_consumed": 0,
+        "preauth_released_cents": 0,
+    }
+    if not media_wallet_billing_enabled():
+        return True, dict(base)
+    uid = _normalize_user_uuid(user_id)
+    n = max(0, int(char_count))
+    if not uid or n <= 0:
+        script_text_billing_preauth_release_for_user_id(uid or "", preauth_meta, ref_id=ref_id)
+        return True, dict(base)
+    preauth = int(base["preauth_wallet_cents"])
+    ensure_user_experience_balance_schema()
+    ensure_user_wallet_schema()
+    try:
+        with get_conn() as conn:
+            with get_cursor(conn) as cur:
+                cur.execute("SELECT id FROM users WHERE id = %s::uuid LIMIT 1", (uid,))
+                if not cur.fetchone():
+                    return False, {**base, "reason": "no_user", "message": "未找到账户"}
+                phone_ledger = _phone_for_user_id_on_cur(cur, uid)
+                cur.execute(
+                    """
+                    SELECT text_chars_remaining
+                    FROM user_experience_balance
+                    WHERE user_id = %s::uuid
+                    FOR UPDATE
+                    """,
+                    (uid,),
+                )
+                row = cur.fetchone()
+                ex_txt = int(row.get("text_chars_remaining") or 0) if row else 0
+                take_ex = min(n, max(0, ex_txt))
+                rest = n - take_ex
+                wallet_actual = int(wallet_cents_for_generated_text_chars(rest))
+                new_txt = max(0, ex_txt - take_ex)
+                if row:
+                    cur.execute(
+                        """
+                        UPDATE user_experience_balance
+                        SET text_chars_remaining = %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        """,
+                        (new_txt, phone_ledger or None, uid),
+                    )
+                delta = wallet_actual - preauth
+                meta: dict[str, Any] = {
+                    **base,
+                    "experience_text_chars_consumed": int(take_ex),
+                    "wallet_cents": wallet_actual,
+                    "script_chars": n,
+                }
+                if delta > 0:
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents - %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid AND balance_cents >= %s
+                        RETURNING balance_cents
+                        """,
+                        (delta, phone_ledger or None, uid, delta),
+                    )
+                    rw = cur.fetchone()
+                    if not rw:
+                        conn.rollback()
+                        return False, {
+                            **meta,
+                            "reason": "insufficient_wallet",
+                            "message": (
+                                f"成稿 {n} 字超出预授权，还需补扣约 ¥{delta / 100:.2f}，余额不足，请先充值。"
+                            ),
+                        }
+                    meta["balance_cents_after"] = int(rw.get("balance_cents") or 0)
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=phone_ledger,
+                        delta_cents=-delta,
+                        balance_after_cents=int(meta["balance_cents_after"]),
+                        entry_type="script_text_settle_extra",
+                        ref_id=ref_id,
+                        meta={"chars_billed": int(rest), "wallet_actual_cents": wallet_actual},
+                    )
+                elif delta < 0:
+                    release = -delta
+                    cur.execute(
+                        """
+                        UPDATE user_wallet_balance
+                        SET balance_cents = balance_cents + %s,
+                            phone = COALESCE(NULLIF(btrim(phone), ''), %s),
+                            updated_at = NOW()
+                        WHERE user_id = %s::uuid
+                        RETURNING balance_cents
+                        """,
+                        (release, phone_ledger or None, uid),
+                    )
+                    rw = cur.fetchone() or {}
+                    meta["balance_cents_after"] = int(rw.get("balance_cents") or 0)
+                    meta["preauth_released_cents"] = release
+                    _insert_user_wallet_ledger(
+                        cur,
+                        user_id=str(uid),
+                        phone=phone_ledger,
+                        delta_cents=release,
+                        balance_after_cents=int(meta["balance_cents_after"]),
+                        entry_type="script_text_preauth_release",
+                        ref_id=ref_id,
+                        meta={"chars_billed": int(rest), "wallet_actual_cents": wallet_actual},
+                    )
+                conn.commit()
+                return True, meta
+    except Exception as exc:
+        logger.exception("script_text_billing_settle_for_user_id failed")
+        return False, {**base, "reason": "error", "message": str(exc)[:300]}
+
+
+def script_text_billing_preauth_release_for_user_id(
+    user_id: str,
+    preauth_meta: dict[str, Any],
+    *,
+    ref_id: str | None = None,
+) -> None:
+    if not isinstance(preauth_meta, dict):
+        return
+    preauth = int(preauth_meta.get("preauth_wallet_cents") or 0)
+    if preauth <= 0:
+        return
+    uid = _normalize_user_uuid(user_id)
+    if not uid:
+        return
+    if wallet_credit_cents_for_user_id(uid, preauth):
+        _append_preauth_ledger_if_ref(uid, -preauth, ref_id, "script_text_preauth_release")
+
+
+def _append_preauth_ledger_if_ref(
+    user_id: str,
+    delta_cents: int,
+    ref_id: str | None,
+    entry_type: str,
+) -> None:
+    """预授权在 wallet_try_debit/credit 已记流水时此处仅补 ref；delta 为负表示 release。"""
+    _ = user_id, delta_cents, ref_id, entry_type
 
 
 def _insert_user_wallet_ledger(
